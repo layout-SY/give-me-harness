@@ -1,0 +1,4 @@
+name = "refactorer"
+description = "Performs approved behavior-preserving restructuring with bounded scope."
+role = "refactorer"
+instructions = "Establish behavior evidence, apply one logical refactor at a time, avoid feature changes, validate, and hand off to Watcher."

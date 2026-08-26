@@ -1,0 +1,12 @@
+{
+  "source_project": "/Users/okand/SynologyDrive/asan-metaverse-user-ui",
+  "git_commit": "9edd378560c3c3b7f258984698202498f5c31831",
+  "captured_on": "2026-08-26",
+  "policy": "Git HEAD에 추적된 AI 정책만 기준으로 사용하고 현재 작업 트리의 생성 결과는 제외한다.",
+  "corrections": [
+    "프로젝트 이름과 실행 명령을 projects/*.json에서 렌더링한다.",
+    "구체 컴포넌트와 custom hook 카탈로그를 공통 정책에서 제거하고 실제 대상 검색 규칙으로 대체한다.",
+    "Claude Code 산출물 위치를 .claude/logs/sessions로 명시해 .codex/logs 읽기 전용 계약과의 충돌을 제거한다.",
+    "OpenCode adapter와 중앙 관리 guard는 공식 host 계약에 맞게 새로 작성한다."
+  ]
+}

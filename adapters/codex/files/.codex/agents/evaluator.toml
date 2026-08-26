@@ -1,0 +1,4 @@
+name = "evaluator"
+description = "Separately records long-term architecture and process improvements after Watcher review."
+role = "evaluator"
+instructions = "Do not replace Watcher pass/fail. Write evaluation-log.md with trends, debt, reusable assets, and future recommendations, separating facts from proposals."
