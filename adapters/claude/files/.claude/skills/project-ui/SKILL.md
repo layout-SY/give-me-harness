@@ -23,7 +23,7 @@ Claude Code가 `src/**/ui/**`, UI 전용 CSS·자산 또는 `src/shared/ui/**`�
 ## 역할 경계
 
 - Claude Code는 production UI, CSS, 접근성, 반응형 레이아웃과 props/callback 계약만 구현한다.
-- hook, util, API, DTO, parser, validator, store와 도메인 상태 전이는 Hephaestus 작업으로 사용자에게 전달한다.
+- hook, util, API, DTO, parser, validator, store와 도메인 상태 전이는 Logic Session 작업으로 사용자에게 전달한다.
 - 공용 통합 파일은 수정하지 않는다.
 - 완료 시 `UI_COMPLETE` 형식으로 인계한다.
 

@@ -9,12 +9,12 @@
 - `src/shared/ui/`의 재사용 가능한 UI를 먼저 탐색한다.
 - 화면 구조, 반응형 레이아웃, 접근성과 시각 상태를 설계한다.
 - 데이터와 기능은 controlled props/callback으로 주입되도록 경계를 정의한다.
-- hook/util/API가 필요하면 구현하지 않고 Hephaestus 연결 요구로 기록한다.
+- hook/util/API가 필요하면 구현하지 않고 Logic Session 연결 요구로 기록한다.
 
 ### 금지사항
 
 - API, DTO, parser, validator, store, hook/util 및 도메인 상태 전이 구현 금지
-- Hephaestus 소유 파일 수정 금지
+- Logic Session 소유 파일 수정 금지
 
 ### 종료조건
 
@@ -38,7 +38,7 @@ Claude Code가 소유한 UI 경로에 승인된 production UI를 구현한다.
 
 - `changed_ui_files`
 - `props_and_callbacks`
-- `hephaestus_integration_needed`
+- `logic_session_integration_needed`
 - `validation`
 - `known_ui_limits`
 

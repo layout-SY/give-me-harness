@@ -9,11 +9,11 @@
 1. Planner가 UI 범위와 수정 가능 경로를 확정한다.
 2. `src/shared/ui/`, `DESIGN.md`, 인접 UI 양식과 필요한 props/callback 계약을 탐색한다.
 3. 사용자의 명시적 승인을 확인한다.
-4. Publisher가 controlled UI 구조와 Hephaestus 연결 지점을 정의한다.
+4. Publisher가 controlled UI 구조와 Logic Session 연결 지점을 정의한다.
 5. Generator가 Claude Code 소유 UI 파일만 구현한다.
 6. Watcher가 별도 리뷰 agent/plugin 없이 변경 경로, 계약, 접근성과 build/lint 근거를 직접 판정한다.
 7. Generator가 `UI_COMPLETE` 형식으로 사용자에게 인계한다.
-8. 사용자가 UI 완료를 Hephaestus에 전달하고, Hephaestus가 최신 UI에 기능을 통합한다.
+8. 사용자가 UI 완료를 Logic Session에 전달하고, Logic Session이 최신 UI에 기능을 통합한다.
 
 ## 제한
 

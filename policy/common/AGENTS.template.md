@@ -57,6 +57,15 @@ Todo의 제목과 설명은 한국어로 작성하며, 작업 위치·수행 방
 - 린트: `{{LINT_COMMAND}}`
 - 테스트: `{{TEST_COMMAND}}`
 
+### 실행 전 사용자 승인
+
+- 에이전트가 Git 명령 또는 빌드·개발 서버 명령을 실행하려면 정확한 명령과 목적을 먼저 제시하고 사용자가 직접 승인 또는 거절하도록 한다.
+- Git의 조회·변경·네트워크 명령을 구분하지 않고 모든 `git` 명령에 적용한다.
+- 빌드·개발 서버 범위에는 `build`, `dev`, `start`, `preview`, Vite 직접 실행과 TypeScript build mode가 포함된다. lint와 test는 이 실행 게이트의 대상이 아니다.
+- Claude Code와 OpenCode에서는 호스트의 권한 요청에서 1회 승인을 기본으로 선택한다. `always` 승인은 사용자가 명시적으로 선택한 경우에만 허용한다.
+- Codex에서는 차단 메시지에 표시된 명령을 확인한 뒤 사용자가 `명령 실행 승인`만 독립된 메시지로 보내야 한다. 이 승인은 완전히 동일한 명령 한 번에만 유효하며 명령이 달라지면 다시 요청한다.
+- 정책 훅이 저장소와 중앙 manifest를 찾기 위해 내부적으로 수행하는 읽기 전용 저장소 확인은 에이전트가 제안한 작업 명령이 아니므로 이 승인 대상에서 제외한다.
+
 ## 5. 운영 지침 구성도
 
 - 스킬: `.agents/skills/`
@@ -71,14 +80,16 @@ Todo의 제목과 설명은 한국어로 작성하며, 작업 위치·수행 방
 ## 6. Claude Code 병렬 협업
 
 - UI가 포함된 작업을 시작할 때 루트 `CLAUDE.md`의 역할 및 파일 소유권 계약을 먼저 확인한다.
-- Hephaestus는 `hook/hooks`, `utils`, `lib`, API 연결, parser, validator, store, 상태 전이 및 그 밖의 JavaScript/TypeScript 기능 로직을 담당한다.
-- Claude Code는 별도 세션에서 `src/**/ui/**`, UI 전용 CSS·자산 및 `src/shared/ui/**`의 프로덕션 UI를 담당한다. 사용자가 두 세션의 요청과 완료 상태를 중계한다.
-- 병렬 작업 중 Hephaestus는 Claude Code가 소유한 production UI 파일을 수정하지 않고, Claude Code는 Hephaestus가 소유한 기능 로직 및 통합 파일을 수정하지 않는다.
-- `src/App.tsx`, `src/main.tsx`, feature barrel, 패키지·빌드 설정 및 `.codex/logs/**`는 사용자가 다르게 지정하지 않는 한 Hephaestus가 단일 작성자로 소유한다.
+- Logic Session은 Codex 또는 OpenCode 세션이며 `hook/hooks`, `utils`, `lib`, API 연결, parser, validator, store, 상태 전이 및 그 밖의 JavaScript/TypeScript 기능 로직을 담당한다.
+- Claude Code의 기본 구현 세션은 별도 세션에서 `src/**/ui/**`, UI 전용 CSS·자산 및 `src/shared/ui/**`의 프로덕션 UI를 담당한다. 사용자가 두 구현 세션의 요청과 완료 상태를 중계한다.
+- Claude 기본 세션은 파이프라인을 오케스트레이션한다. Planner와 Evaluator는 호출 단위의 서브 에이전트로서 UI와 기능 로직을 포함한 코드베이스 전체를 읽고 구현 계획, 의존 경계 및 장기 구조를 분석할 수 있지만 다른 서브 에이전트를 중첩 실행하지 않는다. 이 읽기 전용 분석 권한은 Claude 기본 구현 세션의 파일 쓰기 소유권을 확장하지 않는다.
+- Planner는 UI와 기능 로직 작업을 소유 세션별로 분해하고 Logic Session에 필요한 계약을 인계한다. Evaluator는 구현과 PASS/FAIL 판정을 하지 않고 장기 개선안을 제시한다.
+- 병렬 작업 중 Logic Session은 Claude Code가 소유한 production UI 파일을 수정하지 않고, Claude Code 기본 구현 세션은 Logic Session이 소유한 기능 로직 및 통합 파일을 수정하지 않는다.
+- `src/App.tsx`, `src/main.tsx`, feature barrel, 패키지·빌드 설정 및 `.codex/logs/**`는 사용자가 다르게 지정하지 않는 한 Logic Session이 단일 작성자로 소유한다.
 - UI에 hook/util 연결이 필요하면 기능 로직을 UI 밖에 먼저 구현한 뒤 사용자에게 `Claude Code의 UI 작업이 완료되었나요?`라고 확인한다.
 - 사용자가 UI 완료를 확인하기 전에는 production UI 파일에 기능을 이식하지 않는다. 확인 후 최신 UI 파일을 다시 읽고 props/callback 경계에 연결한다.
 - 다른 세션이 수정한 파일은 되돌리거나 덮어쓰지 않는다. 동일 파일 변경이 필요하면 충돌 경로와 필요한 변경을 사용자에게 알리고 소유권 결정을 기다린다.
-- 사용자가 임시 기능 확인 UI를 명시적으로 요청하면 Hephaestus가 production UI와 분리된 파일에 최소한의 마크업과 스타일만 작성할 수 있다. 이 UI에는 시각적 완성도나 공용 추상화를 요구하지 않는다.
+- 사용자가 임시 기능 확인 UI를 명시적으로 요청하면 Logic Session이 production UI와 분리된 파일에 최소한의 마크업과 스타일만 작성할 수 있다. 이 UI에는 시각적 완성도나 공용 추상화를 요구하지 않는다.
 
 ## 7. 테스트 및 검토 제한
 

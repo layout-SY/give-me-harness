@@ -39,6 +39,7 @@ MANAGED_ROOTS: Final = (
     ".harness/roles/",
     ".opencode/agent/",
     ".opencode/plugins/",
+    "opencode.json",
 )
 HOST_COMMANDS: Final = {
     "codex": ["codex"],
@@ -189,6 +190,19 @@ def hook_command(mode: str, host: str) -> str:
     )
 
 
+def render_opencode_config(project: ProjectConfig) -> bytes:
+    config = read_json(CENTRAL_ROOT / "adapters/opencode/opencode.base.json")
+    permission = config.get("permission")
+    bash = permission.get("bash") if isinstance(permission, dict) else None
+    if not isinstance(bash, dict):
+        raise PolicyError("OpenCode config의 permission.bash가 object가 아닙니다.")
+    for command_name in ("build", "dev"):
+        command = project.commands[command_name]
+        bash[command] = "ask"
+        bash[f"{command} *"] = "ask"
+    return (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode()
+
+
 def render_codex_hooks(project: ProjectConfig) -> bytes:
     hooks = read_json(CENTRAL_ROOT / "adapters/codex/hooks.base.json")
     registrations = hooks.setdefault("hooks", {})
@@ -205,6 +219,19 @@ def render_codex_hooks(project: ProjectConfig) -> bytes:
                     "timeout": 15,
                     "statusMessage": "Checking central agent policy drift",
                     "additionalContextLimit": 1200,
+                }
+            ],
+        },
+    )
+    registrations.setdefault("UserPromptSubmit", []).insert(
+        0,
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": hook_command("user-prompt", "codex"),
+                    "timeout": 10,
+                    "statusMessage": "Recording one-shot command approval",
                 }
             ],
         },
@@ -272,6 +299,7 @@ def render_project(project: ProjectConfig) -> dict[str, bytes]:
             Path(),
             project,
         )
+    rendered["opencode.json"] = render_opencode_config(project)
     rendered[".agent-policy/runtime/managed_policy_guard.py"] = render_content(
         (CENTRAL_ROOT / "policy/guards/managed_policy_guard.py").read_bytes(), project
     )

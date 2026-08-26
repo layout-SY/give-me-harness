@@ -15,7 +15,7 @@ Claude Code가 소유한 production UI 파일 안에서만 구조, 중복 마크
 
 1. 루트 `CLAUDE.md`, 승인 범위, `DESIGN.md`와 인접 UI 양식을 확인한다.
 2. 동작과 props/callback 계약을 보존하는 UI 변경만 적용한다.
-3. hook/util/API/state 변경이 필요하면 수정하지 않고 사용자에게 Hephaestus 작업으로 전달한다.
+3. hook/util/API/state 변경이 필요하면 수정하지 않고 사용자에게 Logic Session 작업으로 전달한다.
 4. `npm run build`, `npm run lint`와 필요한 기존 테스트를 실행한다.
 5. Watcher에 변경 경로와 검증 근거를 전달한다.
 

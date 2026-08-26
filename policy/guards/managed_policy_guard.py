@@ -1,17 +1,25 @@
 #!/usr/bin/env python3
-"""소비자 프로젝트의 중앙 관리 파일 변경과 drift를 검사한다."""
+"""소비자 프로젝트의 중앙 관리 파일, drift와 보호 명령을 검사한다."""
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 from typing import Any, Final
 
 CENTRAL_ROOT: Final = Path("{{CENTRAL_ROOT}}")
+DEV_COMMAND: Final = "{{DEV_COMMAND}}"
+BUILD_COMMAND: Final = "{{BUILD_COMMAND}}"
 MANIFEST_PATH: Final = ".agent-policy/manifest.json"
+COMMAND_APPROVAL_PHRASE: Final = "명령 실행 승인"
+APPROVAL_MAX_AGE_SECONDS: Final = 30 * 60
 FALLBACK_MANAGED_ROOTS: Final = (
     "AGENTS.md",
     "CLAUDE.md",
@@ -38,6 +46,7 @@ FALLBACK_MANAGED_ROOTS: Final = (
     ".harness/roles/",
     ".opencode/agent/",
     ".opencode/plugins/",
+    "opencode.json",
 )
 PATH_KEYS: Final = ("file_path", "filePath", "path", "paths", "notebook_path")
 PATCH_PATH_PATTERN: Final = re.compile(
@@ -54,6 +63,18 @@ SHELL_RUNTIME_WRITE_PATTERN: Final = re.compile(
 BROAD_MUTATION_PATTERN: Final = re.compile(
     r"(?:git\s+(?:reset\s+--hard|clean\b|checkout\s+(?:--\s+)?\.|restore\s+\.)|rm\s+[^\n]*(?:\s|^)(?:\.|\./)(?:\s|$))"
 )
+SHELL_SEGMENT_PATTERN: Final = re.compile(r"(?:&&|\|\||[;|\n])")
+SHELL_PREFIX_PATTERN: Final = re.compile(
+    r"^(?:(?:[A-Za-z_][A-Za-z0-9_]*=\S+|command|env|sudo)\s+)*"
+)
+PACKAGE_BUILD_PATTERN: Final = re.compile(
+    r"^(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?build(?:[:\s]|$)|"
+    r"(?:npx\s+)?vite\s+build(?:\s|$)|tsc\s+-b(?:\s|$))"
+)
+PACKAGE_DEV_PATTERN: Final = re.compile(
+    r"^(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:dev|start|preview)(?:[:\s]|$)|"
+    r"npm\s+start(?:\s|$)|(?:npx\s+)?vite(?:\s|$))"
+)
 
 
 def read_event() -> dict[str, Any]:
@@ -67,6 +88,10 @@ def read_event() -> dict[str, Any]:
 def repository_root(event: dict[str, Any]) -> Path:
     cwd_value = event.get("cwd")
     cwd = Path(cwd_value) if isinstance(cwd_value, str) and cwd_value else Path.cwd()
+    for candidate in (cwd, *cwd.parents):
+        if (candidate / MANIFEST_PATH).is_file():
+            return candidate.resolve()
+
     completed = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         cwd=cwd,
@@ -188,6 +213,161 @@ def denial_message(targets: list[str]) -> str:
     )
 
 
+def shell_segments(command: str) -> tuple[str, ...]:
+    return tuple(
+        normalized
+        for raw_segment in SHELL_SEGMENT_PATTERN.split(command)
+        if (normalized := " ".join(raw_segment.strip(" ()\t").casefold().split()))
+    )
+
+
+def strip_shell_prefix(segment: str) -> str:
+    return SHELL_PREFIX_PATTERN.sub("", segment, count=1)
+
+
+def command_matches(segment: str, expected: str) -> bool:
+    normalized = " ".join(expected.casefold().split())
+    return bool(normalized) and (segment == normalized or segment.startswith(f"{normalized} "))
+
+
+def protected_operation_categories(command: str) -> tuple[str, ...]:
+    categories: set[str] = set()
+    for raw_segment in shell_segments(command):
+        segment = strip_shell_prefix(raw_segment)
+        if segment == "git" or segment.startswith("git "):
+            categories.add("Git")
+        is_build = bool(
+            command_matches(segment, BUILD_COMMAND) or PACKAGE_BUILD_PATTERN.match(segment)
+        )
+        if is_build:
+            categories.add("빌드")
+        if not is_build and (
+            command_matches(segment, DEV_COMMAND) or PACKAGE_DEV_PATTERN.match(segment)
+        ):
+            categories.add("개발 서버")
+    return tuple(sorted(categories))
+
+
+def event_session_id(event: dict[str, Any]) -> str:
+    for key in ("session_id", "sessionID"):
+        value = event.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return "missing-session-id"
+
+
+def approval_state_path(event: dict[str, Any], root: Path, host: str) -> Path:
+    identity = f"{root.resolve()}\0{host}\0{event_session_id(event)}"
+    digest = hashlib.sha256(identity.encode()).hexdigest()
+    state_root = Path(tempfile.gettempdir()) / "asan-agent-policy-command-approvals"
+    state_root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return state_root / f"{digest}.json"
+
+
+def load_approval_state(path: Path) -> dict[str, Any]:
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    created_at = value.get("created_at")
+    if not isinstance(created_at, (int, float)) or time.time() - created_at > APPROVAL_MAX_AGE_SECONDS:
+        path.unlink(missing_ok=True)
+        return {}
+    return value
+
+
+def write_approval_state(path: Path, state: dict[str, Any]) -> None:
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(path)
+
+
+def command_digest(command: str) -> str:
+    return hashlib.sha256(command.encode()).hexdigest()
+
+
+def codex_operation_allowed(event: dict[str, Any], root: Path, command: str) -> bool:
+    path = approval_state_path(event, root, "codex")
+    state = load_approval_state(path)
+    digest = command_digest(command)
+    if state.get("approved") is True and state.get("command_sha256") == digest:
+        path.unlink(missing_ok=True)
+        return True
+
+    write_approval_state(
+        path,
+        {
+            "approved": False,
+            "categories": list(protected_operation_categories(command)),
+            "command_sha256": digest,
+            "created_at": time.time(),
+        },
+    )
+    return False
+
+
+def record_codex_approval(event: dict[str, Any], root: Path) -> None:
+    prompt = event.get("prompt")
+    if not isinstance(prompt, str) or prompt.strip() != COMMAND_APPROVAL_PHRASE:
+        return
+
+    path = approval_state_path(event, root, "codex")
+    state = load_approval_state(path)
+    if not state or state.get("approved") is not False:
+        return
+    state["approved"] = True
+    state["created_at"] = time.time()
+    write_approval_state(path, state)
+    json.dump(
+        {
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": "직전에 차단된 동일 명령을 1회 실행할 수 있습니다. 명령을 변경하면 다시 승인을 요청하세요.",
+            }
+        },
+        sys.stdout,
+        ensure_ascii=False,
+    )
+
+
+def operation_approval_message(command: str, categories: tuple[str, ...], host: str) -> str:
+    category_text = ", ".join(categories)
+    if host == "codex":
+        action = (
+            f"실행하려면 사용자가 `{COMMAND_APPROVAL_PHRASE}`만 독립된 메시지로 보내야 합니다. "
+            "승인은 아래의 완전히 동일한 명령에 한해 1회만 유효합니다."
+        )
+    else:
+        action = "호스트가 표시하는 권한 요청에서 사용자가 직접 실행 여부를 결정해야 합니다."
+    return (
+        f"{category_text} 명령은 사용자 승인 전에 실행할 수 없습니다.\n"
+        f"명령: {command}\n"
+        f"{action}"
+    )
+
+
+def emit_operation_approval(host: str, message: str) -> None:
+    if host in {"codex", "claude"}:
+        decision = "deny" if host == "codex" else "ask"
+        json.dump(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "PreToolUse",
+                    "permissionDecision": decision,
+                    "permissionDecisionReason": message,
+                }
+            },
+            sys.stdout,
+            ensure_ascii=False,
+        )
+        return
+    print(message, file=sys.stderr)
+    raise SystemExit(2)
+
+
 def emit_denial(host: str, message: str) -> None:
     if host == "codex":
         json.dump(
@@ -240,13 +420,36 @@ def check_session(event: dict[str, Any]) -> None:
         print(detail)
 
 
+def check_operation(event: dict[str, Any], root: Path, host: str) -> None:
+    if host == "opencode":
+        return
+    tool_name = str(event.get("tool_name", "")).rsplit(".", maxsplit=1)[-1].casefold()
+    raw_input = event.get("tool_input")
+    tool_input = raw_input if isinstance(raw_input, dict) else {}
+    command_value = tool_input.get("command")
+    command = command_value if isinstance(command_value, str) else ""
+    if tool_name not in {"bash", "shell"} or not command:
+        return
+
+    categories = protected_operation_categories(command)
+    if not categories:
+        return
+    if host == "codex" and codex_operation_allowed(event, root, command):
+        return
+    emit_operation_approval(host, operation_approval_message(command, categories, host))
+
+
 def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     host = sys.argv[2] if len(sys.argv) > 2 else ""
     event = read_event()
 
     if mode == "session-start":
+        approval_state_path(event, repository_root(event), host).unlink(missing_ok=True)
         check_session(event)
+        return
+    if mode == "user-prompt" and host == "codex":
+        record_codex_approval(event, repository_root(event))
         return
     if mode != "pre-tool":
         raise SystemExit("지원하지 않는 guard mode입니다.")
@@ -255,6 +458,8 @@ def main() -> None:
     targets = denied_targets(event, root, load_manifest(root))
     if targets:
         emit_denial(host, denial_message(targets))
+        return
+    check_operation(event, root, host)
 
 
 if __name__ == "__main__":

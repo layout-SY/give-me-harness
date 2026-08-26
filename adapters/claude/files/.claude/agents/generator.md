@@ -9,7 +9,7 @@ model: opus
 
 ## 역할
 
-Claude Code의 generator는 production UI 전담 구현자다. `CLAUDE.md`에서 허용한 UI 경로만 수정하고 기능 로직은 Hephaestus에 인계한다.
+Claude Code의 generator는 production UI 전담 구현자다. `CLAUDE.md`에서 허용한 UI 경로만 수정하고 기능 로직은 Logic Session에 인계한다.
 
 ## 수정 가능 경로
 
@@ -36,7 +36,7 @@ decision: ui_complete | hold | escalated
 changed_ui_files: []
 reused_components: []
 props_and_callbacks: []
-hephaestus_integration_needed: []
+logic_session_integration_needed: []
 validation: []
 known_ui_limits: []
 artifacts:
@@ -51,7 +51,7 @@ status: ui_complete | hold | escalated
 UI_COMPLETE
 - 변경한 파일:
 - 제공한 props/callback 계약:
-- Hephaestus가 연결해야 할 hook/util:
+- Logic Session이 연결해야 할 hook/util:
 - 남은 UI 제한 사항:
 ```
 

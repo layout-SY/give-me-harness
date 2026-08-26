@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
@@ -18,6 +19,7 @@ class GuardTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temporary_directory = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary_directory.name)
+        self.session_id = str(uuid.uuid4())
         subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
         manifest = self.root / ".agent-policy/manifest.json"
         manifest.parent.mkdir(parents=True)
@@ -39,20 +41,31 @@ class GuardTests(unittest.TestCase):
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
 
-    def run_guard(self, host: str, tool_name: str, tool_input: dict[str, object]) -> subprocess.CompletedProcess[str]:
+    def run_mode(
+        self,
+        mode: str,
+        host: str,
+        event: dict[str, object],
+    ) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
-            ["python3", "-I", str(GUARD), "pre-tool", host],
-            input=json.dumps(
-                {
-                    "cwd": str(self.root),
-                    "tool_name": tool_name,
-                    "tool_input": tool_input,
-                }
-            ),
+            ["python3", "-I", str(GUARD), mode, host],
+            input=json.dumps({"cwd": str(self.root), "session_id": self.session_id, **event}),
             text=True,
             capture_output=True,
             cwd=self.root,
             check=False,
+        )
+
+    def run_guard(
+        self,
+        host: str,
+        tool_name: str,
+        tool_input: dict[str, object],
+    ) -> subprocess.CompletedProcess[str]:
+        return self.run_mode(
+            "pre-tool",
+            host,
+            {"tool_name": tool_name, "tool_input": tool_input},
         )
 
     def test_codex_returns_native_deny_shape(self) -> None:
@@ -103,3 +116,100 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(read.returncode, 0, read.stderr)
         self.assertEqual(application.returncode, 0, application.stderr)
         self.assertEqual(application.stdout, "")
+
+    def test_claude_asks_for_git_build_and_dev_commands(self) -> None:
+        for command, expected_category in (
+            ("git status --short", "Git"),
+            ("npm run build", "빌드"),
+            ("vite build", "빌드"),
+            ("npm run dev -- --host", "개발 서버"),
+        ):
+            with self.subTest(command=command):
+                result = self.run_guard("claude", "Bash", {"command": command})
+                output = json.loads(result.stdout)
+                decision = output["hookSpecificOutput"]
+                self.assertEqual(decision["permissionDecision"], "ask")
+                self.assertIn(expected_category, decision["permissionDecisionReason"])
+                self.assertIn(command, decision["permissionDecisionReason"])
+                if command == "vite build":
+                    self.assertNotIn("개발 서버", decision["permissionDecisionReason"])
+
+    def test_lint_and_test_commands_do_not_require_operation_approval(self) -> None:
+        for command in ("npm run lint", "npm run test"):
+            with self.subTest(command=command):
+                result = self.run_guard("claude", "Bash", {"command": command})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_codex_approval_is_exact_and_one_shot(self) -> None:
+        command = "git status --short"
+        first = self.run_guard("codex", "Bash", {"command": command})
+        self.assertEqual(
+            json.loads(first.stdout)["hookSpecificOutput"]["permissionDecision"],
+            "deny",
+        )
+
+        approval = self.run_mode(
+            "user-prompt",
+            "codex",
+            {"prompt": "명령 실행 승인"},
+        )
+        self.assertIn("동일 명령", approval.stdout)
+
+        allowed = self.run_guard("codex", "Bash", {"command": command})
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertEqual(allowed.stdout, "")
+
+        second = self.run_guard("codex", "Bash", {"command": command})
+        self.assertEqual(
+            json.loads(second.stdout)["hookSpecificOutput"]["permissionDecision"],
+            "deny",
+        )
+
+    def test_codex_approval_does_not_apply_to_changed_command(self) -> None:
+        self.run_guard("codex", "Bash", {"command": "npm run build"})
+        self.run_mode("user-prompt", "codex", {"prompt": "명령 실행 승인"})
+
+        changed = self.run_guard("codex", "Bash", {"command": "npm run build -- --mode host"})
+        self.assertEqual(
+            json.loads(changed.stdout)["hookSpecificOutput"]["permissionDecision"],
+            "deny",
+        )
+
+    def test_codex_approval_is_isolated_by_session(self) -> None:
+        command = "git diff --stat"
+        first_session = self.session_id
+        self.run_guard("codex", "Bash", {"command": command})
+        self.run_mode("user-prompt", "codex", {"prompt": "명령 실행 승인"})
+
+        self.session_id = str(uuid.uuid4())
+        other_session = self.run_guard("codex", "Bash", {"command": command})
+        self.assertEqual(
+            json.loads(other_session.stdout)["hookSpecificOutput"]["permissionDecision"],
+            "deny",
+        )
+
+        self.session_id = first_session
+        original_session = self.run_guard("codex", "Bash", {"command": command})
+        self.assertEqual(original_session.stdout, "")
+
+    def test_codex_approval_phrase_must_be_standalone(self) -> None:
+        command = "npm run dev"
+        self.run_guard("codex", "Bash", {"command": command})
+        embedded = self.run_mode(
+            "user-prompt",
+            "codex",
+            {"prompt": "이제 명령 실행 승인해줘"},
+        )
+        self.assertEqual(embedded.stdout, "")
+
+        still_denied = self.run_guard("codex", "Bash", {"command": command})
+        self.assertEqual(
+            json.loads(still_denied.stdout)["hookSpecificOutput"]["permissionDecision"],
+            "deny",
+        )
+
+    def test_opencode_operation_gate_is_delegated_to_native_permissions(self) -> None:
+        result = self.run_guard("opencode", "bash", {"command": "git status"})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")

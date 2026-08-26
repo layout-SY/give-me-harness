@@ -50,7 +50,17 @@ def main() -> None:
             raise SystemExit(output)
         if "agent-policy.js" not in output and "AgentPolicyPlugin" not in output:
             raise SystemExit("OpenCode debug output에서 local agent-policy plugin load를 확인하지 못했습니다.\n" + output)
-        print("OpenCode local agent-policy plugin load: PASS")
+        for permission_fragment in (
+            '"git *": "ask"',
+            '"npm run build": "ask"',
+            '"npm run dev": "ask"',
+        ):
+            if permission_fragment not in output:
+                raise SystemExit(
+                    "OpenCode effective config에서 보호 명령 권한을 확인하지 못했습니다: "
+                    f"{permission_fragment}\n{output}"
+                )
+        print("OpenCode local plugin and protected command permissions: PASS")
 
 
 if __name__ == "__main__":

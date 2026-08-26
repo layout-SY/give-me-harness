@@ -28,6 +28,8 @@ class RenderingTests(unittest.TestCase):
                     self.assertNotIn(b"asan-prompt-core", content, path)
                     self.assertNotIn(b"{{PROJECT_NAME}}", content, path)
                     self.assertNotIn(b"{{CENTRAL_ROOT}}", content, path)
+                    self.assertNotIn(b"{{DEV_COMMAND}}", content, path)
+                    self.assertNotIn(b"{{BUILD_COMMAND}}", content, path)
 
     def test_project_specific_reference_catalogs_are_not_centralized(self) -> None:
         rendered = render_project(load_project("user-ui"))
@@ -44,11 +46,18 @@ class RenderingTests(unittest.TestCase):
         codex = json.loads(rendered[".codex/hooks.json"])["hooks"]
         claude = json.loads(rendered[".claude/settings.json"])["hooks"]
         self.assertIn("SessionStart", codex)
+        self.assertIn("UserPromptSubmit", codex)
         self.assertIn("PreToolUse", codex)
         self.assertIn("SessionStart", claude)
         self.assertIn("PreToolUse", claude)
         self.assertIn("managed_policy_guard.py", json.dumps(codex))
         self.assertIn("managed_policy_guard.py", json.dumps(claude))
+        central_prompt_hook = next(
+            item
+            for item in codex["UserPromptSubmit"]
+            if "user-prompt codex" in item["hooks"][0]["command"]
+        )
+        self.assertEqual(central_prompt_hook["hooks"][0]["timeout"], 10)
 
     def test_codex_baseline_hook_integrity_hashes_match_sources(self) -> None:
         rendered = render_project(load_project("user-ui"))
@@ -72,12 +81,27 @@ class RenderingTests(unittest.TestCase):
             self.assertEqual(expected.group(1), digest)
 
     def test_opencode_plugin_contract_is_rendered(self) -> None:
-        plugin = render_project(load_project("user-ui"))[
-            ".opencode/plugins/agent-policy.js"
-        ].decode()
+        rendered = render_project(load_project("user-ui"))
+        plugin = rendered[".opencode/plugins/agent-policy.js"].decode()
         self.assertIn('"tool.execute.before"', plugin)
         self.assertIn("output.args", plugin)
         self.assertIn("session-start", plugin)
+
+        config = json.loads(rendered["opencode.json"])
+        bash = config["permission"]["bash"]
+        self.assertEqual(bash["*"], "allow")
+        for command in ("git", "git *", "npm run build", "npm run dev", "vite *"):
+            self.assertEqual(bash[command], "ask")
+
+    def test_rendered_role_contract_is_host_neutral(self) -> None:
+        rendered = render_project(load_project("user-ui"))
+        managed_text = b"\n".join(rendered.values())
+        self.assertNotIn(b"Hephaestus", managed_text)
+        self.assertIn(b"Logic Session", managed_text)
+        planner = rendered[".claude/agents/planner.md"]
+        evaluator = rendered[".claude/agents/evaluator.md"]
+        self.assertIn("전체 요청".encode(), planner)
+        self.assertIn("코드베이스 전체".encode(), evaluator)
 
     def test_source_digest_includes_project_metadata(self) -> None:
         self.assertNotEqual(

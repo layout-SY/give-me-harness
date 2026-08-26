@@ -25,7 +25,7 @@
 - src/shared/ui/
 - src/**/ui/
 - DESIGN.md
-- Hephaestus-owned hook/util/API paths (read-only contract check)
+- Logic Session-owned hook/util/API paths (read-only contract check)
 
 ## Existing Reusable Assets Found
 
