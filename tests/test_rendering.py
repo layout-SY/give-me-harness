@@ -48,10 +48,14 @@ class RenderingTests(unittest.TestCase):
         self.assertIn("SessionStart", codex)
         self.assertIn("UserPromptSubmit", codex)
         self.assertIn("PreToolUse", codex)
+        self.assertIn("Stop", codex)
         self.assertIn("SessionStart", claude)
         self.assertIn("PreToolUse", claude)
+        self.assertIn("Stop", claude)
         self.assertIn("managed_policy_guard.py", json.dumps(codex))
         self.assertIn("managed_policy_guard.py", json.dumps(claude))
+        self.assertIn("collect-logs --project user-ui --channel logic", json.dumps(codex))
+        self.assertIn("collect-logs --project user-ui --channel claude", json.dumps(claude))
         central_prompt_hook = next(
             item
             for item in codex["UserPromptSubmit"]
@@ -86,6 +90,9 @@ class RenderingTests(unittest.TestCase):
         self.assertIn('"tool.execute.before"', plugin)
         self.assertIn("output.args", plugin)
         self.assertIn("session-start", plugin)
+        self.assertIn('event.type !== "session.idle"', plugin)
+        self.assertIn('"collect-logs"', plugin)
+        self.assertIn('const PROJECT_ID = "user-ui"', plugin)
 
         config = json.loads(rendered["opencode.json"])
         bash = config["permission"]["bash"]

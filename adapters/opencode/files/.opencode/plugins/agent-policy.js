@@ -1,6 +1,8 @@
 import { spawnSync } from "node:child_process"
 import { join } from "node:path"
 
+const CENTRAL_ROOT = "{{CENTRAL_ROOT}}"
+const PROJECT_ID = "{{PROJECT_ID}}"
 const POLICY_TOOLS = new Set([
   "apply_patch",
   "bash",
@@ -23,12 +25,38 @@ const evaluate = (directory, mode, payload = {}) =>
     },
   )
 
+const collectLogs = () =>
+  spawnSync(
+    "python3",
+    [
+      join(CENTRAL_ROOT, "bin/agent-policy"),
+      "collect-logs",
+      "--project",
+      PROJECT_ID,
+      "--channel",
+      "logic",
+      "--quiet",
+    ],
+    {
+      encoding: "utf-8",
+      timeout: 30000,
+    },
+  )
+
 export const AgentPolicyPlugin = async ({ directory }) => {
   const startup = evaluate(directory, "session-start")
   if (startup.stdout?.trim()) process.stderr.write(`${startup.stdout.trim()}\n`)
   if (startup.stderr?.trim()) process.stderr.write(`${startup.stderr.trim()}\n`)
 
   return {
+    event: async ({ event }) => {
+      if (event.type !== "session.idle") return
+
+      const result = collectLogs()
+      if (result.status === 0) return
+      const message = result.stderr?.trim() || result.error?.message || "알 수 없는 오류"
+      process.stderr.write(`중앙 필수 산출물 로그 수집 실패: ${message}\n`)
+    },
     "tool.execute.before": async (input, output) => {
       if (!POLICY_TOOLS.has(String(input.tool).toLowerCase())) return
 

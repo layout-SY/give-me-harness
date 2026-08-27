@@ -190,6 +190,13 @@ def hook_command(mode: str, host: str) -> str:
     )
 
 
+def log_collection_command(project: ProjectConfig, channel: str) -> str:
+    return (
+        f'python3 "{CANONICAL_ROOT / "bin/agent-policy"}" collect-logs '
+        f"--project {project.id} --channel {channel} --quiet"
+    )
+
+
 def render_opencode_config(project: ProjectConfig) -> bytes:
     config = read_json(CENTRAL_ROOT / "adapters/opencode/opencode.base.json")
     permission = config.get("permission")
@@ -250,6 +257,19 @@ def render_codex_hooks(project: ProjectConfig) -> bytes:
             ],
         },
     )
+    registrations.setdefault("Stop", []).insert(
+        0,
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": log_collection_command(project, "logic"),
+                    "timeout": 30,
+                    "statusMessage": "Mirroring required artifacts to central logs",
+                }
+            ],
+        },
+    )
     return (json.dumps(hooks, ensure_ascii=False, indent=2) + "\n").encode()
 
 
@@ -277,6 +297,17 @@ def render_claude_settings(project: ProjectConfig) -> bytes:
                         "timeout": 10,
                     }
                 ],
+            }
+        ],
+        "Stop": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": log_collection_command(project, "claude"),
+                        "timeout": 30,
+                    }
+                ]
             }
         ],
     }
@@ -352,7 +383,17 @@ def central_is_clean() -> bool:
         text=True,
         check=False,
     )
-    return completed.returncode == 0 and not completed.stdout.strip()
+    if completed.returncode != 0:
+        return False
+    entries = tuple(line for line in completed.stdout.splitlines() if line.strip())
+    return all(central_status_entry_is_log_only(entry) for entry in entries)
+
+
+def central_status_entry_is_log_only(entry: str) -> bool:
+    if len(entry) < 4:
+        return False
+    paths = tuple(path.strip() for path in entry[3:].split(" -> "))
+    return bool(paths) and all(path == "logs" or path.startswith("logs/") for path in paths)
 
 
 def load_manifest(project: ProjectConfig) -> dict[str, Any]:
@@ -521,7 +562,7 @@ def verify_safe_removals(
 
 def sync_project(project: ProjectConfig, retire_legacy: bool = False) -> int:
     if not central_is_clean():
-        raise PolicyError("중앙 저장소에 commit되지 않은 변경이 있어 sync를 거부합니다.")
+        raise PolicyError("중앙 정책 소스에 commit되지 않은 변경이 있어 sync를 거부합니다.")
     if not project.path.is_dir():
         raise PolicyError(f"대상 프로젝트를 찾을 수 없습니다: {project.path}")
 

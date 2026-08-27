@@ -22,6 +22,7 @@ from .core import (
     sync_project,
     verify_safe_removals,
 )
+from .log_mirror import collect_project_logs, selected_channels
 
 
 def project_argument(parser: argparse.ArgumentParser) -> None:
@@ -36,7 +37,7 @@ def project_argument(parser: argparse.ArgumentParser) -> None:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent-policy",
-        description="중앙 AI 정책을 감사, 렌더링, 동기화하고 host 세션을 시작합니다.",
+        description="중앙 AI 정책과 세션 산출물을 관리하고 host 세션을 시작합니다.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
@@ -68,6 +69,19 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="실행하지 않고 cwd와 명령만 출력합니다.",
     )
+
+    collect_logs = subparsers.add_parser(
+        "collect-logs",
+        help="프로젝트의 필수 세션 산출물을 중앙 로그로 복사합니다.",
+    )
+    project_argument(collect_logs)
+    collect_logs.add_argument(
+        "--channel",
+        default="all",
+        choices=("all", "logic", "claude"),
+        help="수집할 세션 로그 채널",
+    )
+    collect_logs.add_argument("--quiet", action="store_true", help="정상 결과 출력을 생략합니다.")
     return parser
 
 
@@ -159,7 +173,7 @@ def run_check(selector: str, quiet: bool) -> int:
 def run_sync(selector: str, retire_legacy: bool) -> int:
     projects = select_projects(selector)
     if not central_is_clean():
-        raise PolicyError("중앙 저장소 변경을 commit한 뒤 sync해 주세요.")
+        raise PolicyError("중앙 정책 소스 변경을 commit한 뒤 sync해 주세요.")
 
     for project in projects:
         rendered = render_project(project)
@@ -193,6 +207,20 @@ def run_start(project_id: str, host: str, model: str | None, print_only: bool) -
     return 0
 
 
+def run_collect_logs(selector: str, channel: str, quiet: bool) -> int:
+    for project in select_projects(selector):
+        for selected_channel in selected_channels(channel):
+            result = collect_project_logs(project, selected_channel)
+            if quiet:
+                continue
+            state = "source-missing" if result.source_missing else "ok"
+            print(
+                f"[{result.project_id}:{result.channel}] {state} "
+                f"copied={len(result.copied)} unchanged={result.unchanged}"
+            )
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     arguments = build_parser().parse_args(argv)
     try:
@@ -211,9 +239,12 @@ def main(argv: Sequence[str] | None = None) -> None:
                 arguments.model,
                 arguments.print_only,
             )
+        elif arguments.command == "collect-logs":
+            code = run_collect_logs(arguments.project, arguments.channel, arguments.quiet)
         else:
             raise PolicyError(f"지원하지 않는 command입니다: {arguments.command}")
     except PolicyError as error:
         print(f"agent-policy: {error}", file=sys.stderr)
-        raise SystemExit(2) from error
+        exit_code = 1 if arguments.command == "collect-logs" else 2
+        raise SystemExit(exit_code) from error
     raise SystemExit(code)

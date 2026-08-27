@@ -23,6 +23,7 @@ projects/               대상 경로·명령과 legacy 감사 스냅샷
 lib/agent_policy/       결정적 렌더링과 manifest 로직
 bin/agent-policy        운영 CLI
 tests/                  중앙 단위 테스트
+logs/projects/          프로젝트·채널별 필수 산출물 Git 사본
 ```
 
 ## 명령
@@ -32,15 +33,19 @@ bin/agent-policy audit
 bin/agent-policy diff --project all
 bin/agent-policy check --project all
 bin/agent-policy sync --project all
+bin/agent-policy collect-logs --project all --channel all
 bin/agent-policy start --project user-ui --host codex --model <model>
 ```
 
 `sync`는 소비자 프로젝트를 변경합니다. 먼저 `diff`를 검토하고 별도 승인을 받은 뒤 실행합니다. 기존 중앙화 시도의 잔여 파일은 기본 sync에서 삭제하지 않으며, 감사 스냅샷과 SHA-256이 일치할 때만 `--retire-legacy`로 퇴역합니다.
 
+`collect-logs`는 프로젝트의 필수 산출물 8종만 `logs/projects/{project}/{channel}/sessions/`로 복사합니다. `logic`은 `.codex/logs/sessions/`, `claude`는 `.claude/logs/sessions/`를 뜻합니다. 같은 내용은 건너뛰고 변경된 파일만 원자적으로 교체하며, 프로젝트에서 삭제된 파일을 중앙 사본에서 자동 삭제하지 않습니다. Git add·commit은 자동 실행하지 않습니다.
+
 ## 세션 동작
 
 - Codex와 Claude Code는 SessionStart hook에서 중앙 source digest와 로컬 파일 hash를 검사합니다.
 - OpenCode는 plugin 로드 시 같은 검사를 사용자에게 경고하고, `start` wrapper는 drift가 있으면 실행을 중단합니다.
+- Codex와 Claude Code는 Stop hook에서 각자의 필수 산출물을 수집하고, OpenCode는 `session.idle`에서 Logic 산출물을 수집합니다.
 - 세 호스트 모두 managed file 편집과 명시적인 shell write를 차단합니다.
 - 에이전트가 제안한 모든 Git 명령과 build/dev/start/preview 계열 명령은 실행 전에 사용자가 직접 판단합니다.
 - 중앙 원본을 바꾼 뒤 sync하고 실행 중인 세션을 handoff한 다음 새 세션을 시작해야 합니다.
@@ -62,3 +67,10 @@ bin/agent-policy start --project user-ui --host codex --model <model>
 OpenCode V2는 `permission`/`bash` 대신 `permissions`/`shell` 규칙 배열을 사용합니다. 현재 adapter는 설치된 OpenCode 1.18.19의 V1 스키마를 대상으로 하므로 V2로 올릴 때 config renderer와 smoke test를 함께 마이그레이션해야 합니다.
 
 정책 훅이 중앙 manifest와 저장소 루트를 찾기 위해 수행하는 내부 읽기 전용 저장소 확인은 에이전트가 제안하는 Git 작업과 구분합니다.
+
+## 중앙 로그 운영
+
+- 활성 세션 중에는 소비자 프로젝트의 로그가 원본이며 중앙 로그는 별도 Git 이력용 사본입니다.
+- 자동 수집 실패는 stderr에 표시하고 다음 Stop 또는 `session.idle`에서 다시 시도합니다. 필요하면 중앙 저장소에서 `collect-logs`를 직접 실행합니다.
+- `logs/**`에만 있는 미커밋 변경은 정책 `sync`의 청결 판정을 막지 않습니다. `policy/`, `adapters/`, `projects/`, `lib/` 등 정책 소스의 미커밋 변경은 계속 sync를 차단합니다.
+- 중앙 로그도 일반 파일처럼 검토 후 사용자가 승인한 Git 명령으로 커밋합니다.

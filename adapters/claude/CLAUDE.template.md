@@ -80,3 +80,4 @@ UI_COMPLETE
 - 공통 `AGENTS.md`의 산출물 의미와 필수 항목을 따르되 Claude Code 세션은 `.claude/logs/sessions/{YYYY-MM-DD-task-slug}/`에 기록한다.
 - `.codex/logs/**`는 Logic Session 소유로 계속 읽기 전용이다.
 - 이 위치 치환은 산출물 누락을 허용하는 예외가 아니다.
+- Claude Stop hook은 완성된 필수 산출물을 중앙 정책 저장소의 `logs/projects/{{PROJECT_ID}}/claude/sessions/`에 복사한다. 자동 수집이 실패하면 오류를 사용자에게 알리고 중앙 프로젝트에서 재수집한다.

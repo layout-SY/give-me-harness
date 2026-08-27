@@ -15,6 +15,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from agent_policy.core import (
     MANIFEST_RELATIVE,
     ProjectConfig,
+    central_is_clean,
     diff_project,
     render_project,
     sync_project,
@@ -76,6 +77,18 @@ class SyncTests(unittest.TestCase):
 
     def test_render_is_deterministic(self) -> None:
         self.assertEqual(render_project(self.project), render_project(self.project))
+
+    @patch("agent_policy.core.subprocess.run")
+    def test_central_clean_check_ignores_only_central_logs(self, run: object) -> None:
+        run.return_value.returncode = 0
+        run.return_value.stdout = "?? logs/projects/user-ui/logic/sessions/task/plan.md\n"
+        self.assertTrue(central_is_clean())
+
+        run.return_value.stdout = " M policy/common/AGENTS.template.md\n"
+        self.assertFalse(central_is_clean())
+
+        run.return_value.stdout = "R  policy/old.md -> logs/old.md\n"
+        self.assertFalse(central_is_clean())
 
     @patch("agent_policy.core.central_is_clean", return_value=True)
     def test_rendered_consumer_guard_tests_pass(self, _clean: object) -> None:

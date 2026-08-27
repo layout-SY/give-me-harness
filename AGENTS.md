@@ -18,6 +18,7 @@
 - 기계적 차단과 drift 검사: `policy/guards/`
 - 호스트 형식: `adapters/codex/`, `adapters/claude/`, `adapters/opencode/`
 - 프로젝트 경로와 명령: `projects/*.json`
+- 필수 세션 산출물 아카이브: `logs/projects/{project}/{channel}/sessions/`
 - 소비자별 기능 정책은 V1 범위에 없으며 임의 overlay를 만들지 않는다.
 
 ## 안전 규칙
@@ -26,6 +27,8 @@
 - manifest에 기록되지 않은 소비자 파일을 삭제하지 않는다.
 - legacy 파일은 감사 시 고정한 SHA-256과 일치하고 `--retire-legacy`가 명시된 경우에만 퇴역한다.
 - 모델 이름은 정책과 분리한다. 호스트와 모델은 `start`의 독립 인자다.
+- 활성 작업의 로그 원본은 소비자 프로젝트에 두고 중앙 로그는 추가·변경만 반영하는 Git 사본으로 관리한다.
+- 중앙 로그를 자동 삭제하거나 Git add·commit하지 않는다. `logs/**`만 변경된 상태는 정책 source digest와 sync 청결 판정에서 제외한다.
 
 ## 커밋 메시지
 
