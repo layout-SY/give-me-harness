@@ -1,0 +1,8 @@
+__pycache__/
+*.pyc
+.DS_Store
+.*.sync.tmp
+
+build/
+state/
+logs/

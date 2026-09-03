@@ -1,0 +1,19 @@
+version: 1
+required:
+  - role
+  - status
+  - summary
+  - evidence
+properties:
+  role:
+    enum: [planner, publisher, generator, refactorer, watcher, evaluator]
+  status:
+    enum: [planned, awaiting_approval, implemented, pass, fail, blocked, evaluated]
+  summary:
+    type: string
+  evidence:
+    type: array
+    items:
+      type: string
+  next_action:
+    type: string

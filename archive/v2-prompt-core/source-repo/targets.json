@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "targets": [
+    {
+      "id": "user-ui",
+      "name": "asan-metaverse-user-ui",
+      "path": "/Users/okand/SynologyDrive/asan-metaverse-user-ui",
+      "base_branch": "sy-main",
+      "hosts": ["codex", "claude", "opencode"],
+      "commands": [
+        {"label": "개발", "command": "npm run dev"},
+        {"label": "빌드/타입 검증", "command": "npm run build"},
+        {"label": "린트", "command": "npm run lint"},
+        {"label": "테스트", "command": "npm run test"},
+        {"label": "프리뷰", "command": "npm run preview"}
+      ]
+    },
+    {
+      "id": "admin-ui",
+      "name": "asan-metaverse-admin-ui",
+      "path": "/Users/okand/SynologyDrive/asan-metaverse-admin-ui",
+      "base_branch": "sy-main",
+      "hosts": ["codex", "claude", "opencode"],
+      "commands": [
+        {"label": "개발", "command": "npm run dev"},
+        {"label": "빌드/타입 검증", "command": "npm run build"},
+        {"label": "린트", "command": "npm run lint"},
+        {"label": "테스트", "command": "npm run test"},
+        {"label": "프리뷰", "command": "npm run preview"}
+      ]
+    }
+  ]
+}

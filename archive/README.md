@@ -48,7 +48,8 @@
 - `deployed/user-ui/`, `deployed/admin-ui/`: 삭제 직전 소비자 정책 디렉터리 전량 스냅샷.
   세션 산출물 로그를 포함한다. `collect-logs`는 정해진 8종과 `handoff.md`, `unknown/`만
   수집하므로 그 밖의 이름을 가진 기록 9건은 이 스냅샷에만 남는다.
-- `source-repo/`: 원본 저장소 작업 트리. 생성물인 `build/`, `state/`와 `.git/`은 제외한다.
+- `source-repo/`: 원본 저장소 작업 트리 720개. 생성물인 `build/`(62MB), `state/`(146MB)와
+  `.git/`은 제외한다. 원본 저장소는 커밋이 하나도 없고 140개가 index에만 올라간 상태였다.
 
 `deployed/admin-ui/` 안에는 V1으로 분류한 파일도 그대로 들어 있다. `deployed/`는 삭제 시점의
 있는 그대로의 스냅샷이고 `v1-admin-ui-pre-core/`는 세대 분류 추출본이다. 중복은 의도한 것이다.
@@ -58,5 +59,9 @@
 
 ## 강제 포함한 파일
 
-`deployed/*/.opencode/.gitignore`는 자기 자신과 `package.json`, `package-lock.json`을 무시하도록
-작성되어 있어 복사 후에도 Git에서 제외됐다. 스냅샷 충실도를 위해 `git add -f`로 포함했다.
+복사된 트리 안의 `.gitignore`가 스냅샷 자신을 가리는 경우가 있어 `git add -f`로 포함했다.
+
+- `deployed/*/.opencode/.gitignore`: 자기 자신과 `package.json`, `package-lock.json`을 무시한다.
+- `source-repo/.gitignore`: `logs/`를 무시한다. 원본 저장소의 세션 기록 574개가 여기에 해당한다.
+
+`MANIFEST.sha256`은 자기 자신을 제외한 전체 파일의 SHA-256이며 `shasum -a 256 -c`로 검증한다.
