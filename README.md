@@ -1,5 +1,7 @@
 # asan-agent-policy
 
+처음 설정하거나 실제 세션·branch·worktree 흐름을 확인하려면 [중앙 정책 사용 가이드](docs/usage-guide.md)를 먼저 읽습니다. 정책의 설계 근거와 상태 전이는 [브랜치·worktree·세션 운영 전략 V3](docs/branch-worktree-session-strategy.md)에 있습니다.
+
 두 프런트엔드 저장소가 같은 AI 작업 정책을 사용하도록 만드는 독립 중앙 원본입니다. 공통 의미는 한 번만 보관해 소비자 `.agent-policy/common/**`에 렌더하고 Codex, Claude Code, OpenCode의 파일·훅·skill discovery 형식 차이는 adapter에서 처리합니다.
 
 ## 핵심 원칙
@@ -60,6 +62,8 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 실행 전에 실제 명령과 환경만 확인하려면 `--print-only`를 붙입니다. 긴 system prompt는 출력하지 않고 해당 번들의 `system-prompt.md` 경로로 표시합니다.
 
 기본 세션 cwd는 `projects/*.json`의 프로젝트 경로입니다. 승인된 격리 worktree에서 시작할 때는 `--worktree <path> --branch task/<name>`을 사용합니다. `--session-dir`은 선택 host에 맞춰 `.codex/logs/sessions/<task>`, `.claude/logs/sessions/<task>` 또는 `.opencode/logs/sessions/<task>`를 지정합니다. 도구는 지정 경로가 같은 Git 저장소인지와 현재 branch가 일치하는지만 확인하며 branch를 임의 전환하지 않습니다.
+
+격리 worktree 생성이 언제나 새 세션을 뜻하지는 않습니다. 한 세션의 활성 task가 하나인 동안에는 현재 세션이 승인된 worktree를 도구 `workdir` 또는 `git -C` 대상으로 사용해 계속할 수 있습니다. 이전 task가 `CLOSED`이면 같은 세션에서 다음 task로 전환할 수 있고, 미완료 task를 `PRESERVED`로 남겨 다른 task를 병행할 때만 별도 worktree·세션이 필요합니다. sync hook은 실행 cwd가 아니라 `projects/*.json`에 등록된 소비자 기본 checkout의 절대 runtime 경로를 사용합니다.
 
 ## 세션 동작
 

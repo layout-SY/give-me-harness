@@ -1,0 +1,701 @@
+# asan-agent-policy 사용 가이드
+
+이 문서는 중앙 정책으로 Codex, Claude Code, OpenCode 세션을 시작하고, 승인된 작업 branch와 worktree에서 구현한 뒤 검증·병합·종료하는 실제 사용 절차를 설명한다.
+
+정책의 설계 근거와 상세 상태 전이는 [브랜치·worktree·세션 운영 전략 V3](branch-worktree-session-strategy.md), 역할별 세부 책임은 소비자에 렌더되는 task-role-routing과 git-branch-strategy 스킬을 정본으로 삼는다.
+
+## 1. 가장 먼저 알아둘 원칙
+
+- host는 실행 환경이고 role은 현재 세션의 책임이다. Codex, Claude Code, OpenCode 중 어느 host도 Logic, UI 또는 오케스트레이션을 고정 소유하지 않는다.
+- 한 세션에는 한 시점에 하나의 ACTIVE task만 둔다.
+- 하나의 세션에서 여러 task를 순차적으로 수행할 수 있다. 단, 이전 task가 검증·병합까지 끝나 CLOSED 상태여야 한다.
+- 기준 branch가 dirty이면 기존 변경을 commit, stash, reset 또는 restore하지 않는다. 승인 계약에 격리 worktree를 포함해 별도 index와 작업 폴더를 만든다.
+- 격리 worktree를 만들었다는 이유만으로 새 세션을 열 필요는 없다. 현재 ACTIVE task가 하나라면 기존 세션이 그 worktree를 도구 workdir 또는 git -C 대상으로 사용해 계속할 수 있다.
+- 미완료 task를 PRESERVED로 남겨 놓고 다른 task를 병행하거나, host·role·담당자를 인계할 때는 별도 worktree와 세션을 사용한다.
+- 소비자 저장소의 관리 정책 파일은 직접 수정하지 않는다. 중앙 원본을 변경한 뒤 mode에 맞는 재적용 절차를 따른다.
+- Git push, git reset --hard, git clean, git update-ref는 승인으로 해제되지 않는 사용자 전용 명령이다.
+
+## 2. 저장소와 용어
+
+### 중앙 정책 저장소
+
+~~~text
+/Users/okand/SynologyDrive/asan-agent-policy
+~~~
+
+중앙 원본의 주요 위치는 다음과 같다.
+
+| 경로 | 용도 |
+| --- | --- |
+| policy/common/ | 모든 host가 공유하는 정책과 skill 정본 |
+| policy/guards/ | 파일, 명령, branch, 산출물 소유권 guard |
+| adapters/codex/ | Codex 형식 adapter |
+| adapters/claude/ | Claude Code 형식 adapter |
+| adapters/opencode/ | OpenCode 형식 adapter |
+| projects/*.json | 소비자 경로, 기준 branch와 검증 명령 |
+| lib/agent_policy/ | 렌더링, inject, sync와 manifest 구현 |
+| bin/agent-policy | 중앙 운영 CLI |
+| build/ | source digest별 inject 번들 |
+| state/ | inject host의 지속 상태 |
+| logs/projects/ | 소비자 세션 산출물의 중앙 Git 사본 |
+
+### 등록된 소비자
+
+| project 인자 | 소비자 저장소 | 기준 branch |
+| --- | --- | --- |
+| user-ui | asan-metaverse-user-ui | sy-main |
+| admin-ui | asan-metaverse-admin-ui | sy-main |
+
+### 핵심 용어
+
+| 용어 | 의미 |
+| --- | --- |
+| primary checkout | projects/*.json에 등록된 소비자 기본 폴더 |
+| task branch | `task/ascii-kebab-summary` 형식의 승인된 작업 branch |
+| worktree | 같은 Git object를 공유하면서 작업 폴더와 index를 분리한 공간 |
+| branch task 계약 | parent, 전체 parent SHA, 역할, scope, integrator, worktree 등을 고정한 계약 |
+| session assignment | 현재 세션의 role, task, 산출물 위치와 owner/contributor 책임 |
+| Git integrator | 해당 task에서 index, commit과 완료 workflow를 담당하는 유일한 주체 |
+| ACTIVE | 현재 구현 가능한 task |
+| PRESERVED | handoff 후 미완료 상태로 보존된 task |
+| CLOSED | merge, 사후 검증과 종료 기록이 모두 완료된 task |
+
+## 3. sync와 inject 중 무엇을 선택할까
+
+### sync mode
+
+sync는 중앙 렌더 결과를 소비자 저장소에 배포하고, 소비자의 manifest와 관리 파일이 중앙 결과와 정확히 일치할 때만 세션을 시작한다.
+
+적합한 경우:
+
+- 소비자에 배포된 안정 버전을 팀 공통 정책으로 사용할 때
+- 여러 번의 세션이 동일한 배포본을 사용해야 할 때
+- 중앙 변경을 검토·승인한 뒤 소비자 전체에 반영할 때
+
+주의 사항:
+
+- start의 기본 mode는 sync다.
+- 소비자 drift가 있으면 start가 중단된다.
+- 중앙 정책을 수정한 뒤에는 별도 승인을 받아 sync하고 실행 중인 소비자 세션을 재시작해야 한다.
+- 외부 worktree의 hook도 primary checkout에 배포된 runtime의 절대 경로를 사용하므로, 해당 worktree에 .agent-policy 복사본이 없어도 된다.
+
+### inject mode
+
+inject는 선택한 host와 role에 필요한 정책만 중앙 build 디렉터리의 불변 digest 번들로 만들고 세션에 직접 주입한다. 소비자 정책 파일과 manifest는 수정하지 않는다.
+
+적합한 경우:
+
+- 중앙 정책 최신본을 소비자 sync 없이 바로 시험할 때
+- host와 role별로 필요한 문서만 바인딩할 때
+- 소비자 정책 파일에 drift가 있어도 중앙 번들 기준으로 작업해야 할 때
+
+주의 사항:
+
+- inject는 --role이 필수다.
+- 소비자 drift는 경고하지만 세션 시작을 막지 않는다.
+- 실행 중인 세션은 기존 번들을 계속 사용한다. 중앙 정책이 바뀌면 기존 세션을 단순 복원하지 말고 중앙 launcher를 다시 실행해야 한다.
+- inject 정책 변경에는 소비자 sync가 필요하지 않다.
+
+### 선택 요약
+
+| 상황 | 권장 mode | 필요한 재적용 |
+| --- | --- | --- |
+| 배포된 공통 정책으로 일상 작업 | sync | 중앙 변경 후 sync + 새 세션 |
+| 중앙 최신 정책 즉시 사용 | inject | 중앙 launcher로 새 inject 세션 |
+| 소비자 drift가 있지만 중앙 정책 시험 | inject | sync 불필요 |
+| 팀 전체 소비자 정책 갱신 | sync | diff 검토와 별도 sync 승인 |
+
+## 4. role과 산출물 책임 선택
+
+inject에서 사용할 수 있는 role은 다음과 같다.
+
+| role | 주요 책임 |
+| --- | --- |
+| logic | API, DTO, parser, validator, hook, util, store, 상태와 데이터 흐름 |
+| ui | 화면 구조, JSX/TSX, CSS, 자산, 접근성, 반응형과 시각적 상태 |
+| orchest | 조사, 작업 분류, 계획, 역할·소유권과 승인 게이트 |
+| review | 구현 변경 없는 검토와 판정 |
+| generate | 승인된 handoff와 branch scope를 기반으로 한 구현 |
+
+role은 host와 독립적이다. 예를 들어 Claude Code를 logic으로, Codex를 ui로, OpenCode를 orchest로 실행할 수 있다.
+
+산출물 책임은 --responsibility로 선택한다.
+
+| 값 | 책임 |
+| --- | --- |
+| owner | 필수 산출물 8종, 완료 proposal, merge·verify·close |
+| contributor | 부분 결과와 handoff.md, Git 완료 workflow 수행 불가 |
+
+role과 responsibility도 서로 다른 개념이다. UI role 세션이 owner일 수도 있고 contributor일 수도 있다.
+
+## 5. 세션 시작
+
+중앙 CLI 명령은 다음 저장소에서 실행한다.
+
+~~~sh
+cd /Users/okand/SynologyDrive/asan-agent-policy
+~~~
+
+### sync 세션
+
+~~~sh
+bin/agent-policy start \
+  --project user-ui \
+  --host codex \
+  --mode sync \
+  --model MODEL_NAME
+~~~
+
+sync mode에서는 --role을 전달하지 않는다. 세션이 사용자 요청과 handoff를 읽고 역할을 제안하며 사용자 확인을 받는다.
+
+### inject 세션
+
+~~~sh
+bin/agent-policy start \
+  --project user-ui \
+  --host claude \
+  --mode inject \
+  --role ui \
+  --model MODEL_NAME
+~~~
+
+inject의 --role은 세션 시작 시 이미 확인된 역할 계약이다. 현재 요청이 해당 role의 경계를 벗어나면 세션 안에서 역할을 확장하지 않고 올바른 role로 새 세션을 시작한다.
+
+### 실행 전에 구성 확인
+
+실제 host를 실행하지 않고 cwd, bundle, 환경과 명령을 확인하려면 --print-only를 붙인다.
+
+~~~sh
+bin/agent-policy start \
+  --project user-ui \
+  --host claude \
+  --mode inject \
+  --role ui \
+  --print-only
+~~~
+
+inject 출력의 hook 경로는 다음처럼 중앙 build 번들 아래의 절대 경로여야 한다.
+
+~~~text
+.../build/<project>/<host>-<role>-<digest>/policy/.agent-policy/runtime/managed_policy_guard.py
+~~~
+
+sync 출력과 실제 배포 파일의 hook 경로는 projects/*.json에 등록된 primary checkout의 절대 runtime 경로를 사용한다.
+
+### 기존 task worktree에서 세션 시작
+
+다음은 소비자 관리 파일 복사본이 없는 외부 worktree에서도 독립 bundle을 주입할 수 있는 inject 예시다.
+
+~~~sh
+bin/agent-policy start \
+  --project admin-ui \
+  --host claude \
+  --mode inject \
+  --role ui \
+  --responsibility owner \
+  --worktree /absolute/path/to/admin-ui-spinner \
+  --branch task/fix-loading-spinner-layout \
+  --task task/fix-loading-spinner-layout \
+  --session-dir .claude/logs/sessions/2026-09-03-fix-loading-spinner
+~~~
+
+launcher는 다음을 확인한다.
+
+- worktree 경로가 실제 Git worktree 루트인지
+- 등록된 소비자와 같은 Git 저장소인지
+- 현재 branch가 --branch 및 --task와 일치하는지
+- --session-dir가 선택 host의 산출물 경로 형식인지
+
+조건이 맞으면 launcher가 직접 해당 worktree를 세션 cwd로 사용한다. 사용자가 먼저 worktree로 cd할 필요는 없다.
+
+현재 sync 운영은 primary checkout에 배포된 host 설정을 기준으로 한다. 따라서 sync 세션은 primary에서 시작한 뒤 승인된 외부 worktree를 도구 workdir 또는 git -C 대상으로 사용하는 것이 기본이다. 외부 worktree 자체에 새 host 세션을 열어야 하고 그곳에 관리 설정 파일이 없다면 inject mode를 사용한다. primary의 절대 runtime hook 수정은 이미 로드된 sync hook이 외부 worktree를 대상으로 실행될 때 runtime을 잃지 않게 하는 변경이며, 외부 폴더에 host 설정 파일을 자동 복제한다는 뜻은 아니다.
+
+## 6. 새 요청을 받았을 때
+
+### 읽기 전용 조사
+
+설명, 진단, 리뷰처럼 저장소를 변경하지 않는 요청은 새 branch를 만들지 않고 진행할 수 있다.
+
+### 변경 요청
+
+구현 전에는 다음 두 종류의 승인이 필요하다.
+
+1. 역할·구현 계획 승인
+2. immutable branch proposal 승인
+
+역할·구현 계획 승인에는 역할, 수정 범위, 조사한 재사용 후보, 구현 전략, 검증 방법과 예상 영향을 포함한다.
+
+branch 승인은 계획 승인과 별도다. branch_workflow.py가 생성한 proposal 파일 경로와 64자리 SHA-256 전체값을 사용자에게 제시하고 독립된 승인을 받아야 한다.
+
+## 7. clean sy-main에서 task 시작
+
+현재 sy-main worktree가 clean하고 다른 작업이 사용 중이지 않으면 별도 worktree 없이 task branch를 만들 수 있다.
+
+먼저 현재 상태를 확인한다.
+
+~~~sh
+git status --short --branch
+git worktree list
+~~~
+
+inject 세션에서는 system prompt에 바인딩된 snapshot 내부 branch_workflow.py의 절대 경로를 사용한다. sync 세션에서는 소비자의 다음 경로를 사용한다.
+
+~~~text
+.agent-policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py
+~~~
+
+이하 branch_workflow.py 명령은 중앙 정책 저장소가 아니라 해당 소비자 primary checkout 또는 계약에 지정된 task worktree를 실행 cwd로 사용한다. host 도구의 workdir를 명시하면 사용자가 직접 cd할 필요가 없다.
+
+proposal 예시:
+
+~~~sh
+python3 <absolute-branch-workflow.py> proposal \
+  --branch task/add-comment-favorite-icons \
+  --purpose "댓글 좋아요 글리프를 공통 SVG 아이콘으로 교체" \
+  --parent sy-main \
+  --role ui \
+  --git-integrator claude \
+  --scope src/shared/assets/icons \
+  --scope src/features/citizen-participation \
+  --scope DESIGN.md \
+  --reason "sy-main이 clean이고 기존 미병합 작업과 경로가 겹치지 않음"
+~~~
+
+proposal 출력에서 다음 두 값을 그대로 사용한다.
+
+- proposal JSON의 절대 경로
+- 64자리 전체 SHA-256
+
+축약 SHA를 사용하면 승인 요청 식별자가 달라지므로 차단된다.
+
+사용자가 해당 proposal을 독립된 메시지로 승인한 뒤 create를 실행한다.
+
+~~~sh
+python3 <absolute-branch-workflow.py> create \
+  --proposal-file <printed-absolute-json-path> \
+  --proposal-sha256 <printed-64-character-sha256>
+~~~
+
+create는 proposal bytes, SHA-256, parent 전체 HEAD, branch, role, scope, integrator와 worktree 계약을 다시 검증하고 ACTIVE metadata를 기록한다.
+
+## 8. dirty sy-main에서 격리 worktree 시작
+
+sy-main에 다른 세션의 미커밋 변경이 있으면 다음 작업을 하지 않는다.
+
+- 기존 변경을 임의 commit
+- stash
+- reset
+- restore
+- dirty 변경을 새 task branch에 그대로 데려가기
+
+대신 저장소 바깥의 새 worktree 경로를 proposal에 포함한다.
+
+~~~sh
+python3 <absolute-branch-workflow.py> proposal \
+  --branch task/fix-loading-spinner-layout \
+  --purpose "공통 Loading spinner의 크기와 정렬 오류 수정" \
+  --parent sy-main \
+  --role ui \
+  --git-integrator claude \
+  --scope src/shared/ui/loading \
+  --scope src/shared/assets/css/_default.css \
+  --reason "primary sy-main에 다른 작업의 미커밋 변경이 있어 index와 working tree를 격리해야 함" \
+  --worktree /absolute/path/outside-primary/admin-ui-spinner
+~~~
+
+승인 후 동일한 proposal 파일과 전체 SHA-256으로 create한다. branch_workflow.py가 승인된 branch와 worktree를 함께 만든다. raw git worktree add 또는 git checkout -b로 우회 생성하지 않는다.
+
+### 기존 세션에서 계속하는 방법
+
+격리 worktree를 만들었더라도 현재 세션의 ACTIVE task가 하나라면 새 세션을 만들 필요가 없다.
+
+- 파일 도구에는 격리 worktree의 절대 경로를 전달한다.
+- shell 명령에는 도구의 workdir를 격리 worktree로 지정하거나 `git -C WORKTREE_PATH`를 사용한다.
+- guard는 세션 시작 cwd가 아니라 실제 변경 대상 worktree의 branch, metadata와 scope를 확인한다.
+
+허용되는 방향:
+
+~~~sh
+git -C /absolute/path/to/admin-ui-spinner add -- src/shared/ui/loading/loading.tsx
+~~~
+
+차단되는 방향:
+
+~~~sh
+git -C /absolute/path/to/primary-sy-main add -- src/shared/ui/loading/loading.tsx
+~~~
+
+task worktree에서 primary sy-main의 index를 변경하는 것은 현재 cwd와 관계없이 차단된다.
+
+## 9. 같은 세션에서 여러 task 수행
+
+하나의 세션은 여러 task를 순차 처리할 수 있지만 동시에 두 ACTIVE task를 가질 수 없다.
+
+### 이전 task가 CLOSED인 경우
+
+같은 세션에서 다음 task로 이동할 수 있다.
+
+1. 이전 task가 merge·사후 검증·close까지 완료됐는지 확인
+2. 다음 task의 새 proposal 승인 및 create
+3. 다음 task용 새 산출물 디렉터리를 구조화된 Write 도구로 최초 작성
+4. 이후 source와 Git mutation을 새 task에 귀속
+
+이때 새 세션이나 새 worktree가 항상 필요한 것은 아니다. 기준 worktree가 clean하고 다른 작업과 충돌하지 않으면 재사용할 수 있다.
+
+### 이전 task가 ACTIVE인 경우
+
+다른 task로 전환할 수 없다. 먼저 현재 task를 완료하거나 PRESERVED로 전환해야 한다.
+
+### 이전 task가 PRESERVED인 경우
+
+현재 task의 handoff.md를 작성하고 preserve한다.
+
+~~~sh
+python3 <absolute-branch-workflow.py> preserve \
+  --reason "외부 의존성 확인 전까지 현재 변경과 worktree를 보존"
+~~~
+
+PRESERVED worktree에는 애플리케이션·산출물 쓰기가 차단된다. 다른 task를 병행하려면 별도 worktree와 별도 세션을 사용한다.
+
+해당 task로 돌아오면 그 worktree에서 resume한다.
+
+~~~sh
+python3 <absolute-branch-workflow.py> resume
+~~~
+
+## 10. 파일과 Git 작업 규칙
+
+### 구조화된 파일 도구 사용
+
+파일 생성·수정·삭제는 경로를 명시적으로 전달하는 Edit, Write 또는 apply_patch 계열 도구를 사용한다.
+
+Bash heredoc, tee 또는 redirect로 산출물을 만들면 session assignment 귀속이 기록되지 않아 Stop hook에서 차단될 수 있다.
+
+잘못된 예:
+
+~~~sh
+python3 - <<'PY' > .claude/logs/sessions/example/plan.md
+print("plan")
+PY
+~~~
+
+올바른 방식:
+
+- host의 Write/Edit 도구로 정확한 파일 경로를 전달
+- apply_patch로 파일 단위 변경
+
+stderr만 터미널로 전달하는 2>&1 또는 /dev/null redirect는 파일 산출물 쓰기로 보지 않지만, managed file을 redirect 대상으로 숨길 수는 없다.
+
+### Git 대상 명시
+
+stage는 path separator를 포함해 실행한다.
+
+~~~sh
+git add -- src/path/to/file.ts
+~~~
+
+파일 복원은 승인 scope의 구체 경로에 git restore를 사용한다.
+
+~~~sh
+git restore -- src/path/to/file.ts
+~~~
+
+다음 형식은 사용하지 않는다.
+
+~~~sh
+git checkout -- src/path/to/file.ts
+~~~
+
+checkout은 파일 복원과 branch 전환이 혼동될 수 있어 차단된다.
+
+### 명령 분리
+
+branch 전환과 merge·commit을 한 복합 명령에 넣지 않는다.
+
+잘못된 예:
+
+~~~sh
+git checkout sy-main && git merge task/example
+~~~
+
+전환 후 실제 branch와 worktree를 검증할 수 있도록 각각 별도 호출로 실행한다. V3 task의 실제 merge는 raw git merge가 아니라 승인된 finish workflow를 사용한다.
+
+### Git repository 우회 금지
+
+guard는 git -C와 --git-dir/--work-tree의 실제 대상 저장소를 계산한다. 다음 형태로 저장소 대상을 숨기거나 index를 바꾸지 않는다.
+
+- GIT_DIR 또는 GIT_WORK_TREE 환경 변수
+- cd 또는 pushd 뒤 Git 실행
+- env -C
+- 대상 worktree와 일치하지 않는 --git-dir/--work-tree 조합
+
+해석할 수 없거나 Git directory와 worktree가 일치하지 않으면 fail-closed로 차단한다.
+
+### 사용자 전용 명령
+
+다음 명령은 host 승인 UI나 채팅 승인을 받아도 에이전트가 실행할 수 없다.
+
+- git push
+- git reset --hard
+- git clean
+- git update-ref
+
+에이전트는 필요한 이유, 정확한 대상과 영향을 설명하고 사용자에게 실행을 양도한다.
+
+## 11. 산출물과 handoff
+
+### owner 필수 산출물 8종
+
+| 파일 | 목적 |
+| --- | --- |
+| plan.md | 목표, 범위, 승인, 구현·검증 계획 |
+| exploration.md | 기존 구조, 재사용 후보와 문제 근거 |
+| implementation-log.md | 실제 변경, 결정과 진행 중 해결한 문제 |
+| grill-me-review.md | 반론, 위험, 대안과 정책 위반 가능성 점검 |
+| review-log.md | 변경 결과에 대한 결함 중심 검토 |
+| evaluation-log.md | 테스트 결과, 장기 영향과 후속 개선 |
+| final-summary.md | 완료 결과, 변경 파일, 검증과 남은 작업 |
+| portfolio-log.md | 문제·선택·구현·기술 목적·검증을 사례 형식으로 기록 |
+
+host별 정본 위치:
+
+~~~text
+Codex       .codex/logs/sessions/<session-name>/
+Claude Code .claude/logs/sessions/<session-name>/
+OpenCode    .opencode/logs/sessions/<session-name>/
+~~~
+
+산출물 최초 파일 작성에는 반드시 구조화된 Write 계열 도구를 사용한다.
+
+### contributor handoff
+
+contributor는 handoff.md에 다음 내용을 기록한다.
+
+- 목표와 현재 상태
+- requested_roles, confirmed_roles, completed_roles, next_role
+- 완료·대기 작업
+- 변경 경로와 파일 소유권
+- branch, worktree, task, Git integrator
+- 실행한 검증과 실행하지 않은 검증
+- 차단 요인과 다음 조치
+
+handoff의 next_role은 제안이지 자동 권한이 아니다.
+
+### 다른 host와 세션의 문서
+
+- 읽기: 허용
+- 수정·덮어쓰기: 금지
+- 정의되지 않은 보조 문서: 현재 세션 디렉터리의 unknown/에 기록
+- host를 식별할 수 없는 기록: .agent-policy/logs/unknown/sessions/ 사용
+
+## 12. 구현 완료와 병합
+
+구현, owner 산출물 8종, 검증과 source branch commit이 끝나면 완료 proposal을 만든다.
+
+finish-proposal은 source task worktree에서 실행하고, 승인된 finish·verify·close는 workflow가 요구하는 target 상태를 매 단계 다시 확인할 수 있도록 각각 별도 호출한다.
+
+~~~sh
+python3 <absolute-branch-workflow.py> finish-proposal \
+  --source task/add-comment-favorite-icons \
+  --verify-command "npm run lint" \
+  --verify-command "npm run test" \
+  --verify-command "npm run build" \
+  --cleanup
+~~~
+
+finish proposal에는 다음 값이 포함된다.
+
+- source와 target 전체 HEAD
+- ff-only merge 방식
+- 사후 검증 명령
+- cleanup 여부
+- proposal 파일 절대 경로
+- 64자리 SHA-256
+
+사용자에게 이를 별도 prompt로 제시하고 승인받은 뒤 각 단계를 별도 명령으로 실행한다.
+
+~~~sh
+python3 <absolute-branch-workflow.py> finish \
+  --proposal-file <finish-proposal-path> \
+  --proposal-sha256 <printed-64-character-sha256>
+~~~
+
+~~~sh
+python3 <absolute-branch-workflow.py> verify \
+  --proposal-file <finish-proposal-path> \
+  --proposal-sha256 <printed-64-character-sha256>
+~~~
+
+~~~sh
+python3 <absolute-branch-workflow.py> close \
+  --proposal-file <finish-proposal-path> \
+  --proposal-sha256 <printed-64-character-sha256>
+~~~
+
+- finish: 승인된 source/target HEAD와 clean target을 확인하고 ff-only merge
+- verify: target에서 승인된 명령을 shell wrapper 없이 실행
+- close: ancestry와 clean 상태를 확인하고 CLOSED 기록
+- cleanup: finish proposal에 포함해 승인된 경우에만 격리 worktree와 local source branch 정리
+
+실패 시 자동 rollback, rebase, reset 또는 강제 삭제하지 않는다. source와 worktree를 보존하고 정확한 실패 단계를 보고한다.
+
+## 13. 중앙 정책 운영
+
+### 변경 전후 검사
+
+~~~sh
+python3 -m unittest discover -s tests -v
+bin/agent-policy audit
+bin/agent-policy diff --project all
+~~~
+
+- unittest: 렌더링, guard, inject, sync 회귀 테스트
+- audit: 중앙 계약과 각 소비자 메타데이터 검사
+- diff: 소비자에 추가·변경·퇴역될 파일 제시
+
+### sync 배포
+
+sync는 소비자 파일을 변경하므로 diff를 사용자에게 제시하고 별도 승인을 받은 뒤 실행한다.
+
+~~~sh
+bin/agent-policy sync --project all
+~~~
+
+배포 후 확인:
+
+~~~sh
+bin/agent-policy check --project all
+bin/agent-policy diff --project all
+~~~
+
+기존 중앙화 잔여 파일은 기본 sync에서 삭제하지 않는다. 감사에 고정된 SHA-256과 실제 파일이 일치하고 사용자가 퇴역을 명시적으로 승인한 경우에만 다음 옵션을 사용한다.
+
+~~~sh
+bin/agent-policy sync --project all --retire-legacy
+~~~
+
+### mode별 정책 변경 반영
+
+| 실행 중인 세션 | 중앙 정책 변경 후 조치 |
+| --- | --- |
+| sync | diff 검토 → sync 승인·배포 → handoff → 새 세션 |
+| inject | handoff → 중앙 start --mode inject 재실행 |
+
+inject에서는 sync가 필요 없다. 단순 세션 resume은 이전 digest 번들을 계속 사용할 수 있으므로 중앙 launcher를 반드시 새로 실행한다.
+
+## 14. 중앙 로그 수집
+
+세션 산출물의 정본은 소비자 worktree에 있고 중앙 logs/projects/는 Git 이력용 사본이다.
+
+~~~sh
+bin/agent-policy collect-logs \
+  --project all \
+  --channel all
+~~~
+
+특정 project 또는 host만 수집할 수도 있다.
+
+~~~sh
+bin/agent-policy collect-logs \
+  --project user-ui \
+  --channel claude
+~~~
+
+수집은 다음 원칙을 따른다.
+
+- 추가·변경 파일만 반영
+- 소비자에서 사라진 문서를 중앙에서 자동 삭제하지 않음
+- 중앙 로그를 자동 stage·commit하지 않음
+- logs/** 변경만 있는 경우 정책 source 청결 판정을 방해하지 않음
+
+## 15. 자주 발생하는 문제
+
+| 증상 | 원인 | 조치 |
+| --- | --- | --- |
+| 외부 worktree에서 hook 파일을 찾지 못함 | 오래된 sync hook이 현재 worktree에서 runtime을 찾음 | sync 세션은 수정 정책을 배포하고 재시작. inject 세션은 sync 없이 중앙 launcher로 새 번들을 만들어 재시작 |
+| inject 재시작 후에도 소비자 .claude/hooks 경로를 사용 | 현재 inject launcher가 아닌 legacy/sync 설정으로 실행 | --print-only에서 build bundle의 절대 guard 경로 확인 |
+| proposal/create가 정책 snapshot 경로 때문에 차단 | 오래된 guard가 inject snapshot workflow를 신뢰하지 못함 | 새 inject 번들로 재시작하고 system prompt가 제공한 절대 branch_workflow.py 사용 |
+| 승인 요청 식별자 불일치 | 축약 SHA 또는 다른 proposal 값 사용 | 출력된 동일 파일과 64자리 SHA-256 전체값 사용 |
+| Stop hook이 산출물 누락·귀속 오류 보고 | heredoc 또는 redirect로 산출물 생성 | 현재 session directory에 구조화된 Write 도구로 작성 |
+| `git checkout -- PATH`가 branch 전환으로 판정 | checkout 명령의 의미가 모호함 | `git restore ... -- PATH` 사용 |
+| checkout과 merge를 결합한 명령이 잘못 판정 | 전환 전 cwd·branch에서 복합 명령을 평가 | 명령을 분리하고 V3 merge는 finish workflow 사용 |
+| dirty worktree라 branch 생성 불가 | primary에 다른 작업의 변경이 존재 | 기존 변경을 건드리지 말고 proposal에 외부 --worktree 포함 |
+| primary에서 git -C task-worktree add가 차단 | 오래된 guard가 명령 cwd만 판정 | 새 정책으로 sync하거나 inject 재시작 |
+| task worktree에서 primary sy-main add가 통과 | 오래된 guard가 -C 대상을 무시 | 새 guard는 실제 대상 worktree를 판정해 차단 |
+| sync start가 소비자 drift로 중단 | manifest 또는 관리 파일이 중앙 결과와 다름 | 중앙에서 diff 확인 후 별도 승인된 sync |
+| inject에서 drift 경고 출력 | 소비자 배포본과 중앙 bundle이 다름 | inject는 계속 가능. 팀 배포가 필요할 때만 별도 sync |
+| 다른 task로 전환할 수 없음 | 현재 세션의 task가 ACTIVE 또는 기존 산출물 디렉터리에 바인딩 | 기존 task를 CLOSED로 만들거나 PRESERVED 후 별도 세션 사용 |
+| 다른 host의 산출물을 수정할 수 없음 | 산출물은 host·session별 write 소유권 적용 | 읽기만 수행하고 현재 host의 session directory 또는 handoff 사용 |
+| role 범위를 벗어난 요청이 차단 | inject role은 세션 시작 시 고정 | 올바른 --role로 새 inject 세션 시작 |
+
+## 16. 대표 실행 시나리오
+
+### 시나리오 A: 중앙 최신 정책으로 새 Logic 작업
+
+1. 중앙 저장소에서 audit
+2. inject --role logic --print-only로 bundle과 cwd 확인
+3. 실제 inject 세션 실행
+4. 사용자 요청과 기존 코드 조사
+5. 계획 승인
+6. branch proposal 생성 및 별도 승인
+7. create 후 승인 scope 구현
+8. 8종 산출물, 검증, commit
+9. finish proposal 승인
+10. finish → verify → close
+
+### 시나리오 B: sy-main이 dirty인 상태에서 독립 UI 작업
+
+1. 다른 작업의 dirty 경로와 소유권을 읽기만 함
+2. 독립 작업임을 판단하고 parent는 sy-main으로 유지
+3. proposal에 repository 밖의 worktree 절대 경로 포함
+4. 승인 후 create
+5. 현재 세션에서 해당 worktree를 workdir 또는 git -C 대상으로 사용
+6. primary dirty 파일은 건드리지 않음
+7. 완료 후 승인된 finish workflow로 sy-main에 통합·재검증
+
+### 시나리오 C: 기존 inject 세션의 정책만 갱신
+
+1. 현재 작업 상태와 산출물 기록
+2. 실행 중인 기존 세션 종료
+3. 소비자 sync는 실행하지 않음
+4. 중앙 start --mode inject를 동일 host, role, task, worktree, branch, session-dir로 다시 실행
+5. 새 bundle 절대 hook 경로 확인
+6. 기존 파일, index와 commit을 유지한 채 작업 재개
+
+### 시나리오 D: 미완료 작업을 남기고 긴급 작업 병행
+
+1. 현재 task에 handoff.md 작성
+2. preserve로 PRESERVED 기록
+3. 긴급 task용 별도 worktree와 별도 세션 생성
+4. 긴급 task를 독립적으로 완료
+5. 기존 worktree의 task로 돌아와 resume
+
+## 17. 시작·종료 체크리스트
+
+### 시작 전
+
+- project, host, mode를 선택했는가
+- inject라면 role을 선택했는가
+- owner/contributor 책임을 선택했는가
+- 현재 branch, HEAD, dirty 경로와 worktree를 확인했는가
+- 기존 ACTIVE 또는 PRESERVED task와 충돌하지 않는가
+- --print-only의 cwd와 hook 경로가 기대와 일치하는가
+
+### 구현 전
+
+- 역할과 구현 계획을 승인받았는가
+- 관련 공통 skill과 대상 코드·재사용 후보를 읽었는가
+- branch proposal 파일과 64자리 SHA-256을 별도로 승인받았는가
+- task metadata가 ACTIVE이고 scope가 정확한가
+- Git integrator가 한 명으로 정해졌는가
+
+### 완료 전
+
+- 승인 scope 안의 파일만 변경했는가
+- 다른 작업자의 dirty 파일을 건드리지 않았는가
+- owner 8종 또는 contributor handoff 책임을 충족했는가
+- lint, test, build 등 승인된 검증 결과를 기록했는가
+- source 변경과 산출물이 commit됐는가
+- finish proposal을 별도로 승인받았는가
+- finish, verify, close를 분리 실행했는가
+- 소비자 sync 또는 Git push처럼 별도 승인이 필요한 작업을 임의 실행하지 않았는가
