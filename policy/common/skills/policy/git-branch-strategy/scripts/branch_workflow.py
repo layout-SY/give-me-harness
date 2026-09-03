@@ -582,8 +582,9 @@ def create(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
         raise SystemExit(f"브랜치는 생성됐지만 계약 검증에 실패했습니다:\n{denial}")
     if worktree:
         print(
-            "격리 worktree가 생성되었습니다. 현재 세션을 handoff한 뒤 이 경로에서 "
-            f"새 세션을 시작하세요: {worktree}\n"
+            "격리 worktree가 생성되었습니다. 현재 세션의 활성 task가 이 작업 하나라면 "
+            f"도구 workdir 또는 git -C 대상으로 이 경로를 사용해 계속 진행하세요: {worktree}\n"
+            "미완료 task를 병행하거나 담당자를 인계할 때만 handoff 후 새 세션을 시작합니다.\n"
         )
     print(guard.branch_context(active_root, str(guard.BASE_BRANCH)))
     return 0

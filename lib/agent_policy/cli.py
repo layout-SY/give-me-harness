@@ -296,7 +296,11 @@ def active_project(
             f"요청한 branch와 worktree의 현재 branch가 다릅니다: "
             f"요청={expected_branch}, 현재={current_branch or 'detached HEAD'}"
         )
-    return replace(project, path=target)
+    return replace(
+        project,
+        path=target,
+        policy_path=project.policy_path or configured_path,
+    )
 
 
 def normalized_session_dir(value: str | None, host: str) -> str | None:

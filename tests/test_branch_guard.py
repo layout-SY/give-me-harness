@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -67,6 +68,65 @@ class BranchGuardTests(unittest.TestCase):
             check=True,
         )
         return branch
+
+    def configure_v3_isolated_task(self) -> tuple[str, Path]:
+        branch = "task/isolated-context"
+        worktree = Path(self.temporary_directory.name) / "approved-task-worktree"
+        parent_head = self.guard.head(self.root, "sy-main")
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", branch, str(worktree), parent_head],
+            cwd=self.root,
+            check=True,
+        )
+        roles = ("logic",)
+        scopes = ("src",)
+        purpose = "실제 Git 대상 worktree 검증"
+        reason = "기준 worktree와 task index를 분리"
+        contract = self.guard.canonical_contract(
+            branch,
+            purpose,
+            "sy-main",
+            parent_head,
+            "sy-main",
+            scopes,
+            reason,
+            str(worktree.resolve()),
+            roles,
+            "codex",
+        )
+        digest = self.guard.contract_sha256(contract)
+        for field, value in {
+            "contract-version": "3",
+            "task-id": branch.removeprefix("task/"),
+            "purpose": purpose,
+            "parent": "sy-main",
+            "parent-head": parent_head,
+            "merge-target": "sy-main",
+            "proposal": f"asan-v3:{digest}",
+            "contract-sha256": digest,
+            "reason": reason,
+            "git-integrator": "codex",
+            "state": "ACTIVE",
+            "worktree": str(worktree.resolve()),
+        }.items():
+            subprocess.run(
+                ["git", "config", f"branch.{branch}.asan-{field}", value],
+                cwd=self.root,
+                check=True,
+            )
+        for role in roles:
+            subprocess.run(
+                ["git", "config", "--add", f"branch.{branch}.asan-role", role],
+                cwd=self.root,
+                check=True,
+            )
+        for scope in scopes:
+            subprocess.run(
+                ["git", "config", "--add", f"branch.{branch}.asan-scope", scope],
+                cwd=self.root,
+                check=True,
+            )
+        return branch, worktree
 
     def install_workflow(self) -> Path:
         runtime_source = self.rendered[".agent-policy/runtime/branch_guard.py"]
@@ -286,6 +346,127 @@ class BranchGuardTests(unittest.TestCase):
         self.assertIsNone(restore_denial)
         self.assertIsNotNone(compound_denial)
         self.assertIn("별도 명령", compound_denial)
+
+    def test_git_c_targets_the_actual_approved_worktree_independent_of_session_cwd(self) -> None:
+        branch, worktree = self.configure_v3_isolated_task()
+        source = worktree / "src/feature.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const feature = true\n", encoding="utf-8")
+        task_command = f"git -C {shlex.quote(str(worktree))} add -- src/feature.ts"
+        primary_command = f"git -C {shlex.quote(str(self.root))} add -- src/feature.ts"
+
+        self.assertIsNone(
+            self.guard.command_denial(
+                self.root,
+                task_command,
+                host="codex",
+                expected_branch=branch,
+            )
+        )
+        denied = self.guard.command_denial(
+            worktree,
+            primary_command,
+            host="codex",
+            expected_branch=branch,
+        )
+        self.assertIsNotNone(denied)
+        self.assertIn("활성 task", denied)
+
+        self.assertIsNone(
+            self.guard.command_denial(
+                self.root,
+                "git add -- src/feature.ts",
+                host="codex",
+                execution_cwd=worktree,
+                expected_branch=branch,
+            )
+        )
+        denied_by_workdir = self.guard.command_denial(
+            worktree,
+            "git add -- src/feature.ts",
+            host="codex",
+            execution_cwd=self.root,
+            expected_branch=branch,
+        )
+        self.assertIsNotNone(denied_by_workdir)
+
+    def test_explicit_git_repository_options_are_resolved_or_fail_closed(self) -> None:
+        branch, worktree = self.configure_v3_isolated_task()
+        source = worktree / "src/feature.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const feature = true\n", encoding="utf-8")
+        git_directory = subprocess.run(
+            ["git", "rev-parse", "--absolute-git-dir"],
+            cwd=worktree,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        explicit = (
+            f"git --git-dir={shlex.quote(git_directory)} "
+            f"--work-tree={shlex.quote(str(worktree))} add -- src/feature.ts"
+        )
+        self.assertIsNone(
+            self.guard.command_denial(
+                self.root,
+                explicit,
+                host="codex",
+                expected_branch=branch,
+            )
+        )
+        primary_git_directory = subprocess.run(
+            ["git", "rev-parse", "--absolute-git-dir"],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        for command in (
+            f"git --git-dir={shlex.quote(git_directory)} add -- src/feature.ts",
+            (
+                f"git --git-dir={shlex.quote(primary_git_directory)} "
+                f"--work-tree={shlex.quote(str(worktree))} add -- src/feature.ts"
+            ),
+            f"GIT_DIR={shlex.quote(git_directory)} GIT_WORK_TREE={shlex.quote(str(worktree))} git add -- src/feature.ts",
+            f"cd {shlex.quote(str(worktree))} && git add -- src/feature.ts",
+            f"env -C {shlex.quote(str(worktree))} git add -- src/feature.ts",
+        ):
+            with self.subTest(command=command):
+                denial = self.guard.command_denial(
+                    self.root,
+                    command,
+                    host="codex",
+                    expected_branch=branch,
+                )
+                self.assertIsNotNone(denial)
+
+    def test_unapproved_branch_switch_and_compound_followup_are_rejected(self) -> None:
+        self.configure_task_branch()
+        subprocess.run(["git", "branch", "scratch"], cwd=self.root, check=True)
+
+        single = self.guard.command_denial(self.root, "git switch scratch")
+        compound = self.guard.command_denial(
+            self.root,
+            "git switch scratch && git commit --allow-empty -m bypass",
+        )
+
+        self.assertIsNotNone(single)
+        self.assertIn("승인 계약", single)
+        self.assertIsNotNone(compound)
+        self.assertIn("복합 명령", compound)
+
+    def test_git_control_files_are_never_in_branch_scope(self) -> None:
+        branch = self.configure_task_branch()
+        subprocess.run(
+            ["git", "config", "--add", f"branch.{branch}.asan-scope", "."],
+            cwd=self.root,
+            check=True,
+        )
+
+        denial = self.guard.active_branch_denial(self.root, (".git/config",))
+
+        self.assertIsNotNone(denial)
+        self.assertIn("Git 제어 경로", denial)
 
     def test_dirty_repository_can_create_an_approved_isolated_worktree(self) -> None:
         workflow = self.install_workflow()

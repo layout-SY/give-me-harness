@@ -149,4 +149,64 @@ class SyncTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    @patch("agent_policy.core.central_is_clean", return_value=True)
+    def test_sync_hook_executes_from_an_external_worktree_without_runtime_copy(
+        self,
+        _clean: object,
+    ) -> None:
+        sync_project(self.project)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "baseline",
+            ],
+            cwd=self.root,
+            check=True,
+        )
+        worktree = self.root.parent / f"{self.root.name}-worktree"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", "task/hook-worktree", str(worktree)],
+            cwd=self.root,
+            check=True,
+        )
+        try:
+            hooks = json.loads((self.root / ".codex/hooks.json").read_text(encoding="utf-8"))["hooks"]
+            command = next(
+                item["hooks"][0]["command"]
+                for item in hooks["UserPromptSubmit"]
+                if "managed_policy_guard.py" in item["hooks"][0]["command"]
+            )
+
+            self.assertFalse((worktree / ".agent-policy/runtime/managed_policy_guard.py").exists())
+            completed = subprocess.run(
+                command,
+                input=json.dumps(
+                    {
+                        "session_id": "external-worktree-session",
+                        "cwd": str(worktree),
+                        "prompt": "일반 사용자 요청",
+                    }
+                ),
+                cwd=worktree,
+                shell=True,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+        finally:
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(worktree)],
+                cwd=self.root,
+                check=False,
+                capture_output=True,
+            )
         self.assertEqual(completed.stdout, "")

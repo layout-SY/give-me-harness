@@ -57,9 +57,11 @@ python3 <absolute-branch-workflow.py> create \
 
 create는 파일 경로, canonical bytes, SHA-256, parent HEAD, branch 존재 여부와 worktree 상태를 재검증한다. 값 하나라도 달라지면 새 proposal과 승인이 필요하다. V3 metadata는 task id, purpose, parent/full SHA, merge target, roles, scopes, reason, integrator, contract SHA와 `ACTIVE` 상태를 기록한다.
 
-## session 시작
+## session과 worktree 선택
 
-격리 worktree는 그 경로를 cwd로 지정해 새 세션을 시작한다. 매번 폴더를 새로 만들 필요는 없고, 동시에 보존할 독립 작업이 있거나 기준 worktree가 dirty·사용 중일 때만 격리한다.
+격리 worktree를 만들었다는 이유만으로 현재 세션을 종료하지 않는다. 현재 세션의 활성 task가 아직 하나이고 기존 assignment와 충돌하지 않으면, 생성된 승인 worktree를 이후 도구의 `workdir` 또는 `git -C` 대상으로 삼아 그대로 작업을 계속할 수 있다. 새 세션은 미완료 task를 `PRESERVED`로 보존한 채 다른 task를 병행하거나, host·role·담당자를 인계할 때 필요하다. 매번 폴더를 새로 만들 필요는 없고, 동시에 보존할 독립 작업이 있거나 기준 worktree가 dirty·사용 중일 때만 격리한다.
+
+세션을 격리 worktree에서 새로 시작해야 하는 경우에는 다음 launcher 계약을 사용한다.
 
 ```sh
 bin/agent-policy start \
@@ -93,7 +95,7 @@ python3 <absolute-branch-workflow.py> resume
 
 ## Git 통합 권한
 
-같은 worktree에서 V3 계약의 Git 통합 담당자 한 명만 branch 전환, index, commit과 완료 workflow를 실행한다. 다른 host는 승인 scope의 파일과 자신의 산출물을 수정할 수 있어도 Git 상태를 바꾸지 않는다.
+V3 계약의 승인 worktree에서 Git 통합 담당자 한 명만 branch 전환, index, commit과 완료 workflow를 실행한다. guard는 세션 시작 cwd가 아니라 각 Git 명령의 실제 대상(`workdir`, `git -C`, `--git-dir/--work-tree`)을 다시 해석한다. 다른 host는 승인 scope의 파일과 자신의 산출물을 수정할 수 있어도 Git 상태를 바꾸지 않는다.
 
 다음 명령은 승인으로 해제하지 않는 사용자 전용 작업이다.
 
@@ -102,7 +104,7 @@ python3 <absolute-branch-workflow.py> resume
 - `git clean`
 - `git update-ref`
 
-에이전트는 명령을 실행하거나 재시도하지 않고 필요 이유, 정확한 대상과 영향을 사용자에게 양도한다. 파일 복원은 통합 담당자가 승인 scope의 구체 경로를 적은 `git restore ... -- <path>`만 사용한다. `git checkout -- <path>`는 사용하지 않는다. branch 전환과 merge를 `&&`나 `;`로 결합하지 않는다.
+에이전트는 명령을 실행하거나 재시도하지 않고 필요 이유, 정확한 대상과 영향을 사용자에게 양도한다. 파일 복원은 통합 담당자가 승인 scope의 구체 경로를 적은 `git restore ... -- <path>`만 사용한다. `git checkout -- <path>`는 사용하지 않는다. branch 전환과 다른 Git 변경을 `&&`나 `;`로 결합하지 않는다. `cd`, `env -C`, `GIT_DIR` 또는 `GIT_WORK_TREE`로 대상 저장소를 숨기지 않는다.
 
 `git symbolic-ref`는 현재 branch 조회형만 허용한다. raw branch 생성·tracking·force·orphan 옵션과 local ref를 직접 갱신하는 fetch refspec은 workflow 우회로 차단한다. stage path는 `git add ... -- <path>`로 명시하고, `git commit -a|--only|<path>`처럼 unstaged 파일을 암시적으로 포함하지 않는다.
 

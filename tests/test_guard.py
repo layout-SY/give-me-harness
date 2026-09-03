@@ -647,7 +647,10 @@ Python unittest로 정책 계약을 검증했습니다.
         script.parent.mkdir(parents=True)
         script.write_text("# trusted test fixture\n", encoding="utf-8")
         proposal = self.root / "proposal.json"
-        proposal.write_text(json.dumps({"git_integrator": "codex"}), encoding="utf-8")
+        proposal.write_text(
+            json.dumps({"branch": "task/next", "git_integrator": "codex"}),
+            encoding="utf-8",
+        )
         environment = {
             "ASAN_AGENT_POLICY_MODE": "inject",
             "ASAN_AGENT_POLICY_PROJECT": "user-ui",
@@ -672,11 +675,26 @@ Python unittest로 정책 계약을 검증했습니다.
             {"tool_name": "Bash", "tool_input": {"command": command}},
             environment,
         )
+        active_environment = {
+            **environment,
+            "ASAN_AGENT_POLICY_TASK": "task/current",
+        }
+        active_task_denied = self.run_mode(
+            "pre-tool",
+            "codex",
+            {"tool_name": "Bash", "tool_input": {"command": command}},
+            active_environment,
+        )
 
         self.assertEqual(denied.returncode, 2)
         self.assertIn("Git 통합 담당자는 codex", denied.stderr)
         self.assertEqual(allowed.returncode, 0, allowed.stderr)
         self.assertEqual(allowed.stdout, "")
+        active_reason = json.loads(active_task_denied.stdout)["hookSpecificOutput"][
+            "permissionDecisionReason"
+        ]
+        self.assertIn("CLOSED", active_reason)
+        self.assertIn("task/current", active_reason)
 
     def test_proposal_posttool_binds_user_approval_to_full_sha256(self) -> None:
         bundle = self.root / "central-bundle"
@@ -838,6 +856,262 @@ Python unittest로 정책 계약을 검증했습니다.
                 self.assertEqual(denied.returncode, 2)
                 self.assertIn("산출물", denied.stderr)
             target.unlink()
+
+    def test_same_session_uses_the_approved_isolated_worktree_as_mutation_boundary(self) -> None:
+        subprocess.run(["git", "branch", "-M", "sy-main"], cwd=self.root, check=True)
+        subprocess.run(["git", "add", ".agent-policy/manifest.json"], cwd=self.root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "-qm",
+                "baseline",
+            ],
+            cwd=self.root,
+            check=True,
+        )
+        runtime_guard = self.rendered_guard()
+        branch_source = (runtime_guard.parent / "branch_guard.py").read_bytes()
+        rendered_branch_guard = ModuleType("isolated_worktree_branch_guard")
+        rendered_branch_guard.__file__ = str(runtime_guard.parent / "branch_guard.py")
+        exec(
+            compile(branch_source, rendered_branch_guard.__file__, "exec"),
+            rendered_branch_guard.__dict__,
+        )
+        branch = "task/same-session-worktree"
+        worktree = self.root.parent / f"approved-worktree-{self.session_id}"
+        parent_head = rendered_branch_guard.head(self.root, "sy-main")
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", branch, str(worktree), parent_head],
+            cwd=self.root,
+            check=True,
+        )
+        second_worktree: Path | None = None
+        try:
+            roles = ("logic",)
+            scopes = ("src",)
+            purpose = "같은 세션의 격리 worktree 경계 검증"
+            reason = "dirty 기준 폴더와 task index를 분리"
+            contract = rendered_branch_guard.canonical_contract(
+                branch,
+                purpose,
+                "sy-main",
+                parent_head,
+                "sy-main",
+                scopes,
+                reason,
+                str(worktree.resolve()),
+                roles,
+                "opencode",
+            )
+            digest = rendered_branch_guard.contract_sha256(contract)
+            for field, value in {
+                "contract-version": "3",
+                "task-id": branch.removeprefix("task/"),
+                "purpose": purpose,
+                "parent": "sy-main",
+                "parent-head": parent_head,
+                "merge-target": "sy-main",
+                "proposal": f"asan-v3:{digest}",
+                "contract-sha256": digest,
+                "reason": reason,
+                "git-integrator": "opencode",
+                "state": "ACTIVE",
+                "worktree": str(worktree.resolve()),
+            }.items():
+                subprocess.run(
+                    ["git", "config", f"branch.{branch}.asan-{field}", value],
+                    cwd=self.root,
+                    check=True,
+                )
+            for role in roles:
+                subprocess.run(
+                    ["git", "config", "--add", f"branch.{branch}.asan-role", role],
+                    cwd=self.root,
+                    check=True,
+                )
+            for scope in scopes:
+                subprocess.run(
+                    ["git", "config", "--add", f"branch.{branch}.asan-scope", scope],
+                    cwd=self.root,
+                    check=True,
+                )
+
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "ASAN_AGENT_POLICY_MODE": "inject",
+                    "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+                    "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(runtime_guard.parents[2]),
+                    "ASAN_AGENT_POLICY_ROLE": "logic",
+                }
+            )
+
+            def run_rendered(
+                event_root: Path,
+                tool_name: str,
+                tool_input: dict[str, object],
+            ) -> subprocess.CompletedProcess[str]:
+                return subprocess.run(
+                    ["python3", "-I", str(runtime_guard), "pre-tool", "opencode"],
+                    input=json.dumps(
+                        {
+                            "cwd": str(event_root),
+                            "session_id": self.session_id,
+                            "tool_name": tool_name,
+                            "tool_input": tool_input,
+                        }
+                    ),
+                    cwd=event_root,
+                    env=environment,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                )
+
+            source = worktree / "src/feature.ts"
+            self.record_common_readiness("opencode")
+            source_binding = run_rendered(
+                self.root,
+                "Write",
+                {"file_path": str(source)},
+            )
+            self.assertEqual(source_binding.returncode, 0, source_binding.stderr)
+            source.parent.mkdir(parents=True)
+            source.write_text("export const feature = true\n", encoding="utf-8")
+
+            artifact = worktree / ".opencode/logs/sessions/2026-09-03-isolated/plan.md"
+            bound = run_rendered(self.root, "Write", {"file_path": str(artifact)})
+            self.assertEqual(bound.returncode, 0, bound.stderr)
+            allowed = run_rendered(
+                self.root,
+                "Bash",
+                {"command": f"git -C {worktree} add -- src/feature.ts"},
+            )
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
+            denied = run_rendered(
+                worktree,
+                "Bash",
+                {"command": f"git -C {self.root} add -- .agent-policy/manifest.json"},
+            )
+            self.assertEqual(denied.returncode, 2)
+            self.assertIn("활성 task", denied.stderr)
+
+            self.write_complete_artifacts(artifact.parent)
+            subprocess.run(["git", "add", "."], cwd=worktree, check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "user.name=Policy Test",
+                    "-c",
+                    "user.email=policy@example.com",
+                    "commit",
+                    "-qm",
+                    "first isolated task",
+                ],
+                cwd=worktree,
+                check=True,
+            )
+            subprocess.run(["git", "merge", "-q", "--ff-only", branch], cwd=self.root, check=True)
+            subprocess.run(
+                ["git", "config", f"branch.{branch}.asan-state", "CLOSED"],
+                cwd=self.root,
+                check=True,
+            )
+
+            second_branch = "task/same-session-next"
+            second_worktree = self.root.parent / f"next-worktree-{self.session_id}"
+            second_parent_head = rendered_branch_guard.head(self.root, "sy-main")
+            subprocess.run(
+                [
+                    "git",
+                    "worktree",
+                    "add",
+                    "-q",
+                    "-b",
+                    second_branch,
+                    str(second_worktree),
+                    second_parent_head,
+                ],
+                cwd=self.root,
+                check=True,
+            )
+            second_purpose = "CLOSED 뒤 같은 세션의 다음 task 검증"
+            second_reason = "이전 task의 merge와 산출물 완료 확인"
+            second_contract = rendered_branch_guard.canonical_contract(
+                second_branch,
+                second_purpose,
+                "sy-main",
+                second_parent_head,
+                "sy-main",
+                scopes,
+                second_reason,
+                str(second_worktree.resolve()),
+                roles,
+                "opencode",
+            )
+            second_digest = rendered_branch_guard.contract_sha256(second_contract)
+            for field, value in {
+                "contract-version": "3",
+                "task-id": second_branch.removeprefix("task/"),
+                "purpose": second_purpose,
+                "parent": "sy-main",
+                "parent-head": second_parent_head,
+                "merge-target": "sy-main",
+                "proposal": f"asan-v3:{second_digest}",
+                "contract-sha256": second_digest,
+                "reason": second_reason,
+                "git-integrator": "opencode",
+                "state": "ACTIVE",
+                "worktree": str(second_worktree.resolve()),
+            }.items():
+                subprocess.run(
+                    ["git", "config", f"branch.{second_branch}.asan-{field}", value],
+                    cwd=self.root,
+                    check=True,
+                )
+            for role in roles:
+                subprocess.run(
+                    ["git", "config", "--add", f"branch.{second_branch}.asan-role", role],
+                    cwd=self.root,
+                    check=True,
+                )
+            for scope in scopes:
+                subprocess.run(
+                    ["git", "config", "--add", f"branch.{second_branch}.asan-scope", scope],
+                    cwd=self.root,
+                    check=True,
+                )
+            next_artifact = (
+                second_worktree
+                / ".opencode/logs/sessions/2026-09-03-isolated-next/plan.md"
+            )
+            rebound = run_rendered(
+                self.root,
+                "Write",
+                {"file_path": str(next_artifact)},
+            )
+            self.assertEqual(rebound.returncode, 0, rebound.stderr)
+        finally:
+            if second_worktree is not None:
+                subprocess.run(
+                    ["git", "worktree", "remove", "--force", str(second_worktree)],
+                    cwd=self.root,
+                    check=False,
+                    capture_output=True,
+                )
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(worktree)],
+                cwd=self.root,
+                check=False,
+                capture_output=True,
+            )
 
     def test_stop_detects_clean_committed_changes_since_the_approved_parent(self) -> None:
         subprocess.run(["git", "branch", "-M", "sy-main"], cwd=self.root, check=True)

@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -64,6 +65,13 @@ class ProjectConfig:
     path: Path
     commands: dict[str, str]
     base_branch: str = "sy-main"
+    policy_path: Path | None = None
+
+    @property
+    def policy_root(self) -> Path:
+        """sync 정책 파일이 배포된 소비자 기본 checkout을 반환한다."""
+
+        return (self.policy_path or self.path).resolve()
 
 
 @dataclass(frozen=True)
@@ -137,6 +145,7 @@ def load_project(project_id: str) -> ProjectConfig:
             path=Path(str(raw["path"])).resolve(),
             commands=dict(commands),
             base_branch=str(raw["base_branch"]),
+            policy_path=Path(str(raw["path"])).resolve(),
         )
     except KeyError as error:
         raise PolicyError(f"프로젝트 필드가 누락되었습니다: {project_id}: {error}") from error
@@ -205,11 +214,11 @@ def add_tree(
         rendered[relative] = render_content(source.read_bytes(), project)
 
 
-def hook_command(mode: str, host: str) -> str:
-    return (
-        'ROOT="$(git rev-parse --show-toplevel)" || exit 2; '
-        f'python3 -I "$ROOT/.agent-policy/runtime/managed_policy_guard.py" {mode} {host}'
-    )
+def hook_command(project: ProjectConfig, mode: str, host: str) -> str:
+    """cwd와 무관한 sync runtime 절대 경로로 hook 명령을 렌더한다."""
+
+    guard = project.policy_root / ".agent-policy/runtime/managed_policy_guard.py"
+    return shlex.join(("python3", "-I", str(guard), mode, host))
 
 
 def log_collection_command(project: ProjectConfig, channel: str) -> str:
@@ -244,7 +253,7 @@ def render_codex_hooks(project: ProjectConfig) -> bytes:
             "hooks": [
                 {
                     "type": "command",
-                    "command": hook_command("session-start", "codex"),
+                    "command": hook_command(project, "session-start", "codex"),
                     "timeout": 15,
                     "statusMessage": "Checking central agent policy drift",
                     "additionalContextLimit": 1200,
@@ -258,7 +267,7 @@ def render_codex_hooks(project: ProjectConfig) -> bytes:
             "hooks": [
                 {
                     "type": "command",
-                    "command": hook_command("user-prompt", "codex"),
+                    "command": hook_command(project, "user-prompt", "codex"),
                     "timeout": 10,
                     "statusMessage": "Recording common harness approval",
                 }
@@ -271,7 +280,7 @@ def render_codex_hooks(project: ProjectConfig) -> bytes:
             "hooks": [
                 {
                     "type": "command",
-                    "command": hook_command("pre-tool", "codex"),
+                    "command": hook_command(project, "pre-tool", "codex"),
                     "timeout": 10,
                     "statusMessage": "Protecting central agent policy files",
                 }
@@ -284,7 +293,7 @@ def render_codex_hooks(project: ProjectConfig) -> bytes:
             "hooks": [
                 {
                     "type": "command",
-                    "command": hook_command("post-tool", "codex"),
+                    "command": hook_command(project, "post-tool", "codex"),
                     "timeout": 10,
                     "statusMessage": "Recording common harness evidence",
                 }
@@ -296,7 +305,7 @@ def render_codex_hooks(project: ProjectConfig) -> bytes:
             "hooks": [
                 {
                     "type": "command",
-                    "command": hook_command("documentation-stop", "codex"),
+                    "command": hook_command(project, "documentation-stop", "codex"),
                     "timeout": 10,
                     "statusMessage": "Checking role-based task artifacts",
                 },
@@ -320,7 +329,7 @@ def render_claude_settings(project: ProjectConfig) -> bytes:
                 "hooks": [
                     {
                         "type": "command",
-                        "command": hook_command("session-start", "claude"),
+                        "command": hook_command(project, "session-start", "claude"),
                         "timeout": 15,
                     }
                 ]
@@ -331,7 +340,7 @@ def render_claude_settings(project: ProjectConfig) -> bytes:
                 "hooks": [
                     {
                         "type": "command",
-                        "command": hook_command("user-prompt", "claude"),
+                        "command": hook_command(project, "user-prompt", "claude"),
                         "timeout": 10,
                     }
                 ]
@@ -342,7 +351,7 @@ def render_claude_settings(project: ProjectConfig) -> bytes:
                 "hooks": [
                     {
                         "type": "command",
-                        "command": hook_command("pre-tool", "claude"),
+                        "command": hook_command(project, "pre-tool", "claude"),
                         "timeout": 10,
                     }
                 ],
@@ -353,7 +362,7 @@ def render_claude_settings(project: ProjectConfig) -> bytes:
                 "hooks": [
                     {
                         "type": "command",
-                        "command": hook_command("post-tool", "claude"),
+                        "command": hook_command(project, "post-tool", "claude"),
                         "timeout": 10,
                     }
                 ]
@@ -364,7 +373,7 @@ def render_claude_settings(project: ProjectConfig) -> bytes:
                 "hooks": [
                     {
                         "type": "command",
-                        "command": hook_command("documentation-stop", "claude"),
+                        "command": hook_command(project, "documentation-stop", "claude"),
                         "timeout": 10,
                     },
                     {

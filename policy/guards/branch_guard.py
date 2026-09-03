@@ -10,6 +10,7 @@ import re
 import shlex
 import subprocess
 from pathlib import Path
+from typing import NamedTuple
 
 BASE_BRANCH = "{{BASE_BRANCH}}"
 TASK_BRANCH_PATTERN = re.compile(r"^task/[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -124,6 +125,14 @@ V3_REQUIRED_METADATA: tuple[str, ...] = (
     "state",
 )
 GIT_STATUS_UNAVAILABLE = "<git-status-unavailable>"
+
+
+class GitInvocation(NamedTuple):
+    """한 shell command 안의 Git 호출과 그 호출이 실제로 대상으로 삼는 worktree."""
+
+    root: Path
+    arguments: tuple[str, ...]
+    unsafe_repository_options: tuple[str, ...] = ()
 
 
 def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -550,12 +559,31 @@ def active_branch_denial(
                 f"V3 task {branch}는 ACTIVE 상태에서만 수정할 수 있습니다. 현재 상태: "
                 f"{state or '없음'}"
             )
+        approved_worktree = str(values.get("worktree") or "")
+        if approved_worktree:
+            try:
+                actual_root = root.resolve()
+                expected_root = Path(approved_worktree).expanduser().resolve()
+            except (OSError, RuntimeError):
+                return f"V3 task {branch}의 승인 worktree 경로를 확인할 수 없습니다."
+            if actual_root != expected_root:
+                return (
+                    f"V3 task {branch}의 변경 대상 worktree가 승인 계약과 다릅니다.\n"
+                    f"  승인: {expected_root}\n"
+                    f"  실제: {actual_root}"
+                )
     scopes = values.get("scope")
     assert isinstance(scopes, tuple)
     changed = changed_paths(root)
     if GIT_STATUS_UNAVAILABLE in changed:
         return "Git 변경 상태를 확인할 수 없어 승인 scope 검증을 중단했습니다."
     for relative in tuple(dict.fromkeys((*targets, *changed))):
+        normalized = relative.removeprefix("./").strip("/")
+        if normalized == ".git" or normalized.startswith(".git/"):
+            return (
+                f"Git 제어 경로는 branch scope에 포함되어도 직접 수정할 수 없습니다: {relative}. "
+                "승인된 Git 명령 또는 branch_workflow.py를 사용하세요."
+            )
         if not _scope_allows(relative, scopes):
             return (
                 f"승인된 작업 범위 밖의 경로입니다: {relative}\n"
@@ -683,6 +711,202 @@ def _strip_git_global_options(arguments: tuple[str, ...]) -> tuple[str, ...] | N
             return None
         return arguments[index:]
     return ()
+
+
+def _resolved_option_path(base: Path, raw_value: str) -> Path | None:
+    if not raw_value or any(character in raw_value for character in ("\0", "\n", "\r")):
+        return None
+    try:
+        candidate = Path(raw_value).expanduser()
+        return (candidate if candidate.is_absolute() else base / candidate).resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+def _git_top_level(
+    working_directory: Path,
+    git_directory: Path | None = None,
+    work_tree: Path | None = None,
+) -> Path | None:
+    arguments = ["git"]
+    if git_directory is not None:
+        arguments.append(f"--git-dir={git_directory}")
+    if work_tree is not None:
+        arguments.append(f"--work-tree={work_tree}")
+    arguments.extend(("rev-parse", "--show-toplevel"))
+    try:
+        completed = subprocess.run(
+            arguments,
+            cwd=working_directory,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return None
+    try:
+        return Path(completed.stdout.strip()).resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+def _absolute_git_directory(working_directory: Path) -> Path | None:
+    raw = _output(working_directory, "rev-parse", "--absolute-git-dir")
+    if not raw:
+        return None
+    try:
+        return Path(raw).resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+def _git_invocation(
+    execution_cwd: Path,
+    raw_arguments: tuple[str, ...],
+) -> GitInvocation | None:
+    """Git global option을 적용한 실제 worktree와 subcommand를 함께 해석한다."""
+
+    working_directory = execution_cwd.resolve()
+    git_directory: Path | None = None
+    work_tree: Path | None = None
+    unsafe: list[str] = []
+    index = 0
+    while index < len(raw_arguments):
+        value = raw_arguments[index]
+        if value == "-C":
+            if index + 1 >= len(raw_arguments):
+                return None
+            resolved = _resolved_option_path(working_directory, raw_arguments[index + 1])
+            if resolved is None or not resolved.is_dir():
+                return None
+            working_directory = resolved
+            index += 2
+            continue
+        if value.startswith("-C") and value != "-C" and not value.startswith("-c"):
+            resolved = _resolved_option_path(working_directory, value[2:])
+            if resolved is None or not resolved.is_dir():
+                return None
+            working_directory = resolved
+            index += 1
+            continue
+        if value in {"--git-dir", "--work-tree"}:
+            if index + 1 >= len(raw_arguments):
+                return None
+            resolved = _resolved_option_path(working_directory, raw_arguments[index + 1])
+            if resolved is None:
+                return None
+            if value == "--git-dir":
+                git_directory = resolved
+            else:
+                work_tree = resolved
+            index += 2
+            continue
+        if value.startswith("--git-dir=") or value.startswith("--work-tree="):
+            option, raw_path = value.split("=", maxsplit=1)
+            resolved = _resolved_option_path(working_directory, raw_path)
+            if resolved is None:
+                return None
+            if option == "--git-dir":
+                git_directory = resolved
+            else:
+                work_tree = resolved
+            index += 1
+            continue
+        if value == "-c" or (value.startswith("-c") and value != "-C"):
+            if value == "-c":
+                if index + 1 >= len(raw_arguments):
+                    return None
+                configured = raw_arguments[index + 1]
+                index += 2
+            else:
+                configured = value[2:]
+                index += 1
+            key = configured.split("=", maxsplit=1)[0].casefold()
+            if key.startswith("alias."):
+                return None
+            if key in {"core.worktree", "core.bare"}:
+                unsafe.append(f"-c {key}")
+            continue
+        if value == "--config-env" or value.startswith("--config-env="):
+            if value == "--config-env":
+                if index + 1 >= len(raw_arguments):
+                    return None
+                index += 2
+            else:
+                index += 1
+            unsafe.append("--config-env")
+            continue
+        if value in {"--exec-path", "--namespace", "--super-prefix"}:
+            if index + 1 >= len(raw_arguments):
+                return None
+            unsafe.append(value)
+            index += 2
+            continue
+        if any(
+            value.startswith(f"{option}=")
+            for option in ("--exec-path", "--namespace", "--super-prefix")
+        ):
+            unsafe.append(value.split("=", maxsplit=1)[0])
+            index += 1
+            continue
+        if value == "--bare":
+            unsafe.append(value)
+            index += 1
+            continue
+        if value in GIT_GLOBAL_FLAG_OPTIONS:
+            index += 1
+            continue
+        if value.startswith("-"):
+            return None
+        break
+
+    arguments = raw_arguments[index:]
+    if arguments == ("<unparsed>",):
+        return None
+    if git_directory is not None and work_tree is None:
+        unsafe.append("--git-dir without --work-tree")
+    target_root = _git_top_level(working_directory, git_directory, work_tree)
+    if target_root is None:
+        return None
+    effective_git_directory = git_directory or _absolute_git_directory(working_directory)
+    expected_git_directory = _absolute_git_directory(target_root)
+    if (
+        effective_git_directory is None
+        or expected_git_directory is None
+        or effective_git_directory.resolve() != expected_git_directory.resolve()
+    ):
+        unsafe.append("Git directory/worktree mismatch")
+    return GitInvocation(
+        root=target_root,
+        arguments=arguments,
+        unsafe_repository_options=tuple(dict.fromkeys(unsafe)),
+    )
+
+
+def git_invocations(
+    root: Path,
+    command: str,
+    execution_cwd: Path | None = None,
+) -> tuple[GitInvocation, ...] | None:
+    """shell 안의 모든 Git 호출을 대상 worktree 기준으로 해석한다."""
+
+    cwd = (execution_cwd or root).resolve()
+    invocations: list[GitInvocation] = []
+    for raw_arguments in _git_commands(command):
+        invocation = _git_invocation(cwd, raw_arguments)
+        if invocation is None:
+            return None
+        invocations.append(invocation)
+    return tuple(invocations)
+
+
+def same_git_repository(left: Path, right: Path) -> bool:
+    left_common = git_common_directory(left)
+    right_common = git_common_directory(right)
+    return left_common is not None and left_common == right_common
 
 
 def _never_agent_git_denial(arguments: tuple[str, ...]) -> str | None:
@@ -985,6 +1209,95 @@ def _switches_branch(arguments: tuple[str, ...]) -> bool:
     return arguments[0] == "checkout" and not _is_checkout_path_operation(arguments)
 
 
+def _shell_repository_context_denial(command: str) -> str | None:
+    """guard가 추적하지 못하는 shell cwd·Git 환경 우회를 fail-closed한다."""
+
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return "shell 저장소 문맥을 안전하게 해석할 수 없습니다. 명령을 한 단계로 분리하세요."
+    has_git = any(os.path.basename(token) == "git" for token in tokens)
+    if not has_git:
+        return None
+    separators = {";", "&&", "||", "|", "&"}
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token in separators:
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    for segment in segments:
+        if not segment:
+            continue
+        command_index = next(
+            (
+                index
+                for index, token in enumerate(segment)
+                if token not in {"command"}
+                and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", token) is None
+            ),
+            None,
+        )
+        if command_index is not None and Path(segment[command_index]).name in {"cd", "pushd", "popd"}:
+            return (
+                "cd/pushd/popd와 Git 변경을 한 shell 명령에 섞을 수 없습니다. "
+                "도구 workdir 또는 명시적인 git -C를 사용하세요."
+            )
+        git_index = next(
+            (index for index, token in enumerate(segment) if os.path.basename(token) == "git"),
+            None,
+        )
+        if git_index is None:
+            continue
+        prefixes = segment[:git_index]
+        if any(
+            re.fullmatch(r"(?:GIT_DIR|GIT_WORK_TREE)=.+", token) is not None
+            for token in prefixes
+        ):
+            return (
+                "GIT_DIR/GIT_WORK_TREE 환경 변수로 저장소 대상을 바꿀 수 없습니다. "
+                "검증 가능한 git -C 또는 --git-dir/--work-tree 형식을 사용하세요."
+            )
+        if "env" in prefixes and any(
+            token == "-C" or token.startswith("--chdir=") for token in prefixes
+        ):
+            return (
+                "env -C로 Git 실행 위치를 숨길 수 없습니다. 도구 workdir 또는 git -C를 사용하세요."
+            )
+    return None
+
+
+def branch_selection_denial(
+    root: Path,
+    branch: str,
+    base_branch: str = BASE_BRANCH,
+) -> str | None:
+    """전환할 local branch가 승인된 계보인지 실제 전환 전에 확인한다."""
+
+    if not branch or branch == base_branch:
+        return None
+    if TASK_BRANCH_PATTERN.fullmatch(branch) is None:
+        return f"승인 계약이 없는 branch로 전환할 수 없습니다: {branch}"
+    lineage_problem = _lineage_denial(root, branch, base_branch)
+    if lineage_problem is not None:
+        return lineage_problem
+    values = metadata(root, branch)
+    if values.get("contract-version") == CONTRACT_VERSION:
+        state = str(values.get("state") or "")
+        if state != "ACTIVE":
+            return f"V3 task {branch}는 ACTIVE 상태에서만 전환할 수 있습니다. 현재 상태: {state or '없음'}"
+        approved_worktree = str(values.get("worktree") or "")
+        if approved_worktree and Path(approved_worktree).expanduser().resolve() != root.resolve():
+            return (
+                f"V3 task {branch}는 승인된 격리 worktree에서만 사용할 수 있습니다: "
+                f"{Path(approved_worktree).expanduser().resolve()}"
+            )
+    return None
+
+
 def _pathspecs_after_separator(arguments: tuple[str, ...]) -> tuple[str, ...]:
     if "--" not in arguments:
         return ()
@@ -1057,30 +1370,34 @@ def command_denial(
     command: str,
     base_branch: str = BASE_BRANCH,
     host: str = "",
+    execution_cwd: Path | None = None,
+    expected_branch: str = "",
 ) -> str | None:
-    """브랜치 계보를 바꾸는 Git 명령의 기계적 안전 조건을 확인한다."""
+    """각 Git 호출의 실제 대상 worktree에서 계보·scope·소유권을 확인한다."""
 
     if not enabled(base_branch):
         return None
-    raw_git_commands = _git_commands(command)
-    git_commands: list[tuple[str, ...]] = []
-    for raw_arguments in raw_git_commands:
-        arguments = _strip_git_global_options(raw_arguments)
-        if arguments is None or arguments == ("<unparsed>",):
-            hidden_never_denial = _never_agent_git_text_denial(command)
-            if hidden_never_denial is not None:
-                return hidden_never_denial
-            return "Git 명령을 안전하게 해석할 수 없어 실행을 차단했습니다. 명령을 단순한 한 단계로 분리하세요."
-        git_commands.append(arguments)
-    if any(_switches_branch(arguments) for arguments in git_commands) and any(
-        arguments and arguments[0] == "merge" for arguments in git_commands
-    ):
+    hidden_never_denial = _never_agent_git_text_denial(command)
+    if hidden_never_denial is not None:
+        return hidden_never_denial
+    invocations = git_invocations(root, command, execution_cwd)
+    if invocations is None:
+        return "Git 명령의 대상 저장소를 안전하게 해석할 수 없어 실행을 차단했습니다. 명령을 단순한 한 단계로 분리하세요."
+    if invocations:
+        context_denial = _shell_repository_context_denial(command)
+        if context_denial is not None:
+            return context_denial
+    git_commands = tuple(invocation.arguments for invocation in invocations)
+    if any(_switches_branch(arguments) for arguments in git_commands) and len(
+        tuple(arguments for arguments in git_commands if arguments)
+    ) > 1:
         return (
-            "브랜치 전환과 merge를 한 복합 명령으로 실행할 수 없습니다. "
-            "전환 결과를 확인한 뒤 git merge를 별도 명령으로 실행하세요."
+            "브랜치 전환과 다른 Git 작업을 한 복합 명령으로 실행할 수 없습니다. "
+            "전환 결과와 실제 worktree를 확인한 뒤 다음 Git 작업을 별도 명령으로 실행하세요."
         )
 
-    for arguments in git_commands:
+    for invocation in invocations:
+        arguments = invocation.arguments
         if not arguments:
             continue
         never_denial = _never_agent_git_denial(arguments)
@@ -1126,6 +1443,26 @@ def command_denial(
             return f"브랜치 계보를 임의 변경할 수 있어 git {subcommand} 명령을 차단했습니다."
         if subcommand in READ_ONLY_GIT_SUBCOMMANDS:
             continue
+        operation_root = invocation.root
+        if invocation.unsafe_repository_options:
+            return (
+                "Git 저장소 대상을 우회할 수 있는 global option은 변경 명령에 사용할 수 없습니다: "
+                + ", ".join(invocation.unsafe_repository_options)
+            )
+        if not same_git_repository(root, operation_root):
+            return (
+                "현재 소비자 프로젝트와 다른 Git 저장소를 변경할 수 없습니다.\n"
+                f"  세션 저장소: {root.resolve()}\n"
+                f"  명령 대상: {operation_root}"
+            )
+        if subcommand in {"add", "commit", "restore"} and expected_branch:
+            actual_branch = current_branch(operation_root)
+            if actual_branch != expected_branch:
+                return (
+                    "현재 세션의 활성 task와 Git 변경 대상 branch가 다릅니다.\n"
+                    f"  활성 task: {expected_branch}\n"
+                    f"  명령 대상: {actual_branch or 'detached HEAD'} ({operation_root})"
+                )
         if subcommand == "fetch":
             denial = _fetch_denial(arguments)
             if denial is not None:
@@ -1179,23 +1516,37 @@ def command_denial(
                     "git checkout -- <path>는 브랜치 전환과 구분하기 어렵습니다. "
                     "파일 복원은 git restore -- <path>를 사용하세요."
                 )
-            denial = _creation_denial(root, arguments)
+            denial = _creation_denial(operation_root, arguments)
             if denial is not None:
                 return denial
             target_branch = _last_positional(arguments[1:])
-            if target_branch and not branch_exists(root, target_branch):
+            if target_branch and not branch_exists(operation_root, target_branch):
                 return f"전환 대상을 local branch로 확인할 수 없습니다: {target_branch}"
-            integrator_branch = current_branch(root)
-            if integrator_branch == base_branch and branch_exists(root, target_branch):
+            denial = branch_selection_denial(operation_root, target_branch, base_branch)
+            if denial is not None:
+                return denial
+            current = current_branch(operation_root)
+            if (
+                expected_branch
+                and current == expected_branch
+                and target_branch != expected_branch
+                and task_state(operation_root, expected_branch) != "CLOSED"
+            ):
+                return (
+                    f"현재 세션의 활성 task({expected_branch})가 CLOSED 상태가 아니므로 "
+                    "다른 branch로 전환할 수 없습니다."
+                )
+            integrator_branch = current
+            if integrator_branch == base_branch and branch_exists(operation_root, target_branch):
                 integrator_branch = target_branch
-            denial = git_integrator_denial(root, integrator_branch, host)
+            denial = git_integrator_denial(operation_root, integrator_branch, host)
             if denial is not None:
                 return denial
             if target_branch and target_branch != integrator_branch:
-                denial = git_integrator_denial(root, target_branch, host)
+                denial = git_integrator_denial(operation_root, target_branch, host)
                 if denial is not None:
                     return denial
-            if not _argument_after(arguments, "-c", "--create", "-b") and changed_paths(root):
+            if not _argument_after(arguments, "-c", "--create", "-b") and changed_paths(operation_root):
                 return "dirty worktree에서는 브랜치를 전환할 수 없습니다."
         elif subcommand == "branch":
             combined_branch_mutation = any(
@@ -1223,20 +1574,20 @@ def command_denial(
             }
             if _has_option(arguments, *unsupported_branch_options):
                 return "raw git branch metadata 변경은 승인된 branch workflow 밖에서 수행할 수 없습니다."
-            denial = _deletion_denial(root, arguments)
+            denial = _deletion_denial(operation_root, arguments)
             if denial is not None:
                 return denial
             if "-d" in arguments or "--delete" in arguments:
                 option = "-d" if "-d" in arguments else "--delete"
                 start = arguments.index(option) + 1
                 for candidate in tuple(value for value in arguments[start:] if not value.startswith("-")):
-                    denial = git_integrator_denial(root, candidate, host)
+                    denial = git_integrator_denial(operation_root, candidate, host)
                     if denial is not None:
                         return denial
             if any(option in arguments for option in ("-c", "-C", "--copy")):
                 return "승인 메타데이터가 분리될 수 있어 git branch copy는 금지합니다."
             if len(arguments) > 1 and not arguments[1].startswith("-"):
-                denial = _new_branch_denial(root, arguments[1])
+                denial = _new_branch_denial(operation_root, arguments[1])
                 if denial is not None:
                     return denial
                 return "새 작업 브랜치는 승인 후 branch_workflow.py create 명령으로 생성하세요."
@@ -1251,21 +1602,25 @@ def command_denial(
             if "--force" in arguments or "-f" in arguments:
                 return "worktree 강제 작업은 자동 복구가 어려워 금지합니다."
         elif subcommand == "restore":
-            denial = git_integrator_denial(root, current_branch(root), host)
+            denial = git_integrator_denial(
+                operation_root,
+                current_branch(operation_root),
+                host,
+            )
             if denial is not None:
                 return denial
             targets = _pathspecs_after_separator(arguments)
             if not targets:
                 return "git restore는 대상 오인을 막기 위해 git restore ... -- <path> 형식으로 실행하세요."
-            denial = active_branch_denial(root, targets, base_branch, host)
+            denial = active_branch_denial(operation_root, targets, base_branch, host)
             if denial is not None:
                 return denial
         elif subcommand == "merge":
             source = _last_positional(arguments[1:])
-            denial = git_integrator_denial(root, source, host)
+            denial = git_integrator_denial(operation_root, source, host)
             if denial is not None:
                 return denial
-            denial = _merge_denial(root, arguments, base_branch)
+            denial = _merge_denial(operation_root, arguments, base_branch)
             if denial is not None:
                 return denial
         elif subcommand in {"add", "commit"}:
@@ -1307,14 +1662,18 @@ def command_denial(
                     "git commit이 unstaged path를 암시적으로 포함하면 scope·산출물 소유권을 검증할 수 없습니다. "
                     "먼저 `git add -- <path>`로 stage한 뒤 pathspec 없는 commit을 사용하세요."
                 )
-            denial = git_integrator_denial(root, current_branch(root), host)
+            denial = git_integrator_denial(
+                operation_root,
+                current_branch(operation_root),
+                host,
+            )
             if denial is not None:
                 return denial
             explicit_paths = _pathspecs_after_separator(arguments) if subcommand == "add" else ()
             ownership_paths = (
-                tuple(dict.fromkeys((*changed_paths(root), *explicit_paths)))
+                tuple(dict.fromkeys((*changed_paths(operation_root), *explicit_paths)))
                 if subcommand == "add"
-                else staged_paths(root)
+                else staged_paths(operation_root)
             )
             if GIT_STATUS_UNAVAILABLE in ownership_paths:
                 return "Git 변경 상태를 확인할 수 없어 artifact 소유권 검증을 중단했습니다."
@@ -1323,7 +1682,7 @@ def command_denial(
                 if denial is not None:
                     return denial
             denial = active_branch_denial(
-                root,
+                operation_root,
                 explicit_paths,
                 base_branch=base_branch,
                 host=host,
@@ -1340,9 +1699,18 @@ def pre_tool_denial(
     shell_command: bool,
     base_branch: str = BASE_BRANCH,
     host: str = "",
+    execution_cwd: Path | None = None,
+    expected_branch: str = "",
 ) -> str | None:
     if shell_command and command:
-        denial = command_denial(root, command, base_branch, host)
+        denial = command_denial(
+            root,
+            command,
+            base_branch,
+            host,
+            execution_cwd,
+            expected_branch,
+        )
         if denial is not None:
             return denial
     if targets:

@@ -389,6 +389,7 @@ class InjectionTests(unittest.TestCase):
         selected = active_project(project, str(worktree), "task/isolated")
 
         self.assertEqual(selected.path, worktree.resolve())
+        self.assertEqual(selected.policy_root, repository.resolve())
         with self.assertRaises(PolicyError):
             active_project(project, str(worktree), "task/other")
 

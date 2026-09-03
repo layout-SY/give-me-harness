@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import sys
 import unittest
 from pathlib import Path
@@ -111,6 +112,30 @@ class RenderingTests(unittest.TestCase):
             if "user-prompt codex" in item["hooks"][0]["command"]
         )
         self.assertEqual(central_prompt_hook["hooks"][0]["timeout"], 10)
+
+    def test_sync_hooks_use_the_configured_primary_runtime_absolute_path(self) -> None:
+        project = load_project("user-ui")
+        rendered = render_project(project)
+        expected_guard = project.path / ".agent-policy/runtime/managed_policy_guard.py"
+        registrations = (
+            json.loads(rendered[".codex/hooks.json"])["hooks"],
+            json.loads(rendered[".claude/settings.json"])["hooks"],
+        )
+        commands = [
+            hook["command"]
+            for hooks in registrations
+            for entries in hooks.values()
+            for entry in entries
+            for hook in entry["hooks"]
+            if "managed_policy_guard.py" in hook["command"]
+        ]
+
+        self.assertTrue(commands)
+        for command in commands:
+            with self.subTest(command=command):
+                self.assertEqual(Path(shlex.split(command)[2]), expected_guard)
+                self.assertNotIn("git rev-parse", command)
+                self.assertNotIn("$(", command)
 
     def test_codex_legacy_hooks_are_removed_in_favor_of_common_guard(self) -> None:
         rendered = render_project(load_project("user-ui"))

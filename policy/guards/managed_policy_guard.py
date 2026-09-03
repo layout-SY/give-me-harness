@@ -197,12 +197,26 @@ def repository_root(event: dict[str, Any]) -> Path:
     return cwd.resolve()
 
 
+def runtime_policy_root() -> Path:
+    """현재 guard가 로드된 불변 bundle 또는 sync 기본 checkout을 반환한다."""
+
+    if inject_mode():
+        bundle = os.environ.get(INJECT_BUNDLE_ROOT_ENV, "").strip()
+        if bundle:
+            return Path(bundle).resolve()
+    return Path(__file__).resolve().parents[2]
+
+
 def load_manifest(root: Path) -> dict[str, Any]:
-    try:
-        value = json.loads((root / MANIFEST_PATH).read_text(encoding="utf-8"))
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-    return value if isinstance(value, dict) else {}
+    candidates = (root / MANIFEST_PATH, runtime_policy_root() / MANIFEST_PATH)
+    for candidate in dict.fromkeys(path.resolve() for path in candidates):
+        try:
+            value = json.loads(candidate.read_text(encoding="utf-8"))
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            continue
+        if isinstance(value, dict):
+            return value
+    return {}
 
 
 def managed_contract(manifest: dict[str, Any]) -> tuple[set[str], tuple[str, ...]]:
@@ -224,6 +238,53 @@ def repository_relative(root: Path, raw_path: str) -> str | None:
         return target.resolve().relative_to(root.resolve()).as_posix()
     except (OSError, ValueError):
         return None
+
+
+def git_top_level(directory: Path) -> Path | None:
+    try:
+        completed = subprocess.run(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0 or not completed.stdout.strip():
+        return None
+    try:
+        return Path(completed.stdout.strip()).resolve()
+    except (OSError, RuntimeError):
+        return None
+
+
+def repository_target(
+    session_root: Path,
+    raw_path: str,
+    base: Path | None = None,
+) -> tuple[Path, str] | None:
+    """새 파일 경로도 가장 가까운 기존 부모에서 소속 worktree를 찾는다."""
+
+    if not raw_path.strip():
+        return None
+    try:
+        candidate = Path(raw_path.strip()).expanduser()
+        target = (candidate if candidate.is_absolute() else (base or session_root) / candidate).resolve()
+    except (OSError, RuntimeError):
+        return None
+    probe = target if target.is_dir() else target.parent
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    target_root = git_top_level(probe)
+    if target_root is None or not branch_guard.same_git_repository(session_root, target_root):
+        return None
+    try:
+        relative = target.relative_to(target_root).as_posix()
+    except ValueError:
+        return None
+    return target_root, relative
 
 
 def inject_mode() -> bool:
@@ -515,11 +576,15 @@ def trusted_branch_workflow_invocation(command: str, root: Path | None = None) -
         )
     if root is None:
         return False
-    expected = root / ".agent-policy/common" / Path(*BRANCH_WORKFLOW_SUFFIX)
-    try:
-        return resolved == expected.resolve()
-    except OSError:
-        return False
+    expected_roots = tuple(dict.fromkeys((root.resolve(), runtime_policy_root().resolve())))
+    for expected_root in expected_roots:
+        expected = expected_root / ".agent-policy/common" / Path(*BRANCH_WORKFLOW_SUFFIX)
+        try:
+            if resolved == expected.resolve():
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def trusted_branch_workflow_action(command: str, root: Path | None = None) -> str:
@@ -583,6 +648,13 @@ def branch_workflow_integrator_denial(
     action = arguments[0]
     if action == "create":
         contract = branch_workflow_contract(event, root, arguments)
+        requested_branch = contract.get("branch")
+        active_branch = active_assignment_branch(event, root, host)
+        if active_branch and requested_branch != active_branch:
+            return (
+                f"현재 세션의 활성 task({active_branch})가 CLOSED 상태가 아니므로 "
+                f"다른 task({requested_branch or '확인 불가'})를 생성할 수 없습니다."
+            )
         integrator = contract.get("git_integrator")
         if not isinstance(integrator, str) or not integrator:
             return "branch create proposal에서 Git 통합 담당자를 확인할 수 없습니다."
@@ -635,7 +707,8 @@ def denied_targets(event: dict[str, Any], root: Path, manifest: dict[str, Any]) 
 
     denied: set[str] = set()
     for raw_path in raw_targets:
-        relative = repository_relative(root, raw_path)
+        context = repository_target(root, raw_path)
+        relative = context[1] if context is not None else repository_relative(root, raw_path)
         if relative is not None and is_managed(relative, files, roots):
             denied.add(relative)
 
@@ -655,7 +728,8 @@ def denied_targets(event: dict[str, Any], root: Path, manifest: dict[str, Any]) 
                 if isinstance(workdir, str):
                     raw_targets.append(workdir)
                 continue
-            relative = relative_target(root, target)
+            context = repository_target(root, str(target))
+            relative = context[1] if context is not None else relative_target(root, target)
             if relative is not None and is_managed(relative, files, roots):
                 denied.add(relative)
             if injected_target := target_in_injected_policy(target):
@@ -677,17 +751,25 @@ def branch_denial(event: dict[str, Any], root: Path, host: str) -> str | None:
     tool_input = raw_input if isinstance(raw_input, dict) else {}
     command_value = tool_input.get("command")
     command = command_value if isinstance(command_value, str) else ""
+    shell_cwd = shell_working_directory(root, tool_input)
+    shell_root = git_top_level(shell_cwd)
+    if shell_root is None or not branch_guard.same_git_repository(root, shell_root):
+        shell_root = root
     if command and trusted_branch_workflow_invocation(command, root):
-        return branch_workflow_integrator_denial(event, root, host, command)
+        return branch_workflow_integrator_denial(event, shell_root, host, command)
 
     raw_targets = structured_targets(tool_input)
     if tool_name in {"apply_patch", "patch"}:
         raw_targets.extend(patch_targets(command))
-    relative_targets = [
-        relative
-        for raw_target in raw_targets
-        if (relative := repository_relative(root, raw_target)) is not None
-    ]
+    target_contexts: list[tuple[Path, str]] = []
+    for raw_target in raw_targets:
+        context = repository_target(root, raw_target)
+        if context is None:
+            return (
+                "구조화된 변경 대상이 현재 소비자 Git 저장소의 승인된 worktree에 속하지 않습니다: "
+                f"{raw_target}"
+            )
+        target_contexts.append(context)
     edit_tool = tool_name in STRUCTURED_MUTATION_TOOLS
     shell_tool = tool_name in SHELL_TOOLS
     if not edit_tool and not shell_tool:
@@ -697,21 +779,43 @@ def branch_denial(event: dict[str, Any], root: Path, host: str) -> str | None:
             target = resolved_shell_target(root, tool_input, raw_target)
             if target is None:
                 return "shell redirect 대상을 안전하게 해석할 수 없어 실행을 차단했습니다."
-            relative = relative_target(root, target)
-            if relative is not None:
-                relative_targets.append(relative)
+            context = repository_target(root, str(target))
+            if context is not None:
+                target_contexts.append(context)
         if has_non_git_shell_mutation(command):
             return (
                 "shell 명령의 비구조적 파일 변경은 branch scope와 소유권을 안전하게 확인할 수 없습니다. "
                 "파일 경로를 구조적으로 전달하는 Edit/Write/apply_patch 도구를 사용하세요."
             )
-    return branch_guard.pre_tool_denial(
-        root,
-        command,
-        tuple(dict.fromkeys(relative_targets)),
-        shell_tool,
-        host=host,
-    )
+        denial = branch_guard.command_denial(
+            root,
+            command,
+            host=host,
+            execution_cwd=shell_cwd,
+            expected_branch=active_assignment_branch(event, root, host),
+        )
+        if denial is not None:
+            return denial
+    grouped: dict[Path, list[str]] = {}
+    for target_root, relative in target_contexts:
+        grouped.setdefault(target_root, []).append(relative)
+    expected_branch = active_assignment_branch(event, root, host)
+    for target_root, relatives in grouped.items():
+        actual_branch = branch_guard.current_branch(target_root)
+        if expected_branch and actual_branch != expected_branch:
+            return (
+                "현재 세션의 활성 task와 구조화된 변경 대상 branch가 다릅니다.\n"
+                f"  활성 task: {expected_branch}\n"
+                f"  변경 대상: {actual_branch or 'detached HEAD'} ({target_root})"
+            )
+        denial = branch_guard.active_branch_denial(
+            target_root,
+            tuple(dict.fromkeys(relatives)),
+            host=host,
+        )
+        if denial is not None:
+            return denial
+    return None
 
 
 def denial_message(targets: list[str]) -> str:
@@ -773,7 +877,8 @@ def session_binding_path(event: dict[str, Any], root: Path, host: str) -> Path |
     session = event_session_id(event)
     if session == "missing-session-id":
         return None
-    identity = f"{root.resolve()}\0{host}\0{session}"
+    repository_identity = branch_guard.git_common_directory(root) or root.resolve()
+    identity = f"{repository_identity}\0{host}\0{session}"
     digest = hashlib.sha256(identity.encode()).hexdigest()
     state_root = Path(tempfile.gettempdir()) / "asan-agent-policy-session-bindings"
     state_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -868,6 +973,7 @@ def session_binding_record(event: dict[str, Any], root: Path, host: str) -> dict
                 "task",
                 "responsibility",
                 "contract_version",
+                "worktree",
             )
         }
     return {
@@ -877,14 +983,46 @@ def session_binding_record(event: dict[str, Any], root: Path, host: str) -> dict
         "task": "",
         "responsibility": "",
         "contract_version": "",
+        "worktree": "",
     }
+
+
+def binding_worktree(root: Path, record: dict[str, str]) -> Path:
+    raw = record.get("worktree", "")
+    if not raw:
+        return root.resolve()
+    try:
+        candidate = Path(raw).resolve()
+    except (OSError, RuntimeError):
+        return root.resolve()
+    if branch_guard.same_git_repository(root, candidate):
+        return candidate
+    return root.resolve()
+
+
+def active_assignment_branch(event: dict[str, Any], root: Path, host: str) -> str:
+    """CLOSED 전까지 같은 세션이 변경할 수 있는 단일 task branch를 반환한다."""
+
+    record = session_binding_record(event, root, host)
+    branch = record.get("branch", "") or os.environ.get(TASK_ENV, "").strip()
+    if not branch:
+        return ""
+    lookup_root = binding_worktree(root, record)
+    if branch_guard.task_state(lookup_root, branch) == "CLOSED":
+        return ""
+    return branch
 
 
 def bound_session_directory(event: dict[str, Any], root: Path, host: str) -> Path | None:
     record = session_binding_record(event, root, host)
     value = record.get("directory", "")
     if value:
-        candidate = artifact_session_directory(root, f"{value}/{HANDOFF_ARTIFACT}", host)
+        record_root = binding_worktree(root, record)
+        candidate = artifact_session_directory(
+            record_root,
+            f"{value}/{HANDOFF_ARTIFACT}",
+            host,
+        )
         if candidate is not None:
             return candidate
     return declared_session_directory(root, host)
@@ -906,20 +1044,23 @@ def bind_artifact_session(event: dict[str, Any], root: Path, host: str) -> str |
         for raw_target in shell_redirect_targets(command)
         if (target := resolved_shell_target(root, tool_input, raw_target)) is not None
     )
+    target_contexts = tuple(
+        context
+        for raw_target in raw_targets
+        if (context := repository_target(root, raw_target)) is not None
+    )
+    redirect_contexts = tuple(
+        context
+        for target in resolved_redirects
+        if (context := repository_target(root, str(target))) is not None
+    )
+    artifact_contexts = tuple(
+        (target_root, relative)
+        for target_root, relative in (*target_contexts, *redirect_contexts)
+        if relative.startswith(ARTIFACT_SESSIONS_PREFIXES)
+    )
     artifact_relative_targets = tuple(
-        dict.fromkeys(
-            relative
-            for raw_target in raw_targets
-            if (relative := repository_relative(root, raw_target)) is not None
-            and relative.startswith(ARTIFACT_SESSIONS_PREFIXES)
-        )
-    ) + tuple(
-        dict.fromkeys(
-            relative
-            for target in resolved_redirects
-            if (relative := relative_target(root, target)) is not None
-            and relative.startswith(ARTIFACT_SESSIONS_PREFIXES)
-        )
+        dict.fromkeys(relative for _, relative in artifact_contexts)
     )
     cross_host_denial = branch_guard.artifact_write_denial(
         tuple(dict.fromkeys(artifact_relative_targets)),
@@ -927,8 +1068,8 @@ def bind_artifact_session(event: dict[str, Any], root: Path, host: str) -> str |
     )
     if cross_host_denial is not None:
         return cross_host_denial
-    for relative in artifact_relative_targets:
-        layout_denial = artifact_layout_denial(root, relative, host)
+    for target_root, relative in artifact_contexts:
+        layout_denial = artifact_layout_denial(target_root, relative, host)
         if layout_denial is not None:
             return layout_denial
     current_prefix = artifact_sessions_prefix(host)
@@ -941,8 +1082,8 @@ def bind_artifact_session(event: dict[str, Any], root: Path, host: str) -> str |
                     f"현재 host({current_host})의 구조화된 쓰기 도구를 사용하세요."
                 )
     redirect_writes_artifact = any(
-        artifact_session_directory(root, str(target), host) is not None
-        for target in resolved_redirects
+        relative.startswith(ARTIFACT_SESSIONS_PREFIXES)
+        for _, relative in redirect_contexts
     )
     command_writes_artifact = bool(
         has_non_redirect_shell_mutation(command)
@@ -959,36 +1100,51 @@ def bind_artifact_session(event: dict[str, Any], root: Path, host: str) -> str |
             "현재 호스트의 구조화된 파일 쓰기 도구를 사용하세요."
         )
     candidates = tuple(
-        candidate
-        for raw_target in raw_targets
-        if (candidate := artifact_session_directory(root, raw_target, host)) is not None
+        (target_root, candidate)
+        for target_root, relative in target_contexts
+        if (candidate := artifact_session_directory(target_root, relative, host)) is not None
     )
     if not candidates:
         return None
-    requested = candidates[0]
-    if any(candidate.resolve() != requested.resolve() for candidate in candidates[1:]):
+    requested_root, requested = candidates[0]
+    if any(candidate.resolve() != requested.resolve() for _, candidate in candidates[1:]):
         return "한 번의 작업에서 서로 다른 세션 산출물 디렉터리를 수정할 수 없습니다."
     path = session_binding_path(event, root, host)
     record = session_binding_record(event, root, host)
-    existing = bound_session_directory(event, root, host)
+    existing = (
+        bound_session_directory(event, root, host)
+        if record
+        else declared_session_directory(requested_root, host)
+    )
     if path is None and existing is None:
         return (
             "호스트 이벤트에 session id가 없으므로 산출물 소유권을 자동 귀속할 수 없습니다. "
-            f"세션 시작 시 ASAN_SESSION_DIR={requested.resolve().relative_to(root.resolve()).as_posix()}를 "
+            f"세션 시작 시 ASAN_SESSION_DIR={requested.resolve().relative_to(requested_root.resolve()).as_posix()}를 "
             "지정하세요."
         )
+    can_rebind = False
     if existing is not None and existing.resolve() != requested.resolve():
-        if not session_rebind_allowed(root, existing, record):
+        can_rebind = session_rebind_allowed(requested_root, existing, record)
+        if not can_rebind:
             return (
                 "현재 세션의 기존 작업이 CLOSED 상태가 아니므로 다른 산출물 디렉터리로 전환할 수 없습니다. "
                 "기존 작업을 완료·merge·검증하거나 handoff 후 별도 worktree와 세션을 사용하세요."
             )
-    relative = requested.resolve().relative_to(root.resolve()).as_posix()
-    branch = branch_guard.current_branch(root)
-    values = branch_guard.metadata(root, branch) if branch else {}
-    task = os.environ.get(TASK_ENV, "").strip() or branch
-    if task and task != branch:
-        return f"session assignment task와 현재 branch가 다릅니다: task={task}, branch={branch or 'detached HEAD'}"
+    relative = requested.resolve().relative_to(requested_root.resolve()).as_posix()
+    branch = branch_guard.current_branch(requested_root)
+    values = branch_guard.metadata(requested_root, branch) if branch else {}
+    if record.get("branch") and record["branch"] != branch and not can_rebind:
+        return (
+            "현재 세션의 기존 task와 다른 branch에 같은 산출물 디렉터리를 사용할 수 없습니다. "
+            "이전 task를 CLOSED로 만든 뒤 새 task의 새 산출물 디렉터리를 사용하세요."
+        )
+    declared_task = os.environ.get(TASK_ENV, "").strip()
+    if declared_task and declared_task != branch and not can_rebind:
+        return (
+            f"session assignment task와 현재 branch가 다릅니다: "
+            f"task={declared_task}, branch={branch or 'detached HEAD'}"
+        )
+    task = branch or declared_task
     responsibility = os.environ.get(ARTIFACT_RESPONSIBILITY_ENV, "").strip().casefold() or "owner"
     if responsibility not in tuple(branch_guard.ARTIFACT_RESPONSIBILITIES):
         return f"지원하지 않는 산출물 책임입니다: {responsibility}"
@@ -1001,6 +1157,84 @@ def bind_artifact_session(event: dict[str, Any], root: Path, host: str) -> str |
         "task": task,
         "responsibility": responsibility,
         "contract_version": str(values.get("contract-version") or ""),
+        "worktree": str(requested_root.resolve()),
+    }
+    temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(binding, ensure_ascii=False), encoding="utf-8")
+    temporary.chmod(0o600)
+    temporary.replace(path)
+    return None
+
+
+def bind_task_assignment(event: dict[str, Any], root: Path, host: str) -> str | None:
+    """첫 source/Git mutation에서 session을 실제 ACTIVE task worktree에 고정한다."""
+
+    path = session_binding_path(event, root, host)
+    if path is None:
+        return None
+    raw_input = event.get("tool_input")
+    tool_input = raw_input if isinstance(raw_input, dict) else {}
+    tool_name = normalized_tool_name(event)
+    command_value = tool_input.get("command")
+    command = command_value if isinstance(command_value, str) else ""
+    target_roots: list[Path] = []
+    if tool_name in STRUCTURED_MUTATION_TOOLS:
+        raw_targets = structured_targets(tool_input)
+        if tool_name in {"apply_patch", "patch"}:
+            raw_targets.extend(patch_targets(command))
+        target_roots.extend(
+            target_root
+            for raw_target in raw_targets
+            if (context := repository_target(root, raw_target)) is not None
+            for target_root in (context[0],)
+        )
+    elif tool_name in SHELL_TOOLS and command and git_command_mutates(command):
+        invocations = branch_guard.git_invocations(
+            root,
+            command,
+            shell_working_directory(root, tool_input),
+        )
+        if invocations is not None:
+            target_roots.extend(invocation.root for invocation in invocations)
+    unique_roots = tuple(dict.fromkeys(target.resolve() for target in target_roots))
+    roots_by_branch: dict[str, Path] = {}
+    for target_root in unique_roots:
+        target_branch = branch_guard.current_branch(target_root)
+        if target_branch and target_branch != str(branch_guard.BASE_BRANCH):
+            roots_by_branch.setdefault(target_branch, target_root)
+    branches = tuple(roots_by_branch)
+    if not branches:
+        return None
+    if len(branches) != 1:
+        return "한 번의 mutation을 서로 다른 task branch에 귀속할 수 없습니다. 명령을 분리하세요."
+    branch = branches[0]
+    target_root = roots_by_branch[branch]
+    record = session_binding_record(event, root, host)
+    previous = record.get("branch", "")
+    if previous and previous != branch:
+        if branch_guard.task_state(binding_worktree(root, record), previous) != "CLOSED":
+            return (
+                f"현재 세션의 활성 task({previous})가 CLOSED 상태가 아니므로 "
+                f"다른 task({branch})로 전환할 수 없습니다."
+            )
+        return (
+            "CLOSED 뒤 다음 task를 시작하려면 먼저 새 task의 새 산출물 디렉터리를 "
+            "구조화된 Write 도구로 바인딩하세요."
+        )
+    if previous == branch:
+        return None
+    values = branch_guard.metadata(target_root, branch)
+    responsibility = os.environ.get(ARTIFACT_RESPONSIBILITY_ENV, "").strip().casefold() or "owner"
+    if responsibility not in tuple(branch_guard.ARTIFACT_RESPONSIBILITIES):
+        return f"지원하지 않는 산출물 책임입니다: {responsibility}"
+    binding = {
+        "directory": record.get("directory", ""),
+        "branch": branch,
+        "merge_target": str(values.get("merge-target") or ""),
+        "task": branch,
+        "responsibility": responsibility,
+        "contract_version": str(values.get("contract-version") or ""),
+        "worktree": str(target_root),
     }
     temporary = path.with_name(f"{path.name}.{os.getpid()}.tmp")
     temporary.write_text(json.dumps(binding, ensure_ascii=False), encoding="utf-8")
@@ -1060,37 +1294,58 @@ def git_artifact_ownership_denial(
     if tool_name not in SHELL_TOOLS or not command or trusted_branch_workflow_invocation(command, root):
         return None
 
-    affected: list[str] = []
-    for raw_arguments in branch_guard._git_commands(command):
-        arguments = branch_guard._strip_git_global_options(raw_arguments)
+    invocations = branch_guard.git_invocations(
+        root,
+        command,
+        shell_working_directory(root, tool_input),
+    )
+    if invocations is None:
+        return None
+    affected: list[tuple[Path, str]] = []
+    for invocation in invocations:
+        arguments = invocation.arguments
         if not arguments:
             continue
         if arguments[0] == "add":
-            affected.extend(branch_guard.changed_paths(root))
-            affected.extend(branch_guard._pathspecs_after_separator(arguments))
+            affected.extend(
+                (invocation.root, path)
+                for path in branch_guard.changed_paths(invocation.root)
+            )
+            affected.extend(
+                (invocation.root, path)
+                for path in branch_guard._pathspecs_after_separator(arguments)
+            )
         elif arguments[0] == "commit":
-            affected.extend(branch_guard.staged_paths(root))
-    if branch_guard.GIT_STATUS_UNAVAILABLE in affected:
+            affected.extend(
+                (invocation.root, path)
+                for path in branch_guard.staged_paths(invocation.root)
+            )
+    if any(path == branch_guard.GIT_STATUS_UNAVAILABLE for _, path in affected):
         return "Git 산출물 변경 상태를 확인할 수 없어 소유권 검증을 중단했습니다."
 
     artifact_paths = tuple(
         dict.fromkeys(
-            path for path in affected if path.startswith(ARTIFACT_SESSIONS_PREFIXES)
+            (target_root, path)
+            for target_root, path in affected
+            if path.startswith(ARTIFACT_SESSIONS_PREFIXES)
         )
     )
     if not artifact_paths:
         return None
-    denial = branch_guard.artifact_write_denial(artifact_paths, host)
+    denial = branch_guard.artifact_write_denial(
+        tuple(path for _, path in artifact_paths),
+        host,
+    )
     if denial is not None:
         return denial
     current = bound_session_directory(event, root, host)
     if current is None:
         return "Git에 포함할 산출물이 현재 host·session에 귀속되지 않았습니다."
-    for relative in artifact_paths:
-        layout_denial = artifact_layout_denial(root, relative, host)
+    for target_root, relative in artifact_paths:
+        layout_denial = artifact_layout_denial(target_root, relative, host)
         if layout_denial is not None:
             return layout_denial
-        session = artifact_session_directory(root, relative, host)
+        session = artifact_session_directory(target_root, relative, host)
         if session is None or session.resolve() != current.resolve():
             return f"다른 세션의 산출물은 Git에 포함할 수 없습니다: {relative}"
     return None
@@ -1344,7 +1599,8 @@ def transient_state_path(
     session_id = event_session_id(event)
     if session_id == "missing-session-id":
         return None
-    identity = f"{root.resolve()}\0{host}\0{event_session_id(event)}"
+    repository_identity = branch_guard.git_common_directory(root) or root.resolve()
+    identity = f"{repository_identity}\0{host}\0{event_session_id(event)}"
     digest = hashlib.sha256(identity.encode()).hexdigest()
     state_root = Path(tempfile.gettempdir()) / f"asan-agent-policy-{namespace}"
     state_root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1656,7 +1912,10 @@ def implementation_gate_required(event: dict[str, Any], root: Path) -> bool:
             raw_targets.extend(patch_targets(command))
         if not raw_targets:
             return True
-        relatives = tuple(repository_relative(root, raw_path) for raw_path in raw_targets)
+        relatives = tuple(
+            context[1] if (context := repository_target(root, raw_path)) is not None else None
+            for raw_path in raw_targets
+        )
         return any(
             relative is None or not relative.startswith(ARTIFACT_SESSIONS_PREFIXES)
             for relative in relatives
@@ -1672,7 +1931,8 @@ def implementation_gate_required(event: dict[str, Any], root: Path) -> bool:
         target = resolved_shell_target(root, tool_input, raw_target)
         if target is None or target_in_injected_policy(target) is not None:
             return True
-        relative = relative_target(root, target)
+        context = repository_target(root, str(target))
+        relative = context[1] if context is not None else relative_target(root, target)
         if relative is not None and not relative.startswith(ARTIFACT_SESSIONS_PREFIXES):
             return True
     return False
@@ -1847,6 +2107,15 @@ def check_operation(event: dict[str, Any], root: Path, host: str) -> None:
     emit_operation_approval(host, operation_approval_message(command, categories, host))
 
 
+def operation_repository_root(event: dict[str, Any], root: Path) -> Path:
+    raw_input = event.get("tool_input")
+    tool_input = raw_input if isinstance(raw_input, dict) else {}
+    candidate = git_top_level(shell_working_directory(root, tool_input))
+    if candidate is not None and branch_guard.same_git_repository(root, candidate):
+        return candidate
+    return root
+
+
 def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     host = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -1898,17 +2167,18 @@ def main() -> None:
     command_value = tool_input.get("command")
     command = command_value if isinstance(command_value, str) else ""
     workflow_action = trusted_branch_workflow_action(command, root)
+    operation_root = operation_repository_root(event, root)
     if workflow_action == "preserve":
-        preservation_denial = preservation_documentation_denial(event, root, host)
+        preservation_denial = preservation_documentation_denial(event, operation_root, host)
         if preservation_denial is not None:
             emit_denial(host, preservation_denial)
             return
     if workflow_action in {"finish-proposal", "finish", "verify", "close"}:
-        assignment_denial = completion_assignment_denial(event, root, host)
+        assignment_denial = completion_assignment_denial(event, operation_root, host)
         if assignment_denial is not None:
             emit_denial(host, assignment_denial)
             return
-        completion_denial = documentation_denial(event, root, host)
+        completion_denial = documentation_denial(event, operation_root, host)
         if completion_denial is not None:
             emit_denial(host, completion_denial)
             return
@@ -1916,11 +2186,15 @@ def main() -> None:
     if denial is not None:
         emit_denial(host, denial)
         return
-    readiness_denial = implementation_gate_denial(event, root, host)
+    assignment_binding_denial = bind_task_assignment(event, root, host)
+    if assignment_binding_denial is not None:
+        emit_denial(host, assignment_binding_denial)
+        return
+    readiness_denial = implementation_gate_denial(event, operation_root, host)
     if readiness_denial is not None:
         emit_denial(host, readiness_denial)
         return
-    check_operation(event, root, host)
+    check_operation(event, operation_root, host)
 
 
 if __name__ == "__main__":

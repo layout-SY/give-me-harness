@@ -76,6 +76,8 @@ V3는 정적 **branch task 계약**, 동적 **session assignment**, 검증 가�
 
 따라서 기본 폴더가 dirty이거나 다른 세션이 사용 중인 독립 작업은 격리한다. 모든 작업마다 worktree가 필요한 것은 아니다. 기존 task가 CLOSED이고 현재 폴더가 clean하며 단일 세션이 소유하면 같은 폴더에서 다음 task를 시작할 수 있다.
 
+격리 worktree도 현재 세션이 맡은 단일 활성 task의 실행 공간이 될 수 있다. 세션을 시작한 cwd가 소유권 경계가 되는 것이 아니라, branch 계약에 기록된 worktree와 현재 ACTIVE assignment가 변경 경계가 된다. 따라서 기본 폴더에서 `git -C <승인된-task-worktree> add -- <scope-path>`를 실행하는 것은 허용할 수 있지만, task worktree에서 `git -C <기본-sy-main-worktree> add ...`로 기준 branch index를 바꾸는 것은 차단해야 한다.
+
 task parent에 commit되지 않은 변경이 있는 경우는 다르다. child branch는 parent ref의 마지막 commit에서 시작하므로 그 dirty 변경을 포함하지 않는다. V3 도구는 이 경우 child 생성을 막고 parent 소유자의 commit 또는 handoff를 요구한다.
 
 ## 5. immutable branch proposal
@@ -230,10 +232,14 @@ raw merge·V3 branch 삭제·worktree remove는 사용하지 않는다. merge나
 
 이 제한은 “항상 새 폴더·새 세션”을 강제하려는 것이 아니다. 미완료 작업을 번갈아 다루면서 context, index, stage와 commit 범위가 섞이는 상황만 격리한다.
 
+dirty 기준 폴더 때문에 격리 worktree를 새로 만든 경우에도 현재 task가 하나라면 같은 세션이 그 worktree로 실행 위치를 옮겨 계속할 수 있다. 반대로 `PRESERVED` 작업을 남겨 둔 채 다른 작업을 동시에 진행하는 경우에는 두 task의 assignment를 한 세션에 함께 바인딩하지 않고 별도 worktree·세션을 사용한다.
+
 ## 11. 실패 원칙
 
 - Git status, path parse, contract file 또는 runtime contract를 읽지 못하면 허용하지 않는다.
 - inject는 snapshot의 `.agent-policy/runtime/branch_guard.py`만 사용하고 stale consumer host hook으로 fallback하지 않는다.
+- sync hook은 현재 cwd에서 runtime을 찾지 않고 `projects/*.json`의 소비자 기본 checkout에 배포된 guard 절대 경로를 사용한다. 그래서 `.agent-policy/`가 ignore된 격리 worktree에서도 같은 정책 원본을 실행한다.
+- `git -C`, 도구 `workdir`, `--git-dir/--work-tree`는 실제 target worktree와 Git directory가 일치하는지 재평가한다. `cd`, `env -C`, `GIT_DIR/GIT_WORK_TREE`, Git directory/worktree 불일치는 해석 가능한 형태로 단순화하기 전까지 차단한다.
 - launcher가 지정 worktree를 같은 Git 저장소로 검증하지 못하면 기본 프로젝트 폴더로 fallback하지 않는다.
 - merge·검증·cleanup 실패는 source와 worktree를 보존한 채 사용자에게 정확한 상태를 보고한다.
 - 소비자 sync와 로그 Git commit은 이 작업의 자동 후속 동작이 아니며 별도 승인을 받는다.

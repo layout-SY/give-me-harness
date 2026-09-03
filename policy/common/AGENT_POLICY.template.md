@@ -79,6 +79,7 @@ session assignment가 `contributor`인 작업자는 `handoff.md`를 작성한다
 - 한 세션에는 한 시점에 하나의 활성 작업만 둔다.
 - 활성 작업을 바꾸기 전에 기존 작업을 검증·문서화·commit하고 직접 target에 merge하여 `CLOSED`로 만들거나, handoff를 작성해 `PRESERVED`로 둔다.
 - `CLOSED` 후에는 같은 세션에서 새 작업을 시작할 수 있다. `PRESERVED` 작업과 새 작업을 병행하려면 별도 worktree·세션을 사용한다.
+- dirty 기준 폴더를 피하려고 승인된 격리 worktree를 만든 경우, 현재 활성 작업이 하나라면 같은 세션에서 도구 `workdir` 또는 `git -C`의 대상으로 그 worktree를 사용해 계속할 수 있다. 세션 시작 cwd가 아니라 ACTIVE task의 승인 worktree가 변경 경계다.
 - `PRESERVED` 전환에는 현재 상태를 설명하는 `handoff.md`가 필요하다. contributor assignment는 인계까지만 수행하며, merge·사후 검증·close는 필수 8종을 책임지는 owner assignment만 수행한다.
 - 다른 host 또는 다른 세션의 산출물 디렉터리에 쓰지 않는다. 필요한 문서는 읽을 수 있다. 이어받을 때는 handoff와 선택된 inject role의 일치 여부를 확인하고, role이 없는 세션이면 역할을 다시 확인한 뒤 새 assignment와 승인된 디렉터리를 사용한다.
 - 산출물의 최초 쓰기는 파일 경로를 구조적으로 전달하는 호스트 쓰기 도구로 수행한다. Bash heredoc·리다이렉션은 귀속을 기록하지 못하므로 사용하지 않는다. 호스트별 구체 도구는 adapter 문서를 따른다.
