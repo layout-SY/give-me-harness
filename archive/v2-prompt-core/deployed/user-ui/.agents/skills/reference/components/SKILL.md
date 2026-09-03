@@ -1,0 +1,12 @@
+---
+name: reference-components
+description: 컴포넌트를 생성하거나 변경하기 전에 src/shared/ui에서 재사용 가능한 대상 UI를 탐색합니다.
+---
+
+<!-- 이 파일은 asan-prompt-core 에서 배포되었습니다. 이 프로젝트에서 직접 수정하지 마세요.
+     원본: source/common/skills/reference/components/SKILL.md
+     수정: ~/SynologyDrive/asan-prompt-core 에서 편집한 뒤 `python3 bin/sync.py deploy --target all` 을 실행하고 세션을 재시작하세요. -->
+
+# 컴포넌트 참고 자료
+
+먼저 `src/shared/ui/`를 검색합니다. 후보 경로, 계약, 접근성 동작과 재사용하거나 제외한 이유를 기록합니다. 공용 기본 요소는 `src/shared/ui/`에 두고, 기능/도메인 컴포넌트는 소유 기능 가까이에 둡니다. 이 카탈로그에는 원본 관리자 프로젝트의 컴포넌트가 존재한다는 주장을 의도적으로 포함하지 않습니다.

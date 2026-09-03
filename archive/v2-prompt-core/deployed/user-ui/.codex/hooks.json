@@ -1,0 +1,41 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear|compact",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$(git rev-parse --show-toplevel)/.codex/hooks/harness_hook.py\" SessionStart",
+            "timeout": 20,
+            "statusMessage": "중앙 정책과 브랜치 컨텍스트 확인"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$(git rev-parse --show-toplevel)/.codex/hooks/harness_hook.py\" PreToolUse",
+            "timeout": 10,
+            "statusMessage": "중앙 정책과 작업 브랜치 규칙 확인"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 -I \"$(git rev-parse --show-toplevel)/.codex/hooks/harness_hook.py\" Stop",
+            "timeout": 10,
+            "statusMessage": "필수 산출물 8종 확인"
+          }
+        ]
+      }
+    ]
+  }
+}

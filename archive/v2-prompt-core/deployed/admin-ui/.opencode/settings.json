@@ -1,0 +1,8 @@
+{
+  "agents": {
+    "oracle": {
+      "model": "openai/GPT-5.6-Sol:xhigh",
+      "temperature": 0.2
+    }
+  }
+}

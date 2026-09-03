@@ -1,0 +1,12 @@
+---
+name: policy-hook-extraction
+description: 상태를 가진 동작을 기능 또는 공용 사용자 정의 훅으로 분리할 시점을 결정한다.
+---
+
+<!-- 이 파일은 asan-prompt-core 에서 배포되었습니다. 이 프로젝트에서 직접 수정하지 마세요.
+     원본: source/common/skills/policy/hook-extraction/SKILL.md
+     수정: ~/SynologyDrive/asan-prompt-core 에서 편집한 뒤 `python3 bin/sync.py deploy --target all` 을 실행하고 세션을 재시작하세요. -->
+
+# 훅 추출
+
+동작이 상태나 효과를 소유하거나, 독립적으로 테스트할 수 있거나, 동일한 계약으로 반복될 때 추출한다. 일회성 순수 변환은 함수로 유지한다. 도메인 훅은 해당 기능 가까이에 두고, 실제 사용처가 여러 개 생긴 뒤에만 공용 영역으로 승격한다.
