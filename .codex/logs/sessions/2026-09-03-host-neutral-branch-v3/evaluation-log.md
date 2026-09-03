@@ -267,3 +267,116 @@ Git common directory에 proposal, branch state와 session binding이 쌓일 수 
 ## 9. 최종 평가
 
 이번 변경은 여러 개의 개별 guard 예외를 추가한 것이 아니라, 역할·세션·branch·host의 책임을 분리해 기존 장애가 반복되던 구조를 바꿨다. 자동 테스트와 source audit가 핵심 invariant를 고정하고 있어 중앙 원본으로서는 장기 운영 가능한 상태다. 가장 큰 잔여 위험은 코드 자체보다 배포 순서다. 중앙 commit, 승인된 sync, host smoke, legacy retire, 세션 재시작 순서를 지키는 것이 다음 단계의 핵심이다.
+
+## 10. 후속 평가 기준 — 같은 세션의 isolated worktree
+
+| 요구 | 성공 기준 | 구현 증거 | 평가 |
+| --- | --- | --- | --- |
+| sync 외부 worktree | worktree에 runtime 사본이 없어도 hook 실행 | primary 절대 hook subprocess | PASS |
+| inject 회귀 없음 | bundle 절대 runtime 교체 유지 | 기존 injection tests | PASS |
+| 정상 `git -C` | primary cwd에서 ACTIVE task target 허용 | branch guard 양방향 test | PASS |
+| primary 보호 | task cwd에서 primary `sy-main` target 차단 | expected task + base denial | PASS |
+| tool workdir | event cwd와 실제 exec cwd가 달라도 target 판정 | execution_cwd 양방향 test | PASS |
+| Git global option | 올바른 linked pair만 허용 | absolute git-dir 비교 test | PASS |
+| 문맥 우회 | env/cd/env-C/lone-git-dir 차단 | fail-closed parameterized test | PASS |
+| branch 계보 | scratch switch와 switch+commit 차단 | branch selection/compound test | PASS |
+| structured target | primary event에서 task absolute Write 허용 | rendered guard end-to-end | PASS |
+| 다른 task 차단 | binding ACTIVE 중 primary 또는 타 branch mutation 거부 | same-session boundary test | PASS |
+| 순차 다중 task | 첫 task CLOSED 후 같은 session id가 다음 worktree로 rebind | V3 cross-worktree end-to-end | PASS |
+| Git 제어 파일 | scope `.`이어도 `.git/**` Write 거부 | dedicated test | PASS |
+| 기존 기능 | renderer/sync/inject/log/guard/branch 전체 회귀 | full unittest | PASS |
+
+## 11. 동작 모델 평가
+
+### 11.1 clean primary
+
+```text
+sy-main clean
+  -> 승인 proposal/create
+  -> 현재 폴더에서 task branch
+  -> 구현·8종·commit
+  -> finish/verify/close
+  -> CLOSED 후 같은 session이 다음 task 가능
+```
+
+기존 direct workflow는 V3 worktree metadata가 빈 값이므로 그대로 유지된다.
+
+### 11.2 dirty primary와 독립 task
+
+```text
+primary sy-main + 다른 소유자의 dirty
+  -> 승인 proposal에 외부 worktree 포함
+  -> branch_workflow create가 clean task worktree 생성
+  -> 같은 session이 tool workdir/git -C로 task worktree 사용
+  -> primary dirty/index를 건드리지 않음
+```
+
+이 흐름에서 새 세션은 필수가 아니다. policy state와 artifact binding은 Git common directory identity로 이어진다.
+
+### 11.3 PRESERVED 병행
+
+```text
+task A ACTIVE
+  -> handoff 작성
+  -> PRESERVED
+  -> A를 그대로 보존하면서 task B도 진행해야 함
+  -> B는 별도 worktree + 별도 session
+```
+
+이번 변경은 이 안전 경계를 완화하지 않는다. 같은 session binding은 CLOSED 전 다른 task directory로 이동할 수 없다.
+
+### 11.4 target integration
+
+finish/verify/close는 기존 immutable finish proposal, full source/target SHA, ff-only merge, target validation과 CLOSED record를 유지한다. 일반 `git -C` 허용은 이 완료 workflow를 우회하지 않는다. raw V3 merge·worktree cleanup·branch deletion은 계속 차단된다.
+
+## 12. 효율성 평가
+
+- worktree마다 183개 managed output을 복제하지 않고 primary runtime 하나를 사용한다.
+- 동일 세션의 승인·탐색 state를 worktree별로 다시 만들지 않아 중복 context와 사용자 승인 반복을 줄인다.
+- parser는 Git 호출에만 read-only `rev-parse`를 수행하고 structured source write는 대상별 한 번의 repository lookup을 한다.
+- Git status와 metadata 검사는 mutation 직전에 실제 target에서 실행되므로 캐시된 cwd 추정보다 비용은 조금 늘지만 잘못된 index 변경 방지 가치가 크다.
+- `NamedTuple` context로 root와 arguments를 함께 전달해 함수별 중복 parse를 줄였다.
+
+## 13. 후속 위험 평가
+
+| 위험 | 가능성 | 영향 | 대응 |
+| --- | --- | --- | --- |
+| host payload의 workdir key 변화 | 중간 | target cwd 오판 | 외부 host smoke와 adapter test |
+| 실제 shell 문법 확장 | 중간 | parse 불가 차단 증가 | 단순 tool workdir/git-C 안내, 사례 기반 보강 |
+| primary policy anchor 이동 | 낮음 | sync hook 경로 stale | 승인 sync로 hook 재렌더, 새 세션 시작 |
+| worktree 삭제 후 stale binding | 낮음 | artifact path 복원 실패 | same-repo 검증 후 current root fallback, CLOSED rebind |
+| unrelated repository absolute Write | 낮음 | 범위 확장 | repository_target same-common-dir 차단 |
+| Git CLI 출력 변화 | 낮음 | fail-closed | subprocess 회귀와 Git 버전 smoke |
+
+## 14. 후속 최종 평가
+
+정책은 이제 “어디서 세션을 시작했는가”가 아니라 “현재 어떤 task가 ACTIVE이며 이번 mutation이 실제 어느 worktree와 index를 겨냥하는가”를 판단한다. 이 모델은 사용자의 순차 다중 작업 요구, dirty primary 보존, session 산출물 귀속과 `sy-main` 보호를 동시에 충족한다. 남은 운영 단계는 중앙 검증 결과 확인과 별도 승인된 소비자 배포이며, 이번 수정 자체가 sync를 수행하지는 않는다.
+
+## 15. 최종 평가 근거
+
+- 전체 자동 회귀: 96/96 PASS
+- 중앙 source contract audit: PASS
+- admin-ui audit: PASS, 183 managed files
+- user-ui audit: PASS, 183 managed files
+- whitespace/syntax: PASS
+- 소비자 배포 상태: 각 add 99, change 82, legacy 11, manifest missing으로 V3 미배포
+- 자동 수행하지 않은 작업: consumer sync, legacy retire, main merge, push
+
+판정: 중앙 구현과 문서의 acceptance criteria는 충족했다. 소비자에서 실제 host가 설정을 로드하는 smoke와 배포는 별도 승인 단계다.
+
+## 16. 사용성 문서 평가
+
+기존 체계는 정책 자체는 상세했지만 사용자가 여러 문서에서 mode, role, worktree와 상태 전이를 조합해야 했다. 새 사용 가이드는 정책 코드를 바꾸지 않고 다음 의사결정 비용을 줄인다.
+
+- sync와 inject의 선택 및 중앙 변경 반영 방식
+- clean/dirty primary에 따른 worktree 필요 여부
+- 같은 세션 유지와 새 세션 생성의 경계
+- owner/contributor의 산출물 책임
+- 생성·완료 proposal의 승인 순서
+- 과거 guard 오탐·미탐에 대한 즉시 조치
+
+문서가 길어진 대신 선택표, 독립 절, 대표 시나리오와 시작·종료 체크리스트를 제공해 필요한 부분만 찾을 수 있게 했다. 정책 의미는 기존 공통 skill과 전략 문서에 남기고 가이드는 실행 관점으로 구성해 중복 drift를 줄였다.
+
+장기적으로 CLI 인자가 바뀌면 usage-guide의 command example을 함께 검사해야 한다. 현재는 help 출력과 수동 대조했으며, 향후에는 문서 code block smoke를 별도 테스트로 자동화할 수 있다. 다만 placeholder와 사용자 승인 단계가 포함되므로 전체 명령을 무조건 실행하는 doctest보다는 parser-level example 검사가 적합하다.
+
+최종 평가는 문서 추가가 런타임 성능이나 guard 허용 범위에 영향을 주지 않으면서 현재 정책의 운영 가능성과 장애 복구성을 높였다는 것이다.

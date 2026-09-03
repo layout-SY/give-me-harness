@@ -140,3 +140,72 @@
 ## 8. 결론
 
 검토 결과 현재 설계는 사용자가 요구한 host 역할 가변성, 산출물 출처 보존, dirty 작업 격리와 위험 Git 명령 양도를 동시에 만족한다. 현재 변경을 막는 설계상 FAIL 항목은 없다. 소비자 배포와 legacy 퇴역은 중앙 구현의 완료 조건이 아니라 별도 운영 승인 항목으로 남긴다.
+
+## 9. 후속 Grill Me — worktree가 session 경계인가
+
+## Method Guardrails
+
+- neutral question-first 적용 여부: 예
+- 기존 V3 확정 문서를 우선 근거로 삼고, 새 정책을 추정하지 않았다.
+- 사용자의 “하나의 세션에서 여러 작업” 정정을 찬반 질문으로 되묻지 않고 충돌 문구와 runtime 동작을 검증했다.
+- 질문은 cwd, task, worktree, session, Git index를 분리해 한 번에 한 결정만 다뤘다.
+
+## Neutral Question Flow
+
+| 영역 | 중립적 질문 | 답변 | 근거 | Recommended Answer |
+| --- | --- | --- | --- | --- |
+| 세션 단위 | 격리 worktree를 만들면 반드시 새 세션이어야 하는가? | 아니다. 한 세션에는 한 시점의 ACTIVE task 하나만 있으면 된다. | 전략 문서의 CLOSED 후 동일 세션 전환 계약 | 단일 ACTIVE task면 현재 세션이 승인 worktree로 이동한다. |
+| 병행 조건 | 새 세션이 실제로 필요한 조건은 무엇인가? | 미완료 task를 PRESERVED로 남기고 다른 task를 병행하거나 host/role/담당자를 인계할 때다. | PRESERVED와 assignment 계약 | worktree 존재 자체가 아니라 동시 미완료 assignment 여부로 결정한다. |
+| 정책 원본 | sync guard는 현재 cwd와 primary 중 어디에서 로드해야 하는가? | 배포 원본인 configured primary다. | ignored `.agent-policy` 외부 worktree 재현 | hook command에 primary runtime 절대 경로를 렌더한다. |
+| Git 판정 | `git -C`를 전부 차단해야 하는가? | 아니다. 승인 task로 이동하는 정상 사용에 필요하다. | primary→task 정상 사례 | 실제 target top-level·branch·metadata를 재평가해 선택적으로 허용한다. |
+| 역방향 보호 | task cwd에서 primary를 겨냥한 `git -C`는 어떻게 처리하는가? | ACTIVE task mismatch 또는 base branch 직접 수정으로 차단한다. | 실제 primary index staging 재현 | event cwd가 아니라 invocation target에서 판정한다. |
+| 명시적 Git dir | `--git-dir/--work-tree` 쌍이면 항상 안전한가? | 아니다. 서로 다른 worktree의 Git directory와 tree를 섞을 수 있다. | primary Git dir + task tree 위협 분석 | target의 absolute Git dir와 명령 Git dir가 일치할 때만 허용한다. |
+| shell 표현 | `cd`, `env -C`, Git 환경 변수를 모두 해석할 것인가? | 완전 해석은 shell interpreter 수준이라 신뢰하기 어렵다. | quoting·subshell·환경 상속 복잡성 | tool workdir 또는 git -C로 단순화하도록 fail-closed한다. |
+| session state | worktree 이동 뒤 승인·탐색 state는 유지돼야 하는가? | 같은 session id와 같은 저장소라면 유지돼야 한다. | 기존 root 기반 hash가 state를 분리 | Git common directory를 session state key로 사용한다. |
+| 산출물 | primary event에서 외부 worktree의 artifact를 Write하면 누구에게 귀속되는가? | target worktree의 현재 task와 실행 host/session이다. | 구조화된 절대 경로와 host ownership 계약 | target Git root를 구해 binding record에 worktree를 기록한다. |
+| 순차 task | CLOSED 후 다음 worktree로 같은 세션이 rebind해도 되는가? | 필수 8종, clean, ancestry, CLOSED가 모두 확인되면 된다. | 기존 session_rebind_allowed 의미 | 동일 common repo key를 유지하고 record를 새 task로 원자 교체한다. |
+| 직접 제어 파일 | scope가 `.`이면 `.git/config`도 Write할 수 있는가? | 안 된다. branch metadata와 index 제어를 우회한다. | structured target 전수조사 | `.git` 제어 경로는 scope보다 상위의 불변 차단 대상으로 둔다. |
+
+## 10. 대안 비교
+
+### 대안 A — 모든 task마다 새 세션
+
+- 장점: 구현이 단순하고 root 기반 state를 그대로 쓸 수 있다.
+- 단점: 사용자가 확정한 순차 다중 작업 흐름을 깨고, 사소한 dirty 격리마다 context와 프로세스를 다시 만든다.
+- 판정: 기각.
+
+### 대안 B — `git -C` 전면 금지
+
+- 장점: cwd와 Git target 불일치가 사라진다.
+- 단점: primary를 건드리지 않고 같은 세션에서 isolated worktree를 운영하는 표준 경로를 막는다.
+- 판정: 기각.
+
+### 대안 C — hook event cwd만 tool workdir로 교체
+
+- 장점: 일부 exec 도구의 오탐을 줄인다.
+- 단점: 한 command 안의 `git -C`, `--git-dir`, `--work-tree`가 다시 대상을 바꿀 수 있고 structured absolute Write도 남는다.
+- 판정: 불충분.
+
+### 대안 D — policy anchor·common session identity·invocation target 분리
+
+- 장점: 같은 세션의 정상 이동과 primary 보호를 동시에 표현하며 inject/sync 차이도 명확하다.
+- 단점: parser와 cross-worktree artifact binding 회귀 테스트가 필요하다.
+- 판정: 채택.
+
+## 11. 후속 결론
+
+변경 경계를 session cwd에 고정하는 설계는 사용자 흐름과 Git worktree의 실제 구조를 모두 잘못 모델링한다. 정책 원본, session identity, ACTIVE task와 invocation target을 분리한 현재 방향이 최소한의 사용성 저하로 오탐과 미탐을 함께 제거한다. 별도 새 세션은 격리 폴더가 생겼다는 사실이 아니라 미완료 assignment를 동시에 보존해야 한다는 상태에서만 요구한다.
+
+## 12. 사용 가이드 반론 검토
+
+| 질문 | 판정 | 문서 처리 |
+| --- | --- | --- |
+| README만 확장하면 충분한가? | 아니다. 중앙 구조 요약과 17절 운영 절차를 한 파일에 섞으면 진입성이 떨어진다. | README는 링크와 요약을 유지하고 docs/usage-guide.md를 실행 진입점으로 추가했다. |
+| inject 세션도 중앙 변경 후 sync해야 하는가? | 아니다. inject는 소비자 파일을 쓰지 않고 중앙 digest bundle을 사용한다. | mode별 재적용 표에서 inject는 launcher 재실행만 요구한다. |
+| 기존 inject 세션을 UI에서 resume하면 충분한가? | 아니다. 이전 bundle 환경을 계속 사용할 수 있다. | 중앙 start --mode inject를 새로 호출하도록 명시했다. |
+| 기존 worktree로 직접 cd해야 하는가? | 아니다. launcher의 --worktree가 cwd를 설정한다. | 같은 worktree/branch/task/session-dir 재사용 예시를 제공했다. |
+| sync도 외부 worktree에서 항상 새 세션을 열 수 있다고 써야 하는가? | 현재 계약으로는 과장이다. host 설정 파일 자체는 primary에만 있을 수 있다. | primary에서 sync 세션을 시작해 workdir/git-C를 사용하고, 외부 새 세션은 inject를 권장했다. |
+| 모든 정책 내용을 가이드에 복제해야 하는가? | 아니다. 중복된 규범은 drift를 만든다. | 상세 설계는 branch 전략과 공통 skill에 링크하고 가이드는 실행 순서·예시·장애 대응에 집중했다. |
+| 예시에서 축약 SHA를 허용해도 되는가? | 안 된다. 승인 식별자는 canonical file의 전체 SHA-256이다. | 생성과 완료 workflow 모두 64자리 전체값을 강조했다. |
+
+문서의 핵심 가치는 규칙 수를 늘리는 것이 아니라 사용자가 mode, task 상태와 worktree 상태에 따라 올바른 다음 행동을 선택하게 하는 데 있다.

@@ -212,3 +212,75 @@
 - 사용자가 전수조사 뒤 Branch Contract V3를 구현하고 커밋하도록 반복 승인했다.
 
 승인 상태: `approved`
+
+## 12. 후속 수정 계획 — cwd 고정 오해 제거와 실제 Git 대상 판정
+
+### 12.1 발생한 문제
+
+V3 통합 뒤 실제 소비자 worktree 흐름을 재현하면서 두 개의 구조적 결함과 한 개의 문서 충돌이 확인됐다.
+
+1. sync hook이 매 호출마다 `git rev-parse --show-toplevel`로 runtime을 찾았다. `.agent-policy/`가 ignore된 외부 worktree에서는 그 worktree 아래에 runtime이 없으므로 hook이 exit 2로 종료되고 모든 도구가 fail-closed됐다.
+2. branch guard가 `git -C`, `--git-dir`, `--work-tree` global option을 subcommand 판정 전에 버렸다. 따라서 세션 cwd가 `sy-main`이면 승인 task worktree를 대상으로 한 정상 `git add`를 오탐했고, 반대로 task cwd에서 primary `sy-main` index를 대상으로 한 명령은 미탐했다.
+3. 상위 전략 문서는 `CLOSED` 후 같은 세션에서 다음 task를 허용했지만, 공통 skill과 `branch_workflow.py create` 출력은 격리 worktree가 생성되면 무조건 handoff하고 새 세션을 시작하라고 안내했다.
+
+### 12.2 확정 invariant
+
+- 정책 단위는 `one session = one fixed cwd`가 아니라 `one session = one ACTIVE task at a time`이다.
+- `CLOSED` task의 필수 산출물·merge ancestry·clean 조건이 충족되면 같은 session id가 다음 task와 새 산출물 디렉터리로 rebind할 수 있다.
+- dirty `sy-main`을 피하려고 격리 worktree를 만든 경우, 현재 활성 task가 하나라면 기존 세션이 도구 `workdir` 또는 `git -C`로 해당 worktree를 사용해 계속한다.
+- `PRESERVED` task와 다른 task를 동시에 유지할 때만 별도 worktree·세션을 요구한다.
+- Git 변경 권한은 hook event의 cwd가 아니라 각 Git 호출이 실제로 사용하는 top-level, Git directory, current branch, V3 worktree metadata와 session assignment를 함께 판정한다.
+- sync runtime은 소비자 기본 checkout의 배포 원본 하나를 절대 경로로 참조한다. 격리 worktree마다 정책 사본을 만들지 않는다.
+
+### 12.3 구현 작업
+
+1. `ProjectConfig`에 sync 정책 anchor를 보존하고, Codex·Claude hook을 `projects/*.json`의 기본 checkout 아래 절대 runtime 경로로 렌더한다.
+2. `active_project()`가 실행 cwd를 격리 worktree로 바꿔도 정책 anchor는 기본 checkout으로 유지한다.
+3. Git global option parser가 `-C` 연쇄 적용과 `--git-dir/--work-tree` 대상을 해석해 호출별 실제 top-level을 만든다.
+4. 실제 Git directory와 target worktree의 Git directory가 다르면 primary index 우회 가능성이 있으므로 fail-closed한다.
+5. `GIT_DIR`, `GIT_WORK_TREE`, `cd`, `env -C`처럼 guard가 shell 상태 변화를 안전하게 추적하기 어려운 표현은 도구 `workdir` 또는 단순 `git -C` 형태로 바꾸도록 차단한다.
+6. session binding과 승인·탐색 transient state key를 worktree 경로가 아니라 Git common directory + host + session id로 만든다.
+7. binding record에 실제 worktree를 기록하고, 구조화된 Write/Edit/apply_patch의 절대 경로가 같은 저장소의 다른 worktree를 가리키면 그 target branch에서 scope를 검증한다.
+8. 다른 저장소, 다른 ACTIVE task, primary `sy-main`, V3 metadata와 다른 worktree 및 `.git/**` 직접 수정은 차단한다.
+9. 스킬·전략 문서·create 안내를 같은 세션의 승인 worktree 이동 가능 원칙으로 통일한다.
+
+### 12.4 검증 계획
+
+- 렌더된 sync hook에 command substitution과 `git rev-parse`가 없고 primary runtime 절대 경로가 있는지 검사한다.
+- runtime 사본이 없는 외부 worktree cwd에서 primary hook을 실제 subprocess로 실행한다.
+- primary cwd → `git -C <task-worktree> add` 허용과 task cwd → `git -C <primary> add` 차단을 양방향 검사한다.
+- 도구 `workdir`, `--git-dir/--work-tree`, 단독 `--git-dir`, 환경 변수 override, `cd`, `env -C`를 각각 회귀 검사한다.
+- 같은 session id가 승인 task worktree에 산출물을 bind하고 Git을 조작한 뒤, 첫 task가 CLOSED되면 다음 격리 worktree의 새 task로 rebind되는지 end-to-end로 검사한다.
+- 전체 unittest, 중앙 audit, whitespace 검사와 소비자 diff를 다시 실행한다.
+
+### 12.5 비범위
+
+- 이 후속 수정에서 소비자 sync를 자동 실행하지 않는다.
+- `PRESERVED` task 여러 개를 한 세션이 번갈아 수정하도록 허용하지 않는다.
+- raw shell의 임의 함수·alias·환경 변수를 완전 해석하는 shell interpreter를 만들지 않는다. 안전하게 증명할 수 없는 저장소 문맥 변경은 단순 명령으로 바꾸게 한다.
+- push, reset hard, clean, update-ref의 사용자 전용 양도 계약은 완화하지 않는다.
+
+## 13. 통합 사용 가이드 추가 계획
+
+후속 사용자 요청에 따라 구현된 정책을 운영자가 실제로 적용할 수 있는 단일 사용 가이드를 추가한다.
+
+### 13.1 목표
+
+- README의 개념 요약과 branch 전략의 설계 설명 사이에 실제 실행 절차를 제공한다.
+- sync와 inject의 적용·재시작 조건을 분리해 inject 세션에 불필요한 소비자 sync를 요구하지 않게 한다.
+- clean/dirty sy-main, 기존 worktree 재사용, 동일 세션 순차 task, PRESERVED 병행을 시나리오로 설명한다.
+- proposal/create와 finish/verify/close의 실제 CLI 인자를 현재 parser와 대조한다.
+- 전체 SHA, 구조화된 Write, git restore, 명령 분리와 실제 Git target 판정을 장애 대응표에 포함한다.
+
+### 13.2 예상 변경
+
+- docs/usage-guide.md 신규 작성
+- README.md에 사용 가이드와 상세 전략 문서 진입 링크 추가
+- 기존 8종 산출물에 문서 작성 근거·검토·결과 기록
+
+### 13.3 검증
+
+- branch_workflow.py와 agent-policy의 실제 help 출력과 예시 인자 비교
+- Markdown fence 짝, 상대 링크와 whitespace 검사
+- 고정 host-role 표현과 sync/inject 혼동 여부 검토
+- 전체 unittest와 audit를 최종 상태에서 다시 실행

@@ -202,3 +202,97 @@ PASS
 ## 10. 최종 결론
 
 중앙 정책 변경은 사용자가 지정한 host-neutral 역할, role-aware inject, 공통 8종, Claude portfolio 구조, legacy hook 단일화, cross-session read-only와 Branch Contract V3 요구를 충족한다. 크리티컬 명령은 세 host와 shell alias에서 승인 불가 사용자 전용으로 검증됐다. 중앙 commit 대상으로 승인할 수 있으며, 소비자 배포는 별도 승인 단계로 유지한다.
+
+## 11. 후속 코드 리뷰 — worktree-aware guard
+
+### 11.1 해결된 P0/P1 항목
+
+| 심각도 | 기존 상태 | 영향 | 수정 후 판정 |
+| --- | --- | --- | --- |
+| P0 | task cwd에서 `git -C <primary>` add가 task branch 기준으로 허용 | `sy-main` primary index 직접 변경 | invocation target branch를 재평가해 차단 |
+| P0 | primary Git directory와 task work tree 조합을 구분하지 않음 | primary index/HEAD를 task 경로처럼 위장 | absolute Git directory 일치 검사로 차단 |
+| P1 | sync hook이 cwd의 ignored runtime을 실행 | 외부 worktree에서 모든 tool fail-closed | configured primary 절대 runtime 사용 |
+| P1 | primary cwd에서 `git -C <task>` add가 base branch로 오탐 | 승인된 isolated task 작업 불가 | task target에서 scope·integrator 검사 후 허용 |
+| P1 | session state hash에 worktree root 포함 | 같은 session 이동 시 승인·binding 유실 | Git common directory identity로 통합 |
+| P1 | structured absolute target이 event root 밖이면 검사 누락 | 외부 worktree scope 또는 managed file 우회 | target Git root를 찾아 같은 repo에서 재검사 |
+| P1 | unapproved scratch switch 후 commit 복합 명령 허용 가능 | 승인 계보 밖 commit 생성 | switch target 계약과 compound Git 작업 차단 |
+| P1 | `.git/**`가 scope `.`에 포함될 수 있음 | config/ref/index 제어 파일 직접 편집 | scope보다 우선하는 제어 경로 차단 |
+
+### 11.2 정확성 검토
+
+- `GitInvocation`은 subcommand와 target root를 한 객체로 묶어 이후 함수가 event root를 실수로 재사용할 가능성을 낮춘다.
+- `same_git_repository()`는 경로 prefix가 아니라 Git common directory를 비교하므로 primary와 linked worktree는 같게, unrelated repository는 다르게 판정한다.
+- V3 metadata에 worktree가 있으면 `active_branch_denial()`이 실제 top-level과 정확히 일치하는지 확인한다. direct branch 계약의 빈 worktree는 기존 primary workflow와 호환된다.
+- Git ownership 검사는 invocation마다 `changed_paths`·`staged_paths`를 읽으므로 `git -C`가 다른 index를 가리킬 때 artifact path도 그 index 기준이다.
+- binding record의 이전 형식에는 `worktree`가 없으므로 현재 root fallback이 적용된다. 새 형식은 절대 worktree를 기록하되 같은 Git common repo인지 재검증한다.
+- runtime policy root는 inject bundle env를 우선하고 sync는 실행 중인 guard 파일의 primary 위치에서 도출한다. event Git root와 정책 파일 root를 혼동하지 않는다.
+
+### 11.3 보안·안전 검토
+
+- never-agent 명령은 repository context parsing 전 text/argv 양쪽에서 차단돼 `git -C`, 외부 저장소 또는 malformed option으로 승인 경로에 들어가지 않는다.
+- unsafe global option은 조회 명령에는 불필요한 차단을 늘리지 않되 mutation에서는 fail-closed한다.
+- `GIT_DIR/GIT_WORK_TREE` 환경 변수는 shell prefix에서만 판단한다. commit message 안의 같은 문자열을 환경 override로 오인하지 않도록 Git token 앞 prefix만 검사한다.
+- `cd`는 command segment의 실행 명령 위치를 확인하므로 `git commit -m cd` 같은 인자를 directory change로 오인하지 않는다.
+- 다른 저장소를 향한 structured write는 scope가 넓어도 허용하지 않는다.
+- symlink resolve 뒤 repository membership을 검사해 repo 내부 symlink를 통한 외부 파일 mutation을 허용하지 않는다.
+
+### 11.4 구현 중 회귀와 처리
+
+1. `dataclass`가 동적 exec module에서 실패한 문제는 targeted branch test 전부가 setup 단계에서 실패해 즉시 드러났다. runtime loader를 바꾸는 대신 standalone guard 호환성이 높은 `NamedTuple`로 교체했다.
+2. helper 삽입 위치 오류로 `repository_relative()` body가 끊긴 문제는 artifact Write가 binding되지 않고 implementation gate로 넘어가는 증상으로 확인했다. 함수 body 복원 후 관련 7개 test를 우선 재실행하고 전체 suite를 돌렸다.
+3. 초기 테스트가 top-level 일치만 검증한 뒤 추가 위협 모델에서 Git directory/worktree mismatch를 발견했다. 코드와 테스트를 같은 turn에서 보강했다.
+
+이 세 문제는 모두 중앙 source 내부의 미커밋 단계에서 발견됐고 소비자 sync나 외부 Git mutation 없이 해결됐다.
+
+### 11.5 문서 일관성 리뷰
+
+다음 문구를 전수 검색했다.
+
+- cwd 기반 `ROOT=$(git rev-parse ...)` hook: 제거됨.
+- 격리 worktree 생성 즉시 무조건 새 세션: 제거됨.
+- CLOSED 후 같은 session 전환: 공통 template, skill, 상세 전략에 유지됨.
+- PRESERVED 병행 시 별도 worktree·session: 유지됨.
+- role을 특정 host에 고정하는 표현: 새 변경에 추가되지 않음.
+
+### 11.6 잔여 위험
+
+- shell function이나 변수로 `git` executable 이름 자체를 숨기는 모든 문법을 해석하지는 않는다. 기존 nested/unparsed fail-closed와 structured tool 원칙을 유지한다.
+- sync worktree에 host 설정 파일 자체가 없는 소비자 구성은 host가 hook을 로드하지 못할 수 있다. 이번 수정은 이미 로드된 sync hook의 runtime anchor 문제를 해결하며, host 설정 배치 방식 변경은 별도 배포 설계 범위다.
+- worktree 경로가 외부 프로세스에 의해 삭제·재생성되면 Git common directory와 V3 metadata 검사가 실패해 작업을 차단한다. 자동 fallback은 하지 않는다.
+- target integration의 finish→verify→close 상태 기계는 기존 V3 계약을 유지했다. 자동 rollback이나 primary dirty 정리는 여전히 하지 않는다.
+
+## 12. 후속 리뷰 결론
+
+핵심 변경은 허용 범위를 넓히는 예외가 아니라 판정 좌표를 event cwd에서 실제 Git target으로 옮긴 것이다. 정상 primary→task 작업과 위험 task→primary 작업이 서로 반대 결과를 갖는 회귀 테스트가 있으며, session common identity와 CLOSED rebind까지 end-to-end로 연결했다. 현재 발견된 P0/P1 항목은 중앙 source 기준으로 해소됐다.
+
+## 13. 검증 후 리뷰 상태
+
+96개 전체 test, 중앙 contract audit와 두 소비자 183-file audit가 모두 통과했다. 최종 consumer diff는 각 add 99/change 82/legacy 11/manifest missing이며 자동 sync하지 않았다. 코드 리뷰 기준 차단 이슈는 없고, 실제 host smoke와 소비자 배포만 별도 운영 승인 항목으로 남는다.
+
+## 14. 사용 가이드 리뷰
+
+### 14.1 정확성
+
+- agent-policy start의 mode, host, role, worktree, branch, task, responsibility, session-dir 인자를 실제 help와 대조했다.
+- branch_workflow.py의 proposal/create/preserve/resume/finish-proposal/finish/verify/close 인자를 실제 parser와 대조했다.
+- scope·role·verify-command 반복 사용이 구현과 일치한다.
+- inject는 sync 불필요, 새 launcher 실행 필요라는 현재 bundle 수명 주기를 정확히 설명한다.
+- sync absolute runtime과 host 설정 배치의 차이를 숨기지 않는다.
+
+### 14.2 역할 중립성
+
+예시는 특정 host가 특정 역할을 소유한다고 규정하지 않는다. Claude-ui와 Codex-logic 같은 현재 관행은 규칙으로 쓰지 않았고, 어떤 host도 logic/ui/orchest/review/generate를 선택할 수 있다고 명시했다.
+
+### 14.3 안전성
+
+- dirty primary의 기존 변경에 대한 commit·stash·reset·restore를 권하지 않는다.
+- raw branch create, raw V3 merge와 worktree remove를 권하지 않는다.
+- Git push, reset hard, clean, update-ref를 사용자 전용으로 유지한다.
+- 다른 host·session 산출물은 read-only라고 명시한다.
+- Bash heredoc 산출물, 축약 SHA, checkout path 복원과 전환+merge 복합 명령의 교정 방법을 포함한다.
+
+### 14.4 문서 품질
+
+README 상대 링크와 사용 가이드의 전략 문서 상대 링크를 확인했다. fence 개수는 짝수이며 whitespace 오류가 없다. code block 밖에서 HTML로 오인될 수 있는 angle placeholder는 제거하거나 inline code로 보정했다.
+
+판정: 사용 가이드에 정책을 완화하거나 host 역할을 고정하는 차단 이슈는 없다.

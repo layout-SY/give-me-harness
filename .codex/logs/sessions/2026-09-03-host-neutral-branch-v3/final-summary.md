@@ -234,3 +234,119 @@ PASS
 - 중앙 commit: 이 산출물과 함께 수행 예정
 - 소비자 sync: 미수행, 별도 승인 필요
 - 원격 push: 미수행, 사용자 전용
+
+## 12. 후속 수정 최종 요약 — sync worktree와 실제 Git target
+
+### 12.1 수정 이유
+
+초기 V3 통합 뒤 소비자 외부 worktree에서 두 문제가 재현됐다. sync hook은 cwd의 `.agent-policy/runtime`을 찾다가 파일 부재로 모든 tool을 차단했고, branch guard는 `git -C` target을 버려 정상 task worktree는 막으면서 primary `sy-main` index 우회는 놓쳤다. 동시에 skill과 create 출력의 “격리 worktree면 새 세션” 안내가 이미 확정된 “CLOSED 후 같은 세션에서 다음 task 가능” 전략과 충돌했다.
+
+### 12.2 최종 동작
+
+```text
+sync 정책 원본
+  = projects/*.json primary checkout의 절대 runtime
+
+session identity
+  = Git common directory + host + session id
+
+동시 작업 제한
+  = 한 session에 ACTIVE task 하나
+
+mutation boundary
+  = 각 Write/Edit/Git invocation이 실제로 겨냥한 V3 승인 worktree
+```
+
+- clean `sy-main`이면 현재 primary에서 승인 task branch를 만들어 작업한다.
+- dirty `sy-main`이면 기존 변경을 건드리지 않고 승인된 외부 worktree를 만든다.
+- 현재 ACTIVE task가 그 하나뿐이면 새 세션 없이 기존 세션이 tool `workdir` 또는 `git -C`로 worktree를 사용한다.
+- 첫 task를 필수 8종·commit·merge·target verify·`CLOSED`까지 완료하면 같은 session id가 다음 task와 새 session directory로 rebind할 수 있다.
+- 미완료 task를 `PRESERVED`로 남긴 채 다른 task를 병행할 때는 별도 worktree·세션을 사용한다.
+
+### 12.3 코드 변경
+
+- sync hook에서 `ROOT=$(git rev-parse ...)`를 제거하고 shell-safe primary runtime 절대 경로를 렌더했다.
+- 실행 worktree가 바뀌어도 `ProjectConfig.policy_root`가 primary anchor를 보존한다.
+- `git -C`, tool workdir와 일치하는 `--git-dir/--work-tree`를 실제 target root로 해석한다.
+- target Git common directory, current branch, integrator, V3 state, approved worktree, scope와 Git directory를 다시 검증한다.
+- `GIT_DIR/GIT_WORK_TREE`, `cd`, `env -C`, 단독/mismatched git-dir와 unapproved switch/compound follow-up은 차단한다.
+- structured absolute file path도 같은 저장소의 target worktree에서 scope와 artifact ownership을 검사한다.
+- `.git` 제어 경로는 승인 scope보다 상위 수준에서 직접 mutation을 차단한다.
+- session binding과 readiness/approval state가 worktree 이동 중 유지되며 binding record가 artifact의 실제 worktree를 기억한다.
+- sync 외부 worktree에서는 primary manifest와 승인된 workflow 원본을 사용하되 branch 판단은 실제 operation root에서 수행한다.
+
+### 12.4 검증 결과
+
+후속 구현 도중 발견한 동적 dataclass 로딩 문제, `repository_relative()` body 위치 회귀와 Git directory/worktree 혼합 가능성은 targeted tests로 발견해 수정했다. 소비자 파일이나 외부 Git state에는 변경을 가하지 않았다.
+
+검증된 핵심 사례는 다음과 같다.
+
+- worktree runtime 없음 + primary absolute sync hook 실행 성공
+- primary cwd → task worktree add 허용
+- task cwd → primary sy-main add 차단
+- tool workdir 기준 동일한 양방향 판정
+- 올바른 linked worktree git-dir pair 허용
+- primary git-dir + task worktree 혼합 차단
+- GIT env, cd, env -C, lone git-dir 차단
+- unapproved scratch branch와 switch+commit 차단
+- primary event에서 task artifact Write와 Git add 허용
+- ACTIVE 중 다른 task/primary mutation 차단
+- 첫 V3 task CLOSED 뒤 같은 session의 다음 isolated worktree rebind 허용
+- scope `.`에서도 `.git/config` 직접 Write 차단
+
+### 12.5 문서 정정
+
+README, 공통 policy template, branch strategy skill, 상세 전략 문서와 `branch_workflow.py create` 안내를 같은 모델로 통일했다. “격리 worktree 생성 = 무조건 새 세션” 문구는 제거했고, 새 세션이 필요한 조건을 PRESERVED 병행 또는 host/role/담당자 인계로 한정했다.
+
+### 12.6 배포 경계
+
+이 후속 수정은 중앙 원본과 테스트만 변경한다. 소비자 sync, main 통합, legacy retire와 원격 push는 자동으로 수행하지 않는다. 최종 unittest·audit·diff 결과를 확인한 뒤 소비자 배포는 별도 승인 절차를 따른다.
+
+## 13. 후속 상태
+
+- 중앙 source 수정: 완료
+- 핵심 targeted tests: 통과
+- 8종 산출물 후속 상세 기록: 완료
+- 전체 unittest·audit·consumer diff: 문서 갱신 후 최종 재실행 대상
+- 소비자 sync: 이 후속 수정에서는 미수행
+- 원격 push: 사용자 전용, 미수행
+
+## 14. 후속 최종 검증 상태
+
+- `python3 -m unittest discover -s tests -v`: 96 tests PASS
+- `bin/agent-policy audit`: central-contract, admin-ui, user-ui PASS
+- 소비자 audit 관리 파일 수: 프로젝트별 183개
+- `git diff --check`: PASS
+- `bin/agent-policy diff --project all`: 프로젝트별 add 99, change 82, stale 0, legacy 11, manifest missing
+- 중앙 변경: worktree-aware guard, sync absolute anchor, 문서와 8종 산출물까지 완료
+- 소비자 sync·legacy retire·main merge·push: 미수행
+
+최종 판정은 “중앙 source 구현 완료, 소비자 배포 대기”다. diff의 대규모 add/change는 이번 후속 수정만이 아니라 아직 소비자에 배포되지 않은 V3 정책 전체 세대다.
+
+## 15. 통합 사용 가이드
+
+후속 요청에 따라 docs/usage-guide.md를 추가하고 README에서 바로 접근할 수 있게 했다. 가이드는 다음 내용을 현재 구현 기준으로 통합한다.
+
+- 중앙 디렉터리와 소비자 project 용어
+- sync/inject 선택 기준 및 정책 변경 후 재시작 절차
+- host와 독립적인 5개 role과 owner/contributor 책임
+- primary와 기존 task worktree 세션 시작 예시
+- clean/dirty sy-main branch proposal 흐름
+- 동일 세션의 ACTIVE/PRESERVED/CLOSED 전환
+- 구조화된 Write, 전체 SHA와 안전한 Git 명령 형태
+- 8종 산출물, handoff와 cross-host read-only 규칙
+- finish/verify/close와 중앙 audit/diff/sync/log 수집
+- 기존 장애 사례의 원인·해결표와 실행 체크리스트
+
+특히 inject 세션은 소비자 sync 없이 중앙 launcher 재실행만 필요하다는 점과, 기존 worktree를 --worktree로 지정하면 직접 cd하거나 새 worktree를 만들 필요가 없다는 점을 명확히 했다. sync의 primary absolute runtime 수정과 외부 worktree host 설정 복제는 다른 문제라는 현재 제한도 함께 기록했다.
+
+README와 가이드의 상대 링크, Markdown fence, CLI 인자와 whitespace를 점검했다. 중앙 정책 동작 자체는 문서 추가로 변경하지 않았다.
+
+## 16. 작업 단위 commit 상태
+
+사용자의 명시적 commit 요청에 따라 다음 두 작업 단위를 먼저 기록했다.
+
+- f4ee012 fix: worktree 기준 세션·Git 정책 판정 보강
+- e682831 docs: 중앙 정책 통합 사용 가이드 작성
+
+남은 변경은 이 작업의 8종 세션 산출물뿐이며 별도 문서 commit으로 기록한다. 중앙 source와 사용 문서를 다시 섞지 않아 각 단위를 독립적으로 추적하거나 되돌릴 수 있게 했다. consumer sync, main merge와 push는 수행하지 않았다.

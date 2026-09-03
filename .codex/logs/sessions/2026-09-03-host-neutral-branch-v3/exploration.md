@@ -257,3 +257,98 @@ branch 실행은 다음과 같이 분리해야 한다.
 ```
 
 이 구조는 host를 교체해도 역할 의미가 유지되고, 다른 세션의 dirty/index를 건드리지 않으며, 위험 Git 명령이 승인 경로로 빠지는 것을 막는다.
+
+## 13. 후속 전수조사 — sync runtime과 다중 worktree 문맥
+
+### 13.1 sync hook 경로 재현
+
+`lib/agent_policy/core.py`의 기존 `hook_command()`는 다음 의미였다.
+
+```text
+hook 실행 cwd의 git top-level
+  -> <그 top-level>/.agent-policy/runtime/managed_policy_guard.py
+```
+
+소비자 기본 checkout에는 sync가 만든 runtime이 있지만 `.agent-policy/`가 ignore된 새 worktree에는 해당 파일이 없다. 외부 worktree에서 `git rev-parse --show-toplevel`은 그 외부 폴더를 반환하므로 Python은 존재하지 않는 파일을 열고 exit 2로 끝났다. PreToolUse의 fail-closed 자체는 유지됐지만, 올바른 task worktree에서도 모든 작업이 불가능했다.
+
+inject는 이미 bundle의 절대 runtime 경로를 command에 넣고 있어 같은 결함이 없었다. 따라서 공통 해결책은 `${CLAUDE_PROJECT_DIR}` 같은 실행 cwd 변수를 바꾸는 것이 아니라, sync 시점에 알고 있는 `projects/*.json:path`를 정책 anchor로 고정하는 것이다.
+
+### 13.2 `git -C` 오탐과 미탐 재현
+
+기존 `_strip_git_global_options()`는 `-C`와 뒤 경로를 제거하고 `add`, `commit` 같은 subcommand만 반환했다. 이후 모든 검사는 hook event의 `root`에서 수행됐다.
+
+| event cwd | 실제 명령 대상 | 기존 판정 | 실제 위험 |
+| --- | --- | --- | --- |
+| primary `sy-main` | `git -C <task-wt> add` | primary가 기준 branch라 차단 | 정상 task index 작업을 오탐 |
+| task worktree | `git -C <primary> add` | task branch가 ACTIVE라 허용 | `sy-main` primary index를 변경하는 미탐 |
+| task worktree | `--git-dir=<primary> --work-tree=<primary>` | global option 제거 후 task로 판정 | primary index 우회 |
+| task worktree | `GIT_DIR=... GIT_WORK_TREE=... git add` | 환경 prefix 미추적 | 임의 index/worktree 조합 가능 |
+
+실제 임시 Git 저장소에서 두 번째 명령을 실행하면 primary index가 stage되는 것까지 확인했다. 따라서 단순히 `-C`를 허용 목록에 넣는 것이 아니라, 호출마다 target top-level과 current branch를 다시 읽어야 한다.
+
+### 13.3 Git directory와 worktree 결합 문제
+
+`--git-dir`와 `--work-tree`를 둘 다 해석해 top-level만 구하는 것으로는 충분하지 않았다. 예를 들어 primary의 `.git` directory와 task의 working tree를 조합하면 출력 경로는 task처럼 보이면서 primary index·HEAD를 사용할 수 있다. 이에 따라 다음 두 값을 비교하는 추가 invariant가 필요했다.
+
+```text
+명령이 실제로 선택한 Git directory
+  == target worktree에서 git rev-parse --absolute-git-dir로 확인한 Git directory
+```
+
+일치하는 명시적 쌍은 실제 target branch에서 검사하고, 단독 `--git-dir` 또는 서로 다른 쌍은 변경 명령에서 차단한다.
+
+### 13.4 shell 상태 변경 우회
+
+다음 표현도 event cwd 기준 검사를 우회할 수 있었다.
+
+- `cd <primary> && git add ...`
+- `env -C <primary> git add ...`
+- `GIT_DIR=<primary-git-dir> GIT_WORK_TREE=<primary> git add ...`
+- `git switch scratch && git commit ...`
+
+완전한 shell interpreter를 hook 안에 구현하는 것은 quoting, subshell, function과 환경 상속 때문에 신뢰하기 어렵다. 정책은 안전하게 표현 가능한 `tool_input.workdir`, `git -C`, 일치하는 `--git-dir/--work-tree`만 해석하고 나머지는 단순화 전까지 차단하는 방향으로 정했다. branch 전환과 후속 Git 변경도 한 command에서 분리한다.
+
+### 13.5 session binding의 worktree 종속성
+
+기존 session binding과 구현 승인 state 파일 이름은 `root + host + session id` hash였다. 같은 세션이 primary에서 승인 task worktree로 이동하면 서로 다른 세션 state처럼 보였다. 또한 binding record는 산출물 상대 경로만 가지고 있어 어느 worktree의 문서인지 복원할 수 없었다.
+
+Git worktree들은 `git rev-parse --git-common-dir` 값은 공유한다. 따라서 session identity를 `git common directory + host + session id`로 변경하고 record에 절대 worktree를 추가하면 다음 두 요구를 함께 만족한다.
+
+- 같은 세션이 단일 ACTIVE task의 승인 worktree로 이동해도 승인·탐색·산출물 귀속이 유지된다.
+- 첫 task가 CLOSED되기 전에는 다른 task branch나 다른 session directory로 rebind할 수 없다.
+
+### 13.6 구조화된 파일 경로 조사
+
+Write/Edit/apply_patch가 event root 밖의 절대 경로를 받으면 기존 `repository_relative()`는 `None`을 반환했고 branch scope 검사 대상에서 조용히 빠졌다. 외부 worktree는 같은 저장소지만 경로상 primary 밖에 있으므로 정상 작업과 우회가 구분되지 않았다.
+
+해결 기준은 대상 파일의 가장 가까운 기존 부모에서 Git top-level을 찾고, event root와 Git common directory가 같은지 확인한 뒤 그 target root 기준 상대 경로를 계산하는 것이다. 같은 저장소의 승인 task worktree이면 target branch scope를 검사하고, 다른 저장소이거나 Git 소속을 증명할 수 없으면 차단한다. `.git` 및 `.git/**`는 scope가 `.`이어도 구조화된 도구로 직접 수정할 수 없게 별도 보호한다.
+
+## 14. 후속 탐색 결론
+
+세션의 시작 폴더와 task의 변경 공간은 같은 개념이 아니다. 안정적인 판정 축은 다음과 같다.
+
+```text
+정책 실행 원본 = sync primary absolute runtime 또는 inject immutable bundle
+세션 identity = Git common directory + host + session id
+활성 작업 = binding record의 미종료 task branch
+변경 경계 = 각 도구/각 Git 호출이 실제로 겨냥한 승인 worktree
+```
+
+이 네 축을 분리하면 dirty primary를 보존한 채 같은 세션에서 isolated task를 수행할 수 있고, cwd만 바꿔 기준 branch를 수정하는 우회도 동시에 막을 수 있다.
+
+## 15. 사용 가이드 작성 전 조사
+
+README는 중앙 구조와 mode의 핵심 차이를 설명하지만, 처음 사용하는 운영자가 세션 시작부터 branch 종료까지 그대로 따라갈 수 있는 순차 절차는 없었다. 상세 branch 전략은 설계 근거와 상태 기계에 집중해 다음 질문의 즉답을 찾기 어려웠다.
+
+- sync와 inject 중 어떤 mode를 선택하는가.
+- 중앙 정책 변경 뒤 sync가 필요한 세션과 필요하지 않은 세션은 무엇인가.
+- dirty sy-main에서 worktree를 만든 뒤 현재 세션을 계속 써도 되는가.
+- 기존 inject 세션을 갱신할 때 worktree로 직접 cd해야 하는가.
+- owner와 contributor가 어떤 문서를 작성하고 누가 완료 workflow를 수행하는가.
+- 기존 오탐 사례를 만났을 때 어떤 명령 형태로 바꿔야 하는가.
+
+agent-policy start/sync/collect-logs와 branch_workflow.py의 모든 subcommand help를 직접 확인했다. proposal의 scope·role과 finish-proposal의 verify-command가 반복 인자이며, inject role 필수·sync role 금지, worktree/branch/task 일치 검증과 session-dir 형식을 CLI 구현과 대조했다.
+
+또한 sync absolute runtime 수정의 경계를 문서에 명확히 했다. 이 수정은 primary에서 이미 로드한 sync hook이 외부 worktree를 대상으로 실행될 때 runtime을 잃지 않게 한다. 외부 worktree에 host 설정 자체를 복제하는 기능은 아니므로, 새 세션을 외부 worktree에 직접 열어야 할 때는 inject를 사용한다. 이 제한을 숨기지 않고 세션 시작 절에 포함했다.
+
+결론적으로 새 문서는 정책 정본을 복제하는 사양서가 아니라 선택표, 실행 예시, 상태별 시나리오, 문제 해결표와 체크리스트를 제공하는 운영 진입 문서로 설계했다.

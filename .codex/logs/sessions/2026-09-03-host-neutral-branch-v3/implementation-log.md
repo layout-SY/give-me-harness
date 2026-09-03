@@ -327,3 +327,170 @@ tool 이름을 Bash/Shell만 비교하면 현재 host의 shell alias를 통해 p
 4. legacy 퇴역이 필요하면 hash mismatch 항목을 먼저 해결하고 `--retire-legacy`를 독립 승인한다.
 5. 소비자 세션을 handoff하고 `--role`, `--task`, `--responsibility`, `--worktree`, `--branch`, `--session-dir`를 명시해 새 세션을 시작한다.
 6. 실제 consumer smoke test에서 event payload, artifact binding과 isolated worktree 흐름을 확인한다.
+
+## 15. 후속 구현 — 실제 worktree 문맥 추적
+
+### 15.1 sync policy anchor
+
+`lib/agent_policy/core.py`의 `ProjectConfig`에 선택적 `policy_path`와 `policy_root` 속성을 추가했다. 프로젝트 JSON에서 읽은 기본 checkout은 정책 anchor로 저장하고, `active_project()`가 실행 path를 격리 worktree로 교체할 때도 anchor는 보존한다.
+
+기존 hook command의 shell command substitution을 제거하고 다음 argv를 shell-safe quoting으로 렌더하도록 변경했다.
+
+```text
+python3 -I <configured-primary>/.agent-policy/runtime/managed_policy_guard.py <mode> <host>
+```
+
+이 변경으로 hook 실행 cwd, `CLAUDE_PROJECT_DIR`, `git rev-parse` 결과와 runtime 위치가 분리됐다. 경로에 공백이나 shell 특수 문자가 있어도 `shlex.join()`이 단일 argv로 보존한다.
+
+### 15.2 호출별 Git repository context
+
+`policy/guards/branch_guard.py`에 불변 `GitInvocation` 컨텍스트와 parser를 추가했다.
+
+- 여러 `-C`를 앞에서부터 적용해 실제 실행 directory를 계산한다.
+- `--git-dir`, `--work-tree`의 분리형·`=` 결합형을 모두 해석한다.
+- 해석한 문맥에서 `rev-parse --show-toplevel`을 실행해 target worktree를 구한다.
+- session repository와 target의 `--git-common-dir`가 같은지 확인한다.
+- target worktree의 `--absolute-git-dir`와 명령이 선택한 Git directory가 같은지 확인한다.
+- 각 invocation의 `current_branch`, dirty paths, staged paths, integrator, V3 state, lineage와 scope를 target root에서 다시 읽는다.
+
+`command_denial()`에는 `execution_cwd`와 `expected_branch`를 추가했다. 기존 호출자는 기본값으로 호환되고, managed guard는 tool의 `workdir`와 현재 session binding을 넘긴다. 이로써 event cwd가 primary여도 task worktree 명령은 task로 판정되고, 반대 방향은 ACTIVE assignment 불일치 또는 기준 branch 직접 수정으로 차단된다.
+
+### 15.3 fail-closed 문맥
+
+다음은 변경 Git 명령에서 의도적으로 차단했다.
+
+- 단독 `--git-dir`: 실제 worktree/index 결합을 단정할 수 없음
+- `--git-dir`와 `--work-tree`가 서로 다른 linked-worktree Git directory를 가리키는 조합
+- `-c core.worktree`, `-c core.bare`, `--config-env`, `--namespace`, `--exec-path`, `--super-prefix`, `--bare`
+- shell prefix의 `GIT_DIR`, `GIT_WORK_TREE`
+- `cd`, `pushd`, `popd`, `env -C`와 Git을 섞은 command
+- branch 전환 뒤 다른 Git 작업을 같은 shell command에 결합한 형태
+- 승인 metadata가 없는 local branch로의 switch
+
+조회 전용 Git 명령은 다른 저장소에서도 mutation이 없으므로 기존 사용성을 유지한다. push, reset hard, clean, update-ref는 target 해석 전에 기존 never-agent 사용자 양도 판정이 우선한다.
+
+### 15.4 structured mutation target
+
+`managed_policy_guard.py`에 `repository_target()`을 추가했다. 아직 생성되지 않은 파일은 가장 가까운 기존 부모까지 올라가 Git top-level을 구하고, session root와 같은 Git common directory인지 검사한다.
+
+다음 경로들이 target root 기준으로 처리되도록 변경했다.
+
+- Write/Edit/MultiEdit/NotebookEdit의 file path
+- apply_patch의 Add/Update/Delete/Move target
+- shell redirect target
+- host별 artifact layout과 session directory
+- Git add/commit의 artifact ownership 대상
+- implementation readiness gate의 source/artifact 구분
+- managed policy file 보호
+
+다른 저장소로 향하는 구조화된 mutation은 차단한다. `.git`과 `.git/**`는 branch scope `.`에도 포함되지 않는 제어 경로로 처리한다.
+
+### 15.5 session state의 common-directory identity
+
+session binding, command approval state와 공통 harness readiness state의 key를 다음처럼 변경했다.
+
+```text
+before: worktree root + host + session id
+after:  Git common directory + host + session id
+```
+
+binding JSON에는 `worktree`를 추가했다. 기존 record에는 이 필드가 없으므로 현재 root fallback을 유지해 하위 호환성을 보존한다. bound artifact를 찾을 때는 record의 worktree를 검증한 뒤 그 root에서 상대 경로를 복원한다.
+
+rebind는 기존 조건을 유지한다.
+
+1. 이전 session directory의 공통 8종이 완전하다.
+2. 새 target worktree에 비산출물 dirty가 없다.
+3. 이전 V3 task가 `CLOSED`다.
+4. 이전 source가 merge target의 ancestor다.
+5. 현재 branch가 이전 target이거나 그 target에서 승인된 다음 task다.
+
+launcher에서 설정한 `ASAN_AGENT_POLICY_TASK`가 프로세스 동안 정적이어도, 기존 binding이 CLOSED 조건을 충족해 새 directory로 rebind되는 순간에는 실제 새 branch를 task로 채택한다. CLOSED 전 mismatch는 계속 차단한다.
+
+### 15.6 sync worktree에서 manifest와 workflow 원본
+
+sync runtime이 primary 절대 경로에서 실행되더라도 event repository root는 외부 task worktree로 유지한다. manifest는 우선 event root에서 찾고, 없으면 runtime이 위치한 primary policy root에서 읽는다. 승인된 `branch_workflow.py` 역시 current worktree 아래 사본만 신뢰하는 대신 현재 runtime primary의 배포 경로를 함께 신뢰한다. 실제 preserve/finish 판단은 tool `workdir`의 Git root에서 수행한다.
+
+### 15.7 문서와 CLI 안내 정합화
+
+- 공통 skill의 “격리 worktree는 새 세션” 문구를 “단일 ACTIVE task면 같은 세션에서 이동 가능”으로 수정했다.
+- `branch_workflow.py create` 성공 메시지도 무조건 handoff를 지시하지 않고 tool workdir/`git -C` 사용을 안내한다.
+- README, 공통 정책 template, 상세 전략 문서에 policy anchor, session identity, mutation boundary의 차이를 기록했다.
+- `PRESERVED` 병행 작업과 host/role/담당자 인계는 여전히 별도 세션 대상임을 명시했다.
+
+### 15.8 구현 중 발견하고 해결한 문제
+
+첫 targeted test에서 동적 `ModuleType`에 `exec()`되는 rendered branch guard가 `@dataclass` 처리 중 `sys.modules` lookup에 실패했다. runtime guard의 기존 로딩 방식과 호환되도록 `GitInvocation`을 불변 `NamedTuple`로 바꿨다. 의미와 type 안정성은 유지하면서 별도 module registration 의존성을 제거했다.
+
+또한 `repository_relative()` 아래에 새 helper를 삽입하는 첫 patch에서 기존 함수 body 일부가 helper 뒤로 밀려 상대 경로가 항상 `None`이 되는 회귀가 발생했다. artifact 관련 targeted tests가 구현 gate 오탐으로 즉시 실패해 위치를 확인했고, 기존 body를 복원한 뒤 7개 artifact/session 회귀를 별도 재실행했다. 이 실패는 소비자나 Git 상태를 변경하지 않았고 중앙 작업 tree 안에서만 교정했다.
+
+초기 `--git-dir/--work-tree` 구현은 top-level만 비교했다. 추가 위협 검토에서 primary Git directory와 task work tree를 조합하면 primary index를 사용할 수 있음을 발견해 `--absolute-git-dir` 일치 검사를 추가하고 회귀 테스트를 보강했다.
+
+## 16. 후속 테스트 기록
+
+| 검증 | 결과 | 핵심 증거 |
+| --- | --- | --- |
+| Python compile | PASS | core, cli, 두 runtime guard syntax 정상 |
+| 기존 branch guard targeted | PASS | checkout restore, finish lifecycle, never-agent 유지 |
+| sync external worktree subprocess | PASS | worktree runtime 없음, primary 절대 hook exit 0 |
+| `git -C` 양방향 | PASS | primary→task 허용, task→primary 차단 |
+| tool `workdir` 양방향 | PASS | event cwd와 실제 실행 cwd 분리 판정 |
+| 명시적 Git directory pair | PASS | 올바른 linked-worktree pair 허용 |
+| Git directory/worktree mismatch | PASS | primary index + task tree 조합 차단 |
+| shell context override | PASS | env, cd, env -C, 단독 git-dir 차단 |
+| unapproved switch/compound | PASS | scratch switch와 switch+commit 차단 |
+| `.git/**` structured write | PASS | scope `.`에서도 차단 |
+| same-session isolated task | PASS | primary event에서 task artifact bind와 task add 허용 |
+| CLOSED 후 다음 worktree rebind | PASS | 동일 session id가 다음 V3 task directory로 전환 |
+| 전체 suite 1차 | 95 tests PASS | 후속 `.git` case 추가 전 전체 회귀 |
+
+최종 전체 suite·audit·diff 수치는 모든 문서 갱신 뒤 다시 실행해 아래 후속 최종 기록에 반영한다.
+
+## 17. 후속 최종 검증 기록
+
+| 명령 | 최종 결과 | 비고 |
+| --- | --- | --- |
+| `python3 -m py_compile ...` | PASS | core, cli, branch guard, managed guard, workflow script |
+| `git diff --check` | PASS | whitespace 오류 없음 |
+| `python3 -m unittest discover -s tests -v` | 96 tests PASS | renderer, sync, inject, branch, guard, log mirror 전체 |
+| `bin/agent-policy audit` | central-contract PASS | 공통 contract와 source invariant 정상 |
+| `bin/agent-policy audit` | admin-ui PASS (183 managed files) | 현재 소비자 세대 audit 정상 |
+| `bin/agent-policy audit` | user-ui PASS (183 managed files) | 현재 소비자 세대 audit 정상 |
+| `bin/agent-policy diff --project all` | 각 add 99, change 82, stale 0, legacy 11, manifest missing | V3 전체 미배포 상태 유지 |
+
+최종 suite는 `.git/**` 보호, 첫 source mutation task binding, ACTIVE task 중 다른 create 차단과 CLOSED 뒤 cross-worktree rebind 보강까지 포함한다. 소비자 diff는 이번 후속 patch만의 변경량이 아니라 아직 sync되지 않은 V3 전체 렌더 결과다. 사용자 별도 승인 없는 `sync`, legacy retire, commit, main merge 또는 push는 실행하지 않았다.
+
+## 18. 통합 사용 가이드 구현
+
+docs/usage-guide.md를 신규 작성하고 README 최상단에 진입 링크를 추가했다. 가이드는 17개 절로 구성했다.
+
+1. 중앙 저장소 구조와 용어
+2. sync/inject 선택표와 mode별 재적용 방법
+3. host와 독립적인 role, owner/contributor 책임
+4. primary 및 기존 task worktree 세션 시작 예시
+5. 역할·계획 승인과 immutable branch 승인 구분
+6. clean sy-main 직접 분기와 dirty sy-main 격리 worktree
+7. ACTIVE/PRESERVED/CLOSED에 따른 동일 세션 전환 규칙
+8. 구조화된 파일 도구, Git 명령과 사용자 전용 명령
+9. 8종 산출물, handoff와 cross-host read-only 소유권
+10. finish-proposal부터 close까지 완료 workflow
+11. 중앙 audit/diff/sync/check와 로그 수집
+12. 기존 실패 사례의 원인·조치표와 대표 시나리오
+
+문서 예시는 실제 argparse help와 대조했다. shell code block의 angle-bracket placeholder가 복사 시 redirection으로 해석될 수 있는 부분은 MODEL_NAME 또는 절대 경로 예시로 바꾸고, 표 안의 placeholder는 inline code로 표시했다. branch workflow 명령의 cwd가 중앙 저장소가 아니라 소비자 primary 또는 task worktree라는 점도 별도로 명시했다.
+
+sync와 inject의 재시작 계약은 다음처럼 분리했다.
+
+- sync: 중앙 diff 검토, 별도 승인된 소비자 sync, handoff, 새 세션
+- inject: 소비자 sync 없이 handoff 후 중앙 launcher를 다시 실행해 새 digest bundle 사용
+
+외부 worktree의 새 sync 세션에는 host 설정 파일이 없을 수 있다는 기존 review의 잔여 위험도 가이드에 반영했다. primary sync 세션에서 외부 worktree를 workdir/git-C 대상으로 사용하거나, 외부 worktree 자체에 새 세션이 필요하면 inject를 선택하도록 설명했다.
+
+## 19. 사용자 요청에 따른 작업 단위 commit
+
+최종 검증 뒤 사용자가 현재 worktree 변경을 작업 단위로 commit하도록 명시적으로 요청했다. 전체 변경을 한 commit으로 묶지 않고 다음처럼 분리했다.
+
+- f4ee012: 외부 worktree 정책 anchor, 실제 Git target 판정, session binding, 공통 전략과 회귀 테스트
+- e682831: 중앙 통합 사용 가이드와 README 진입 링크
+- 현재 8종 산출물: 구현·검토·평가·검증과 위 두 commit의 이력을 기록하는 별도 문서 commit 대상
+
+stage는 각 단위의 명시 경로만 사용했고 commit 직전 cached diff와 whitespace를 확인했다. consumer sync, main merge, legacy retire와 push는 이 요청의 범위가 아니므로 수행하지 않았다.

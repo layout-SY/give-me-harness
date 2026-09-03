@@ -391,3 +391,107 @@ flowchart LR
 
 - 이력서 bullet: Codex 전용 승인·탐색·Stop hook을 세 호스트 공통 guard로 통합하고, Git global option·alias·nested shell을 fail-closed로 분석해 push와 hard reset을 승인 불가 사용자 전용 명령으로 차단하는 정책 엔진을 구축했다.
 - 포트폴리오 서술: 중복 hook이 서로 다른 승인 상태로 정상 작업을 막고, 반대로 `git -C` global option이 위험 명령을 숨길 수 있는 문제를 발견했다. legacy 기능을 UserPrompt/PreTool/PostTool/Stop 공통 state machine으로 흡수하고 중복 파일·등록을 제거했다. structured path binding과 read/write capability 분리로 다른 세션 handoff는 읽되 수정할 수 없게 했으며, committed+dirty diff 기반 Stop 검증과 89개 회귀 테스트로 안전 경계를 확인했다.
+
+## 사례 4 — cwd 추정형 Git guard를 실제 worktree 문맥 기반 정책 엔진으로 전환
+
+- 작업 유형: 중앙 에이전트 정책 아키텍처 개선 및 Git 안전성 회귀 수정
+- 관련 도메인/서비스: 다중 AI host 정책 하네스, Git worktree, session assignment, sync/inject runtime
+- 문제 출처: 소비자 외부 worktree에서의 sync hook 실패와 `git -C` 오탐·미탐 재현
+
+### 문제 상황
+
+중앙 정책 V3는 dirty `sy-main`을 건드리지 않고 독립 task를 외부 worktree에서 수행하도록 설계됐지만, 실제 sync hook은 매 호출의 cwd에서 `.agent-policy/runtime`을 찾았다. 정책 폴더가 ignore된 worktree에는 runtime 사본이 없어 PreToolUse가 exit 2로 종료됐고, 안전한 격리 공간이 오히려 모든 작업을 막았다.
+
+branch guard도 Git global option을 제거한 뒤 event cwd만 검사했다. 그 결과 primary에서 승인 task worktree로 실행한 `git -C <task> add`는 기준 branch 수정으로 오탐했고, task worktree에서 `git -C <primary> add`는 task scope 안으로 미탐해 실제 primary index를 stage할 수 있었다. 문서에는 CLOSED 후 같은 세션의 다음 작업이 가능하다고 되어 있었지만 일부 skill과 CLI 안내는 격리 worktree마다 무조건 새 세션을 요구해 운영 모델도 일관되지 않았다.
+
+### 고민과 선택
+
+모든 worktree에 runtime과 host 설정을 복제하거나 `git -C`를 전면 금지하면 구현은 단순하지만, 중앙 원본 단일성 또는 사용자가 원하는 동일 세션 순차 작업을 깨뜨린다. `${CLAUDE_PROJECT_DIR}`로 cwd 변수만 교체하는 방법도 세션 자체가 worktree에서 시작하면 같은 파일 부재가 반복된다.
+
+정책 원본, session identity, ACTIVE task와 mutation target을 서로 다른 축으로 분리했다. sync 정책은 configured primary의 절대 runtime을 사용하고, 같은 session 여부는 worktree 경로가 아니라 Git common directory로 판정한다. Git 변경은 event cwd가 아니라 각 invocation의 실제 top-level과 Git directory를 분석해 허용 여부를 결정하도록 선택했다.
+
+완전한 shell interpreter를 만드는 대신 tool workdir, `git -C`, 일치하는 `--git-dir/--work-tree`처럼 안전하게 증명 가능한 표현만 지원했다. `cd`, `env -C`, Git 환경 변수 override와 모호한 Git directory 조합은 명령 단순화를 요구하는 fail-closed 경계로 남겼다.
+
+### 적용
+
+- `ProjectConfig`가 실행 worktree와 별도로 sync policy anchor를 보존하도록 확장했다.
+- Codex와 Claude sync hook을 primary `managed_policy_guard.py` 절대 경로로 렌더하고 shell command substitution을 제거했다.
+- `GitInvocation` parser로 연속 `-C`, `--git-dir`, `--work-tree`, subcommand를 함께 해석했다.
+- actual/expected `--absolute-git-dir`를 비교해 primary index와 task working tree를 섞는 우회를 차단했다.
+- 각 Git mutation에서 target current branch, Git common repository, integrator, V3 state, metadata worktree, changed/staged paths와 scope를 다시 읽었다.
+- session binding과 approval/readiness state key를 Git common directory + host + session id로 통합하고 binding record에 worktree를 저장했다.
+- 구조화된 절대 Write/Edit/apply_patch 경로가 같은 저장소의 외부 worktree라면 그 target branch 기준으로 검증하고, unrelated repository와 `.git/**`는 차단했다.
+- branch switch와 후속 Git mutation의 복합 명령, 승인 없는 scratch branch 전환, Git 환경 변수 및 cwd 은닉 표현을 차단했다.
+- 공통 skill, README, policy template, 전략 문서와 create 출력에서 새 세션 조건을 ACTIVE/CLOSED/PRESERVED 상태 기준으로 통일했다.
+
+구현 중 rendered guard의 동적 module loading과 `dataclass`가 충돌해 setup 전체가 실패했다. standalone 실행 계약을 유지하기 위해 immutable `NamedTuple`로 바꿨다. helper 삽입 과정에서 기존 상대 경로 함수 body가 밀린 회귀는 artifact binding tests가 즉시 포착했고 복원 뒤 관련 test를 먼저 재실행했다. 추가 위협 검토에서는 top-level만 맞고 Git directory가 다른 조합을 찾아 absolute Git directory invariant와 테스트를 한 번 더 보강했다.
+
+### 사용 기술과 구체적 목적
+
+- Python `shlex`: hook command와 Git shell argv를 quoting 손실 없이 분리하고 절대 경로를 안전하게 렌더링
+- Git plumbing (`rev-parse --show-toplevel`, `--git-common-dir`, `--absolute-git-dir`, `symbolic-ref`): worktree path, 공유 repository identity, 실제 index/HEAD 문맥을 구분
+- Git linked worktree: dirty primary의 working tree와 index를 보존하면서 task별 clean 실행 공간 제공
+- SHA-256 session state key: 동일 repository·host·session의 state를 여러 worktree에서 안정적으로 공유
+- immutable `NamedTuple`: 동적 exec로 로드되는 standalone guard에서 호출별 target context를 type-safe하게 전달
+- Python `unittest` + 실제 임시 Git repositories: mock만으로 놓치기 쉬운 index staging, linked git-dir와 cross-worktree rebind를 subprocess로 검증
+- fail-closed parser policy: shell 문맥을 증명할 수 없을 때 위험한 추측 대신 단순 명령을 요구
+
+### 결과
+
+runtime 사본이 없는 외부 worktree에서도 primary sync hook이 정상 실행된다. primary cwd에서 승인 task worktree를 대상으로 한 stage는 허용되고, 같은 command를 반대 방향으로 실행해 `sy-main` primary index를 바꾸려 하면 차단된다. tool workdir와 명시적 Git directory pair도 같은 기준으로 판정되며, Git directory/worktree 불일치와 환경 변수 우회는 거부된다.
+
+같은 session id는 isolated task worktree에서 artifact binding과 readiness state를 유지하고, 첫 V3 task가 필수 8종·merge ancestry·CLOSED 조건을 충족한 뒤 다음 isolated worktree의 새 task로 rebind할 수 있다. PRESERVED 병행은 계속 별도 세션으로 격리된다. 결과적으로 사용자의 “한 세션에서 여러 독립 작업을 순차 수행” 요구와 “dirty primary/index 보호”를 동시에 자동 검증하는 정책이 됐다.
+
+### 이력서·포트폴리오 문구
+
+- 이력서 bullet: cwd 기반 Git guard를 호출별 worktree·Git directory·session assignment 기반 정책 엔진으로 재설계해 `git -C`의 정상 isolated-worktree 작업은 허용하고 primary `sy-main` index 우회는 차단했으며, sync 절대 runtime anchor와 Git common-directory session state로 동일 세션의 CLOSED 후 순차 작업을 지원했다.
+- 포트폴리오 서술: Git worktree 환경에서 event cwd와 실제 mutation 대상이 다르다는 점을 재현해, primary→task 오탐과 task→primary 미탐이 동시에 존재하는 문제를 해결했다. `rev-parse` plumbing으로 top-level, common repository와 absolute Git directory를 분리하고, structured file target과 Git invocation을 같은 ACTIVE task 계약에 연결했다. 실제 임시 repository 기반 양방향 staging, Git directory mismatch, sync runtime 부재와 CLOSED cross-worktree rebind 테스트로 사용성과 안전성을 함께 입증했다.
+
+## 사례 5 — 중앙 멀티 호스트 정책의 실행 중심 사용 가이드 구축
+
+- 작업 유형: 운영 문서화·개발자 경험 개선
+- 관련 도메인/서비스: 중앙 AI 정책, Codex, Claude Code, OpenCode, Git worktree
+- 문제 출처: 사용자 질문, 기존 README·전략 문서와 실제 CLI 조사
+
+### 문제 상황
+
+중앙 정책은 host-role 분리, sync/inject, immutable branch proposal, worktree와 session assignment를 상세히 구현했지만 사용자가 실제 작업을 시작하려면 여러 정본 문서를 함께 해석해야 했다. 특히 inject 세션에도 sync가 필요한지, 기존 worktree로 직접 이동해야 하는지, 격리 worktree가 항상 새 세션을 뜻하는지 같은 운영 질문이 반복됐다.
+
+README는 중앙 구조를 요약했고 branch 전략은 설계 근거와 상태 기계를 설명했지만, 처음부터 끝까지 따라가는 실행 절차와 과거 오류별 조치표는 없었다. 잘못된 요약은 inject에 불필요한 sync를 요구하거나 외부 worktree에 host 설정까지 자동 배치된다고 오해하게 할 위험이 있었다.
+
+### 고민과 선택
+
+README 하나를 대폭 확장하면 진입 문서가 지나치게 길어지고, 기존 전략 문서를 그대로 복제하면 정책 변경 때 drift가 생긴다. 따라서 README는 짧은 링크를 제공하고, 별도 usage-guide는 실행 선택과 명령 예시를 담당하며, 설계 의미는 기존 공통 skill과 전략 문서를 정본으로 유지했다.
+
+가이드에는 이상적인 미래 동작만 쓰지 않고 현재 sync 경계도 기록했다. primary absolute runtime hook은 이미 로드된 sync 정책이 외부 worktree를 대상으로 동작하도록 하지만, 외부 worktree에 host 설정 파일을 자동 복제하지는 않는다. 외부 폴더 자체에서 새 세션이 필요하면 inject를 선택하도록 명확히 구분했다.
+
+### 적용
+
+- 중앙 저장소 구조, 등록 소비자와 핵심 용어를 표로 정리했다.
+- sync/inject의 선택 기준, drift 처리와 중앙 변경 후 재적용 절차를 비교했다.
+- logic, ui, orchest, review, generate를 host와 독립적인 role로 설명했다.
+- clean sy-main과 dirty sy-main의 proposal/create 흐름을 실제 인자로 작성했다.
+- 동일 세션 ACTIVE task, CLOSED 순차 전환과 PRESERVED 병행 규칙을 시나리오로 제시했다.
+- 구조화된 Write, 64자리 SHA-256, git restore, 명령 분리와 사용자 전용 Git 명령을 장애 대응표에 연결했다.
+- owner 8종, contributor handoff, cross-host read-only와 unknown 문서 위치를 정리했다.
+- finish-proposal, finish, verify, close와 중앙 audit/diff/sync/check/log 수집 절차를 포함했다.
+- README 최상단에 사용 가이드와 상세 전략 문서 링크를 추가했다.
+
+### 사용 기술과 구체적 목적
+
+- Markdown 표와 체크리스트: mode·상태·책임에 따른 선택을 빠르게 비교
+- 실제 argparse help 대조: 문서 예시와 현재 CLI 계약의 불일치 방지
+- 상대 링크: 중앙 저장소 위치가 이동해도 README와 docs 간 탐색 유지
+- 시나리오 기반 문서화: dirty primary, inject 갱신, PRESERVED 병행처럼 추상 규칙을 실행 순서로 변환
+- 장애 대응 매트릭스: 증상, 원인과 조치를 한 행에 연결해 반복 진단 비용 절감
+
+### 결과
+
+사용자는 이제 단일 문서에서 세션 mode 선택, role·responsibility 지정, branch/worktree 생성, 산출물 작성, 완료 workflow와 정책 갱신까지 확인할 수 있다. inject 정책 변경은 sync 없이 새 launcher 실행으로 반영된다는 점과 기존 worktree를 --worktree로 재사용할 수 있다는 점도 명시적으로 구분된다.
+
+문서 추가는 guard 허용 범위나 런타임 성능을 변경하지 않는다. CLI help, Markdown fence, 상대 링크와 whitespace를 점검했고 고정 host-role 표현을 추가하지 않았다.
+
+### 이력서·포트폴리오 문구
+
+- 이력서 bullet: 멀티 호스트 AI 정책의 sync/inject, 역할, worktree와 immutable Git 생명주기를 실제 CLI 기반 단일 운영 가이드로 체계화해 정책 재적용과 장애 복구 절차의 오해 가능성을 줄였다.
+- 포트폴리오 서술: 중앙 정책의 설계 문서와 실행 경험 사이의 간극을 분석하고, mode 선택표·상태별 시나리오·문제 해결 매트릭스·시작/종료 체크리스트를 구축했다. 특히 inject의 무배포 재시작과 sync의 primary runtime 경계를 분리해 실제 구현보다 과장되거나 축소된 운영 안내가 생기지 않도록 했다.
