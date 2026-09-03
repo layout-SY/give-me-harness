@@ -1,0 +1,73 @@
+{
+  "version": 3,
+  "roles": {
+    "logic": {
+      "canonical": "logic"
+    },
+    "ui": {
+      "canonical": "ui"
+    },
+    "orchest": {
+      "canonical": "orchestration"
+    },
+    "review": {
+      "canonical": "review"
+    },
+    "generate": {
+      "canonical": "integrated"
+    }
+  },
+  "hosts": {
+    "codex": {
+      "artifact_root": ".codex/logs/sessions"
+    },
+    "claude": {
+      "artifact_root": ".claude/logs/sessions"
+    },
+    "opencode": {
+      "artifact_root": ".opencode/logs/sessions"
+    },
+    "unknown": {
+      "artifact_root": ".agent-policy/logs/unknown/sessions"
+    }
+  },
+  "artifacts": {
+    "required": [
+      "plan.md",
+      "exploration.md",
+      "implementation-log.md",
+      "grill-me-review.md",
+      "review-log.md",
+      "evaluation-log.md",
+      "final-summary.md",
+      "portfolio-log.md"
+    ],
+    "handoff": "handoff.md",
+    "unknown_directory": "unknown",
+    "responsibilities": [
+      "owner",
+      "contributor"
+    ]
+  },
+  "task_states": [
+    "IDLE",
+    "ACTIVE",
+    "READY_TO_MERGE",
+    "MERGED_VERIFIED",
+    "CLOSED",
+    "PRESERVED"
+  ],
+  "git": {
+    "never_agent_commands": [
+      "push",
+      "reset --hard",
+      "clean",
+      "update-ref"
+    ],
+    "validation_commands": [
+      "{{LINT_COMMAND}}",
+      "{{TEST_COMMAND}}",
+      "{{BUILD_COMMAND}}"
+    ]
+  }
+}

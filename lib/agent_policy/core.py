@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 from dataclasses import dataclass
@@ -17,28 +18,22 @@ MANIFEST_RELATIVE: Final = Path(".agent-policy/manifest.json")
 MANAGED_ROOTS: Final = (
     "AGENTS.md",
     "CLAUDE.md",
-    ".agent-policy/",
+    ".agent-policy/common/",
+    ".agent-policy/runtime/",
     ".agents/skills/",
     ".claude/agents/",
-    ".claude/harness/",
-    ".claude/multi-agent-spec.md",
-    ".claude/multi-agent-spec/",
+    ".claude/hooks/",
     ".claude/settings.json",
     ".claude/skills/",
     ".claude/templates/",
-    ".claude/workflows/",
     ".codex/agents/",
     ".codex/config.toml",
-    ".codex/harness/",
     ".codex/hooks.json",
     ".codex/hooks/",
-    ".codex/multi-agent-spec.md",
-    ".codex/multi-agent-spec/",
     ".codex/templates/",
-    ".codex/workflows/",
-    ".harness/roles/",
     ".opencode/agent/",
     ".opencode/plugins/",
+    ".opencode/templates/",
     "opencode.json",
 )
 HOST_COMMANDS: Final = {
@@ -46,6 +41,16 @@ HOST_COMMANDS: Final = {
     "claude": ["claude"],
     "opencode": ["opencode"],
 }
+EXPECTED_REQUIRED_ARTIFACTS: Final = (
+    "plan.md",
+    "exploration.md",
+    "implementation-log.md",
+    "grill-me-review.md",
+    "review-log.md",
+    "evaluation-log.md",
+    "final-summary.md",
+    "portfolio-log.md",
+)
 
 
 class PolicyError(RuntimeError):
@@ -58,6 +63,7 @@ class ProjectConfig:
     name: str
     path: Path
     commands: dict[str, str]
+    base_branch: str = "sy-main"
 
 
 @dataclass(frozen=True)
@@ -130,6 +136,7 @@ def load_project(project_id: str) -> ProjectConfig:
             name=str(raw["name"]),
             path=Path(str(raw["path"])).resolve(),
             commands=dict(commands),
+            base_branch=str(raw["base_branch"]),
         )
     except KeyError as error:
         raise PolicyError(f"프로젝트 필드가 누락되었습니다: {project_id}: {error}") from error
@@ -144,7 +151,7 @@ def select_projects(selector: str) -> tuple[ProjectConfig, ...]:
 
 
 def replacements(project: ProjectConfig) -> dict[str, str]:
-    required_commands = ("dev", "build", "lint", "test")
+    required_commands = ("dev", "build", "lint", "test", "preview")
     missing = [name for name in required_commands if name not in project.commands]
     if missing:
         raise PolicyError(f"{project.id} 명령이 누락되었습니다: {', '.join(missing)}")
@@ -153,10 +160,12 @@ def replacements(project: ProjectConfig) -> dict[str, str]:
         "{{PROJECT_NAME}}": project.name,
         "{{PROJECT_PATH}}": str(project.path),
         "{{CENTRAL_ROOT}}": str(CANONICAL_ROOT),
+        "{{BASE_BRANCH}}": project.base_branch,
         "{{DEV_COMMAND}}": project.commands["dev"],
         "{{BUILD_COMMAND}}": project.commands["build"],
         "{{LINT_COMMAND}}": project.commands["lint"],
         "{{TEST_COMMAND}}": project.commands["test"],
+        "{{PREVIEW_COMMAND}}": project.commands["preview"],
     }
 
 
@@ -170,13 +179,26 @@ def render_content(content: bytes, project: ProjectConfig) -> bytes:
     return text.encode("utf-8")
 
 
+def is_policy_source_file(path: Path, root: Path) -> bool:
+    if not path.is_file():
+        return False
+    relative = path.relative_to(root)
+    return (
+        "__pycache__" not in relative.parts
+        and path.suffix not in {".pyc", ".pyo"}
+        and path.name != ".DS_Store"
+    )
+
+
 def add_tree(
     rendered: dict[str, bytes],
     source_root: Path,
     target_prefix: Path,
     project: ProjectConfig,
 ) -> None:
-    for source in sorted(path for path in source_root.rglob("*") if path.is_file()):
+    for source in sorted(
+        path for path in source_root.rglob("*") if is_policy_source_file(path, source_root)
+    ):
         relative = (target_prefix / source.relative_to(source_root)).as_posix()
         if relative in rendered:
             raise PolicyError(f"중복 렌더 대상입니다: {relative}")
@@ -238,7 +260,7 @@ def render_codex_hooks(project: ProjectConfig) -> bytes:
                     "type": "command",
                     "command": hook_command("user-prompt", "codex"),
                     "timeout": 10,
-                    "statusMessage": "Recording one-shot command approval",
+                    "statusMessage": "Recording common harness approval",
                 }
             ],
         },
@@ -246,7 +268,6 @@ def render_codex_hooks(project: ProjectConfig) -> bytes:
     registrations.setdefault("PreToolUse", []).insert(
         0,
         {
-            "matcher": "Bash|Edit|Write|apply_patch",
             "hooks": [
                 {
                     "type": "command",
@@ -257,19 +278,37 @@ def render_codex_hooks(project: ProjectConfig) -> bytes:
             ],
         },
     )
-    registrations.setdefault("Stop", []).insert(
+    registrations.setdefault("PostToolUse", []).insert(
         0,
         {
             "hooks": [
                 {
                     "type": "command",
-                    "command": log_collection_command(project, "logic"),
-                    "timeout": 30,
-                    "statusMessage": "Mirroring required artifacts to central logs",
+                    "command": hook_command("post-tool", "codex"),
+                    "timeout": 10,
+                    "statusMessage": "Recording common harness evidence",
                 }
             ],
         },
     )
+    registrations["Stop"] = [
+        {
+            "hooks": [
+                {
+                    "type": "command",
+                    "command": hook_command("documentation-stop", "codex"),
+                    "timeout": 10,
+                    "statusMessage": "Checking role-based task artifacts",
+                },
+                {
+                    "type": "command",
+                    "command": log_collection_command(project, "codex"),
+                    "timeout": 30,
+                    "statusMessage": "Mirroring required artifacts to central logs",
+                }
+            ],
+        }
+    ]
     return (json.dumps(hooks, ensure_ascii=False, indent=2) + "\n").encode()
 
 
@@ -287,9 +326,19 @@ def render_claude_settings(project: ProjectConfig) -> bytes:
                 ]
             }
         ],
+        "UserPromptSubmit": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": hook_command("user-prompt", "claude"),
+                        "timeout": 10,
+                    }
+                ]
+            }
+        ],
         "PreToolUse": [
             {
-                "matcher": "Bash|Edit|Write|MultiEdit|NotebookEdit",
                 "hooks": [
                     {
                         "type": "command",
@@ -299,9 +348,25 @@ def render_claude_settings(project: ProjectConfig) -> bytes:
                 ],
             }
         ],
+        "PostToolUse": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": hook_command("post-tool", "claude"),
+                        "timeout": 10,
+                    }
+                ]
+            }
+        ],
         "Stop": [
             {
                 "hooks": [
+                    {
+                        "type": "command",
+                        "command": hook_command("documentation-stop", "claude"),
+                        "timeout": 10,
+                    },
                     {
                         "type": "command",
                         "command": log_collection_command(project, "claude"),
@@ -316,13 +381,44 @@ def render_claude_settings(project: ProjectConfig) -> bytes:
 
 def render_project(project: ProjectConfig) -> dict[str, bytes]:
     rendered: dict[str, bytes] = {}
-    rendered["AGENTS.md"] = render_content(
-        (CENTRAL_ROOT / "policy/common/AGENTS.template.md").read_bytes(), project
+    common_contract = render_content(
+        (CENTRAL_ROOT / "policy/common/AGENT_POLICY.template.md").read_bytes(), project
     )
+    rendered["AGENTS.md"] = common_contract
+    rendered[".agent-policy/common/AGENT_POLICY.md"] = common_contract
     rendered["CLAUDE.md"] = render_content(
         (CENTRAL_ROOT / "adapters/claude/CLAUDE.template.md").read_bytes(), project
     )
     add_tree(rendered, CENTRAL_ROOT / "policy/common/skills", Path(".agents/skills"), project)
+    add_tree(
+        rendered,
+        CENTRAL_ROOT / "policy/common/skills",
+        Path(".agent-policy/common/skills"),
+        project,
+    )
+    add_tree(
+        rendered,
+        CENTRAL_ROOT / "policy/common/contracts",
+        Path(".agent-policy/common/contracts"),
+        project,
+    )
+    add_tree(
+        rendered,
+        CENTRAL_ROOT / "policy/common/templates",
+        Path(".agent-policy/common/templates"),
+        project,
+    )
+    for template_root in (
+        Path(".codex/templates"),
+        Path(".claude/templates"),
+        Path(".opencode/templates"),
+    ):
+        add_tree(
+            rendered,
+            CENTRAL_ROOT / "policy/common/templates",
+            template_root,
+            project,
+        )
     for host in ("codex", "claude", "opencode"):
         add_tree(
             rendered,
@@ -331,6 +427,10 @@ def render_project(project: ProjectConfig) -> dict[str, bytes]:
             project,
         )
     rendered["opencode.json"] = render_opencode_config(project)
+    branch_guard = render_content(
+        (CENTRAL_ROOT / "policy/guards/branch_guard.py").read_bytes(), project
+    )
+    rendered[".agent-policy/runtime/branch_guard.py"] = branch_guard
     rendered[".agent-policy/runtime/managed_policy_guard.py"] = render_content(
         (CENTRAL_ROOT / "policy/guards/managed_policy_guard.py").read_bytes(), project
     )
@@ -349,7 +449,7 @@ def source_files(project: ProjectConfig) -> tuple[Path, ...]:
     )
     files: list[Path] = []
     for root in roots:
-        files.extend(path for path in root.rglob("*") if path.is_file())
+        files.extend(path for path in root.rglob("*") if is_policy_source_file(path, root))
     files.append(PROJECTS_ROOT / f"{project.id}.json")
     return tuple(sorted(set(files)))
 
@@ -594,9 +694,260 @@ def audit_project(project: ProjectConfig) -> tuple[str, ...]:
             continue
         if "asan-prompt-core" in text:
             issues.append(f"forbidden legacy reference: {relative}")
-        if "{{PROJECT_" in text or "{{CENTRAL_ROOT}}" in text or "{{DEV_COMMAND}}" in text:
+        unresolved = (
+            "{{PROJECT_",
+            "{{CENTRAL_ROOT}}",
+            "{{BASE_BRANCH}}",
+            "{{DEV_COMMAND}}",
+            "{{BUILD_COMMAND}}",
+            "{{LINT_COMMAND}}",
+            "{{TEST_COMMAND}}",
+            "{{PREVIEW_COMMAND}}",
+        )
+        if any(marker in text for marker in unresolved):
             issues.append(f"unresolved placeholder: {relative}")
     return tuple(issues)
+
+
+def audit_source_contract() -> tuple[str, ...]:
+    """공통 정본·adapter·runtime이 하나의 호스트 중립 계약인지 검사한다."""
+
+    issues: list[str] = []
+    contract_path = CENTRAL_ROOT / "policy/common/contracts/runtime-policy.json"
+    try:
+        contract = read_json(contract_path)
+    except PolicyError as error:
+        return (str(error),)
+
+    if contract.get("version") != 3:
+        issues.append("runtime contract version mismatch")
+    roles = contract.get("roles")
+    expected_roles = {
+        "logic": {"canonical": "logic"},
+        "ui": {"canonical": "ui"},
+        "orchest": {"canonical": "orchestration"},
+        "review": {"canonical": "review"},
+        "generate": {"canonical": "integrated"},
+    }
+    if roles != expected_roles:
+        issues.append("runtime role registry mismatch")
+    hosts = contract.get("hosts")
+    expected_hosts = {
+        "codex": {"artifact_root": ".codex/logs/sessions"},
+        "claude": {"artifact_root": ".claude/logs/sessions"},
+        "opencode": {"artifact_root": ".opencode/logs/sessions"},
+        "unknown": {"artifact_root": ".agent-policy/logs/unknown/sessions"},
+    }
+    if hosts != expected_hosts:
+        issues.append("runtime host registry mismatch")
+    artifacts = contract.get("artifacts")
+    required = artifacts.get("required") if isinstance(artifacts, dict) else None
+    if required != list(EXPECTED_REQUIRED_ARTIFACTS):
+        issues.append("OpenCode-origin required artifact registry mismatch")
+    if not isinstance(artifacts, dict) or artifacts.get("responsibilities") != [
+        "owner",
+        "contributor",
+    ]:
+        issues.append("artifact responsibility registry mismatch")
+    if not isinstance(artifacts, dict) or artifacts.get("unknown_directory") != "unknown":
+        issues.append("unknown artifact directory registry mismatch")
+    if not isinstance(artifacts, dict) or artifacts.get("handoff") != "handoff.md":
+        issues.append("handoff artifact registry mismatch")
+    if contract.get("task_states") != [
+        "IDLE",
+        "ACTIVE",
+        "READY_TO_MERGE",
+        "MERGED_VERIFIED",
+        "CLOSED",
+        "PRESERVED",
+    ]:
+        issues.append("task state registry mismatch")
+
+    git_policy = contract.get("git")
+    never_agent = git_policy.get("never_agent_commands") if isinstance(git_policy, dict) else None
+    if never_agent != ["push", "reset --hard", "clean", "update-ref"]:
+        issues.append("never-agent Git command registry mismatch")
+    validation = git_policy.get("validation_commands") if isinstance(git_policy, dict) else None
+    if validation != ["{{LINT_COMMAND}}", "{{TEST_COMMAND}}", "{{BUILD_COMMAND}}"]:
+        issues.append("validation command registry mismatch")
+
+    template_root = CENTRAL_ROOT / "policy/common/templates"
+    expected_templates = {
+        "README.md",
+        "agent-output-schema.yaml",
+        "handoff.md",
+        "handoff.template.md",
+        *(name for artifact in EXPECTED_REQUIRED_ARTIFACTS for name in (artifact, f"{artifact.removesuffix('.md')}.template.md")),
+    }
+    actual_templates = {
+        path.name for path in template_root.iterdir() if path.is_file()
+    } if template_root.is_dir() else set()
+    if actual_templates != expected_templates:
+        missing = sorted(expected_templates - actual_templates)
+        extra = sorted(actual_templates - expected_templates)
+        issues.append(f"common template set mismatch: missing={missing}, extra={extra}")
+
+    portfolio = template_root / "portfolio-log.template.md"
+    if portfolio.is_file():
+        text = portfolio.read_text(encoding="utf-8")
+        required_portfolio_sections = (
+            "### 문제 상황",
+            "### 고민과 선택",
+            "### 적용",
+            "### 사용 기술과 구체적 목적",
+            "### 결과",
+            "### 이력서·포트폴리오 문구",
+        )
+        if any(section not in text for section in required_portfolio_sections):
+            issues.append("Claude-origin portfolio prompt structure mismatch")
+    else:
+        issues.append("portfolio template missing")
+
+    agent_schema = template_root / "agent-output-schema.yaml"
+    if agent_schema.is_file():
+        schema_text = agent_schema.read_text(encoding="utf-8")
+        harness_fields = (
+            "can_proceed",
+            "missing_requirements",
+            "role_violation_detected",
+            "approval_status",
+            "retry_count",
+            "escalation_signal",
+        )
+        if any(f"  {field}:" not in schema_text for field in harness_fields):
+            issues.append("common agent output schema is missing Harness fields")
+        claude_role_fields = (
+            "work_type",
+            "reusable_components_found",
+            "implementation_summary",
+            "refactor_targets",
+            "repeat_issue_detected",
+            "diagnosis_report",
+            "recommended_backlog",
+        )
+        if any(f"    - {field}" not in schema_text for field in claude_role_fields):
+            issues.append("common agent output schema lost Claude role-specific fields")
+    else:
+        issues.append("common agent output schema missing")
+
+    legacy_codex_hooks = CENTRAL_ROOT / "adapters/codex/files/.codex/hooks"
+    if legacy_codex_hooks.is_dir() and any(path.is_file() for path in legacy_codex_hooks.rglob("*")):
+        issues.append("legacy Codex Python hooks remain")
+    hooks_base = read_json(CENTRAL_ROOT / "adapters/codex/hooks.base.json")
+    if hooks_base != {"hooks": {}}:
+        issues.append("Codex adapter still registers legacy hooks")
+    common_guard = CENTRAL_ROOT / "policy/guards/managed_policy_guard.py"
+    common_guard_text = common_guard.read_text(encoding="utf-8")
+    required_common_guard_markers = (
+        "def record_user_prompt(",
+        "def record_post_tool(",
+        "def implementation_gate_denial(",
+        '"post-tool"',
+    )
+    if any(marker not in common_guard_text for marker in required_common_guard_markers):
+        issues.append("common guard does not supersede Codex approval/evidence hooks")
+    codex_config = (CENTRAL_ROOT / "adapters/codex/files/.codex/config.toml").read_text(
+        encoding="utf-8"
+    )
+    if re.search(r"^\s*codex_hooks\s*=", codex_config, re.MULTILINE):
+        issues.append("deprecated Codex codex_hooks feature remains")
+
+    scanned_roots = (
+        CENTRAL_ROOT / "policy",
+        CENTRAL_ROOT / "adapters",
+        CENTRAL_ROOT / "lib",
+    )
+    stale_markers = (
+        "HOOK_SHA256",
+        "features.codex_hooks",
+        ".codex/hooks/branch_guard.py",
+        ".claude/hooks/branch_guard.py",
+        ".opencode/plugins/branch_guard.py",
+    )
+    for root in scanned_roots:
+        for path in root.rglob("*"):
+            if not path.is_file() or path.suffix not in {".py", ".js", ".json", ".toml", ".md"}:
+                continue
+            if path.resolve() == Path(__file__).resolve():
+                continue
+            try:
+                text = path.read_text(encoding="utf-8")
+            except UnicodeError:
+                continue
+            for marker in stale_markers:
+                if marker in text:
+                    issues.append(f"stale host-specific guard marker {marker}: {path.relative_to(CENTRAL_ROOT)}")
+
+    forbidden_role_phrases = (
+        "Logic Session",
+        "production UI 전담",
+        "Claude UI 구현",
+        "UI_COMPLETE",
+        "Hephaestus",
+    )
+    for root in (CENTRAL_ROOT / "policy/common", CENTRAL_ROOT / "adapters"):
+        for path in root.rglob("*.md"):
+            text = path.read_text(encoding="utf-8")
+            for phrase in forbidden_role_phrases:
+                if phrase.casefold() in text.casefold():
+                    issues.append(f"fixed host-role phrase {phrase}: {path.relative_to(CENTRAL_ROOT)}")
+
+    for project_id in project_ids():
+        rendered = render_project(load_project(project_id))
+        cache_outputs = tuple(
+            path
+            for path in rendered
+            if "__pycache__" in Path(path).parts or path.endswith((".pyc", ".pyo"))
+        )
+        if cache_outputs:
+            issues.append(f"{project_id}: runtime cache files rendered: {cache_outputs}")
+        runtime_guard_paths = tuple(path for path in rendered if path.endswith("/branch_guard.py"))
+        if runtime_guard_paths != (".agent-policy/runtime/branch_guard.py",):
+            issues.append(f"{project_id}: branch guard is not single common runtime: {runtime_guard_paths}")
+        codex_hooks = json.loads(rendered[".codex/hooks.json"])["hooks"]
+        claude_hooks = json.loads(rendered[".claude/settings.json"])["hooks"]
+        for host, registrations in (("codex", codex_hooks), ("claude", claude_hooks)):
+            for event, mode in (
+                ("UserPromptSubmit", "user-prompt"),
+                ("PreToolUse", "pre-tool"),
+                ("PostToolUse", "post-tool"),
+                ("Stop", "documentation-stop"),
+            ):
+                serialized = json.dumps(registrations.get(event, ()), ensure_ascii=False)
+                if "managed_policy_guard.py" not in serialized or f"{mode} {host}" not in serialized:
+                    issues.append(f"{project_id}: {host} common guard registration missing: {event}")
+        opencode_plugin = rendered[".opencode/plugins/agent-policy.js"].decode("utf-8")
+        for marker in ('"chat.message"', '"tool.execute.before"', '"tool.execute.after"'):
+            if marker not in opencode_plugin:
+                issues.append(f"{project_id}: OpenCode common guard event missing: {marker}")
+        for template_name in expected_templates:
+            common_path = f".agent-policy/common/templates/{template_name}"
+            if common_path not in rendered:
+                issues.append(f"{project_id}: missing rendered common template {template_name}")
+                continue
+            for host_root in (".codex/templates", ".claude/templates", ".opencode/templates"):
+                host_path = f"{host_root}/{template_name}"
+                if rendered.get(host_path) != rendered[common_path]:
+                    issues.append(f"{project_id}: template adapter drift {host_path}")
+
+        common_paths = set(rendered)
+        for relative, content in rendered.items():
+            if not relative.startswith(("CLAUDE.md", ".claude/", ".codex/agents/", ".opencode/agent/")):
+                continue
+            try:
+                text = content.decode("utf-8")
+            except UnicodeDecodeError:
+                continue
+            for reference in re.findall(r"`(\.agent-policy/common/[^`]+)`", text):
+                normalized = reference.rstrip("/.,:;)")
+                if normalized.endswith("/**"):
+                    normalized = normalized.removesuffix("**")
+                if normalized.endswith("/"):
+                    if not any(path.startswith(normalized) for path in common_paths):
+                        issues.append(f"{project_id}: unresolved common reference {relative} -> {reference}")
+                elif normalized not in common_paths:
+                    issues.append(f"{project_id}: unresolved common reference {relative} -> {reference}")
+    return tuple(dict.fromkeys(issues))
 
 
 def start_command(project: ProjectConfig, host: str, model: str | None) -> list[str]:

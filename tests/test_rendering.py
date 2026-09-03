@@ -1,15 +1,20 @@
 from __future__ import annotations
 
 import json
-import hashlib
-import re
 import sys
 import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
-from agent_policy.core import load_project, render_project, source_digest
+from agent_policy.core import (
+    CENTRAL_ROOT,
+    EXPECTED_REQUIRED_ARTIFACTS,
+    audit_source_contract,
+    load_project,
+    render_project,
+    source_digest,
+)
 
 
 class RenderingTests(unittest.TestCase):
@@ -20,6 +25,7 @@ class RenderingTests(unittest.TestCase):
         self.assertNotIn(b"asan-metaverse-admin-ui", user["AGENTS.md"])
         self.assertIn(b"asan-metaverse-admin-ui", admin["AGENTS.md"])
         self.assertNotIn(b"asan-metaverse-user-ui", admin["AGENTS.md"])
+        self.assertEqual(user["AGENTS.md"], user[".agent-policy/common/AGENT_POLICY.md"])
 
     def test_managed_outputs_have_no_legacy_central_reference_or_placeholder(self) -> None:
         for project_id in ("user-ui", "admin-ui"):
@@ -28,18 +34,56 @@ class RenderingTests(unittest.TestCase):
                     self.assertNotIn(b"asan-prompt-core", content, path)
                     self.assertNotIn(b"{{PROJECT_NAME}}", content, path)
                     self.assertNotIn(b"{{CENTRAL_ROOT}}", content, path)
+                    self.assertNotIn(b"{{BASE_BRANCH}}", content, path)
                     self.assertNotIn(b"{{DEV_COMMAND}}", content, path)
                     self.assertNotIn(b"{{BUILD_COMMAND}}", content, path)
+                    self.assertNotIn(b"{{PREVIEW_COMMAND}}", content, path)
 
-    def test_project_specific_reference_catalogs_are_not_centralized(self) -> None:
+    def test_runtime_cache_files_are_never_rendered_or_digested(self) -> None:
+        rendered = render_project(load_project("user-ui"))
+        self.assertFalse(any("__pycache__" in path for path in rendered))
+        self.assertFalse(any(path.endswith((".pyc", ".pyo")) for path in rendered))
+
+    def test_project_specific_reference_catalogs_are_conditional(self) -> None:
         rendered = render_project(load_project("user-ui"))
         self.assertNotIn(
             ".agents/skills/reference/components/COMMON_COMPONENTS.md",
             rendered,
         )
-        hooks = rendered[".agents/skills/reference/custom-hooks/SKILL.md"]
-        self.assertNotIn(b"useApi", hooks)
-        self.assertNotIn(b"meeting", hooks)
+        hooks = rendered[".agent-policy/common/skills/reference/custom-hooks/SKILL.md"]
+        self.assertIn(b"useApi", hooks)
+        self.assertIn(b"meeting", hooks)
+        self.assertIn("실제 경로와 사용처가 확인될 때만".encode(), hooks)
+        self.assertIn("모든 소비자 프로젝트에 존재한다고 단정하지 않습니다".encode(), hooks)
+        api_authoring = rendered[".agent-policy/common/skills/recipe/api-authoring/SKILL.md"]
+        self.assertIn(b"useApi", api_authoring)
+        self.assertIn("기존 범용 요청 hook".encode(), api_authoring)
+
+    def test_claude_documentation_uses_claude_artifact_root(self) -> None:
+        rendered = render_project(load_project("user-ui"))
+        claude = rendered["CLAUDE.md"]
+        documentation = rendered[
+            ".agent-policy/common/skills/policy/documentation/SKILL.md"
+        ]
+        self.assertIn(b".claude/logs/sessions/", claude)
+        self.assertIn(b".claude/logs/sessions/", documentation)
+        for artifact in EXPECTED_REQUIRED_ARTIFACTS:
+            self.assertIn(artifact.encode(), documentation)
+
+    def test_entry_docs_do_not_identify_the_central_prompt_repository(self) -> None:
+        central_root = str(CENTRAL_ROOT).encode()
+        for project_id in ("user-ui", "admin-ui"):
+            with self.subTest(project=project_id):
+                rendered = render_project(load_project(project_id))
+                agents = rendered["AGENTS.md"]
+                claude = rendered["CLAUDE.md"]
+                self.assertNotIn("중앙 시스템 프롬프트".encode(), agents)
+                self.assertNotIn("중앙 시스템 프롬프트".encode(), claude)
+                self.assertNotIn(central_root, agents)
+                self.assertNotIn(central_root, claude)
+                self.assertIn("## 4. 관리 정책 파일".encode(), claude)
+                self.assertIn(b".agent-policy/common/AGENT_POLICY.md", claude)
+                self.assertNotIn(b"AGENTS.md", claude)
 
     def test_codex_and_claude_hook_schemas_are_json_and_include_guard(self) -> None:
         rendered = render_project(load_project("user-ui"))
@@ -48,14 +92,19 @@ class RenderingTests(unittest.TestCase):
         self.assertIn("SessionStart", codex)
         self.assertIn("UserPromptSubmit", codex)
         self.assertIn("PreToolUse", codex)
+        self.assertIn("PostToolUse", codex)
         self.assertIn("Stop", codex)
         self.assertIn("SessionStart", claude)
+        self.assertIn("UserPromptSubmit", claude)
         self.assertIn("PreToolUse", claude)
+        self.assertIn("PostToolUse", claude)
         self.assertIn("Stop", claude)
         self.assertIn("managed_policy_guard.py", json.dumps(codex))
         self.assertIn("managed_policy_guard.py", json.dumps(claude))
-        self.assertIn("collect-logs --project user-ui --channel logic", json.dumps(codex))
+        self.assertIn("collect-logs --project user-ui --channel codex", json.dumps(codex))
         self.assertIn("collect-logs --project user-ui --channel claude", json.dumps(claude))
+        self.assertIn("documentation-stop codex", json.dumps(codex))
+        self.assertIn("documentation-stop claude", json.dumps(claude))
         central_prompt_hook = next(
             item
             for item in codex["UserPromptSubmit"]
@@ -63,35 +112,36 @@ class RenderingTests(unittest.TestCase):
         )
         self.assertEqual(central_prompt_hook["hooks"][0]["timeout"], 10)
 
-    def test_codex_baseline_hook_integrity_hashes_match_sources(self) -> None:
+    def test_codex_legacy_hooks_are_removed_in_favor_of_common_guard(self) -> None:
         rendered = render_project(load_project("user-ui"))
         hooks = json.loads(rendered[".codex/hooks.json"])["hooks"]
-        for event_name in ("UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop"):
-            registration = next(
-                item
-                for item in hooks[event_name]
-                if "HOOK_SHA256" in item["hooks"][0]["command"]
-            )
-            command = registration["hooks"][0]["command"]
-            expected = re.search(r"HOOK_SHA256='([0-9a-f]{64})'", command)
-            entry = re.search(r'"([a-z-]+\.py)" "\$HOOK_SHA256"', command)
-            self.assertIsNotNone(expected)
-            self.assertIsNotNone(entry)
-            digest = hashlib.sha256(
-                rendered[f".codex/hooks/{entry.group(1)}"]
-                + b"\0"
-                + rendered[".codex/hooks/hook_common.py"]
-            ).hexdigest()
-            self.assertEqual(expected.group(1), digest)
+        post_commands = [
+            hook["command"]
+            for registration in hooks["PostToolUse"]
+            for hook in registration["hooks"]
+        ]
+        self.assertTrue(all("managed_policy_guard.py" in command for command in post_commands))
+        self.assertTrue(any("post-tool codex" in command for command in post_commands))
+        self.assertFalse(any(path.startswith(".codex/hooks/") for path in rendered))
+        self.assertNotIn(b"HOOK_SHA256", b"\n".join(rendered.values()))
+        self.assertIn(b"hooks = true", rendered[".codex/config.toml"])
+        self.assertNotIn(b"codex_hooks", rendered[".codex/config.toml"])
 
     def test_opencode_plugin_contract_is_rendered(self) -> None:
         rendered = render_project(load_project("user-ui"))
         plugin = rendered[".opencode/plugins/agent-policy.js"].decode()
         self.assertIn('"tool.execute.before"', plugin)
+        self.assertIn('"tool.execute.after"', plugin)
+        self.assertIn('"chat.message"', plugin)
         self.assertIn("output.args", plugin)
+        self.assertIn("session_id: sessionId(input)", plugin)
+        self.assertIn("session_id: sessionId(event)", plugin)
         self.assertIn("session-start", plugin)
         self.assertIn('event.type !== "session.idle"', plugin)
+        self.assertIn('"experimental.session.compacting"', plugin)
+        self.assertIn('"branch-context"', plugin)
         self.assertIn('"collect-logs"', plugin)
+        self.assertIn('"opencode"', plugin)
         self.assertIn('const PROJECT_ID = "user-ui"', plugin)
 
         config = json.loads(rendered["opencode.json"])
@@ -104,11 +154,112 @@ class RenderingTests(unittest.TestCase):
         rendered = render_project(load_project("user-ui"))
         managed_text = b"\n".join(rendered.values())
         self.assertNotIn(b"Hephaestus", managed_text)
-        self.assertIn(b"Logic Session", managed_text)
+        self.assertNotIn(b"hephasetus", managed_text.lower())
+        self.assertNotIn("Logic Session".encode(), managed_text)
+        self.assertNotIn("production UI 전담".encode(), managed_text)
+        self.assertIn(
+            ".agent-policy/common/skills/policy/task-role-routing/SKILL.md".encode(),
+            rendered["AGENTS.md"],
+        )
+        self.assertIn(
+            ".agent-policy/common/skills/policy/task-role-routing/references/ui.md".encode(),
+            rendered[".claude/agents/publisher.md"],
+        )
         planner = rendered[".claude/agents/planner.md"]
         evaluator = rendered[".claude/agents/evaluator.md"]
-        self.assertIn("전체 요청".encode(), planner)
-        self.assertIn("코드베이스 전체".encode(), evaluator)
+        self.assertIn("역할을 제안".encode(), planner)
+        self.assertIn("모든 산출물은 한국어".encode(), rendered[".codex/agents/planner.toml"])
+        self.assertIn("장기".encode(), evaluator)
+
+    def test_policy_and_strategy_docs_have_no_fixed_host_role_assignment(self) -> None:
+        forbidden = (
+            "Logic Session",
+            "production UI 전담",
+            "Claude UI 구현",
+            "UI_COMPLETE",
+        )
+        roots = (
+            CENTRAL_ROOT / "AGENTS.md",
+            CENTRAL_ROOT / "CLAUDE.md",
+            CENTRAL_ROOT / "README.md",
+            CENTRAL_ROOT / "policy/common",
+            CENTRAL_ROOT / "adapters",
+            CENTRAL_ROOT / "docs",
+        )
+        files = []
+        for root in roots:
+            files.extend((root,) if root.is_file() else root.rglob("*.md"))
+        for path in files:
+            text = path.read_text(encoding="utf-8")
+            for phrase in forbidden:
+                self.assertNotIn(phrase, text, str(path.relative_to(CENTRAL_ROOT)))
+
+    def test_branch_contract_is_rendered_once_for_every_host(self) -> None:
+        rendered = render_project(load_project("user-ui"))
+        runtime = rendered[".agent-policy/runtime/branch_guard.py"]
+        self.assertIn(b'BASE_BRANCH = "sy-main"', runtime)
+        for path in (
+            ".codex/hooks/branch_guard.py",
+            ".claude/hooks/branch_guard.py",
+            ".opencode/plugins/branch_guard.py",
+        ):
+            self.assertNotIn(path, rendered)
+        self.assertIn(
+            b"git-branch-strategy",
+            rendered["AGENTS.md"],
+        )
+        self.assertIn(
+            b"def proposal(",
+            rendered[
+                ".agent-policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py"
+            ],
+        )
+        self.assertIn(b"FULL_SHA_PATTERN", runtime)
+        self.assertIn(b"ALLOWED_ROLES", runtime)
+        strategy = rendered[".agent-policy/common/skills/policy/git-branch-strategy/SKILL.md"]
+        self.assertIn(b"owner|contributor", strategy)
+        self.assertIn(b"proposal-sha256", strategy)
+        self.assertIn(
+            b'git(root, "worktree", "add"',
+            rendered[
+                ".agent-policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py"
+            ],
+        )
+
+    def test_common_templates_are_identical_for_all_hosts(self) -> None:
+        rendered = render_project(load_project("user-ui"))
+        expected = (*EXPECTED_REQUIRED_ARTIFACTS, "handoff.md")
+        for artifact in expected:
+            stem = artifact.removesuffix(".md")
+            for name in (artifact, f"{stem}.template.md"):
+                common = rendered[f".agent-policy/common/templates/{name}"]
+                for host in ("codex", "claude", "opencode"):
+                    self.assertEqual(rendered[f".{host}/templates/{name}"], common)
+        portfolio = rendered[".agent-policy/common/templates/portfolio-log.template.md"]
+        for heading in (
+            "문제 상황",
+            "고민과 선택",
+            "적용",
+            "사용 기술과 구체적 목적",
+            "결과",
+            "이력서·포트폴리오 문구",
+        ):
+            self.assertIn(heading.encode(), portfolio)
+
+    def test_central_source_contract_audit_passes(self) -> None:
+        self.assertEqual(audit_source_contract(), ())
+
+    def test_host_adapters_reference_neutral_common_contract(self) -> None:
+        rendered = render_project(load_project("user-ui"))
+        for path, content in rendered.items():
+            if not path.startswith((".claude/", ".codex/agents/", ".opencode/agent/")):
+                continue
+            self.assertNotIn(b".agents/skills/policy/task-role-routing", content, path)
+        self.assertNotIn(b"AGENTS.md", rendered["CLAUDE.md"])
+        self.assertIn(
+            b".agent-policy/common/AGENT_POLICY.md",
+            rendered["CLAUDE.md"],
+        )
 
     def test_source_digest_includes_project_metadata(self) -> None:
         self.assertNotEqual(

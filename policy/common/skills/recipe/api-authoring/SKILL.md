@@ -18,7 +18,7 @@ description: FSD 경계에서 typed Axios API, DTO/parser, TanStack Query 및 MS
 5. API 파일은 `api/<도메인>/<도메인>.api.ts`에 두고 `<도메인>Api(client)` factory가 `<HTTP메서드><도메인><대상>` 메서드를 반환하게 합니다.
 6. 기존 `ApiClient`와 `ApiResult`를 전송 경계로 재사용합니다. 거대한 전역 API 객체나 도메인 spread registry를 만들지 않습니다.
 7. TanStack Query 사용 시 실패 `ApiResult`를 typed error로 변환하고, query key에 id·filter·search·sort·page 등 모든 의존값을 포함합니다.
-8. mutation 성공 시 영향받는 최소 key만 무효화합니다. 신규 query hook을 `useApi`로 다시 감싸지 않습니다.
+8. mutation 성공 시 영향받는 최소 key만 무효화합니다. 기존 범용 요청 hook인 `useApi`로 신규 query hook을 다시 감싸지 않습니다.
 9. MSW handler는 실제 endpoint, envelope, query/path parsing과 동일하게 작성하고 success·empty·error·상태별 fixture를 제공합니다.
 10. 요청 DTO mapper는 허용 필드만 명시적으로 옮기며 RHF form value를 그대로 전송하지 않습니다.
 11. 실제 Axios 표면을 통해 happy path와 오류 경계를 확인하고 `npm run build`, `npm run lint`를 실행합니다.

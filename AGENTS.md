@@ -2,6 +2,8 @@
 
 이 저장소는 `asan-metaverse-user-ui`와 `asan-metaverse-admin-ui`의 AI 정책 원본이다. 소비자 저장소의 생성 파일을 직접 수정하지 않고 여기에서 원본을 변경한다.
 
+호스트는 실행 환경이고 역할은 작업 책임이다. 특정 호스트에 UI, Logic 또는 오케스트레이션 역할을 고정하지 않는다. 새 요청에서 사용자 입력과 적용 가능한 handoff를 근거로 역할을 제안하고 확인받은 뒤 작업한다.
+
 ## 작업 흐름
 
 1. `policy/`, `adapters/`, `projects/`의 영향을 조사한다.
@@ -18,7 +20,7 @@
 - 기계적 차단과 drift 검사: `policy/guards/`
 - 호스트 형식: `adapters/codex/`, `adapters/claude/`, `adapters/opencode/`
 - 프로젝트 경로와 명령: `projects/*.json`
-- 필수 세션 산출물 아카이브: `logs/projects/{project}/{channel}/sessions/`
+- 필수 세션 산출물 아카이브: `logs/projects/{project}/{host}/sessions/`
 - 소비자별 기능 정책은 V1 범위에 없으며 임의 overlay를 만들지 않는다.
 
 ## 안전 규칙

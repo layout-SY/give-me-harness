@@ -1,33 +1,15 @@
 ---
 name: project-ui
-description: {{PROJECT_NAME}}에서 Claude Code가 production UI를 계획·구현·리팩터링할 때 적용하는 프로젝트 진입 스킬입니다.
+description: {{PROJECT_NAME}}에서 UI 역할이 사용자에게 확인된 경우 공통 UI 정책으로 연결하는 Claude Code 호환 진입점입니다.
 ---
 
-# Project UI
+# Project UI 호환 진입점
 
-## 사용 조건
+이 스킬은 Claude Code의 기본 역할을 UI로 지정하지 않는다. 사용자 요청과 handoff를 바탕으로 UI 또는 통합 구현 역할이 확인된 경우에만 사용한다.
 
-Claude Code가 `src/**/ui/**`, UI 전용 CSS·자산 또는 `src/shared/ui/**`를 작업할 때 사용한다.
+1. `.claude/skills/project-role/SKILL.md`를 따른다.
+2. `.agent-policy/common/skills/policy/task-role-routing/references/ui.md`를 읽는다.
+3. 통합 구현 역할이면 `.agent-policy/common/skills/policy/task-role-routing/references/logic.md`도 함께 읽는다.
+4. `DESIGN.md`, `src/shared/ui/`, 같은 디렉터리와 인접 구현을 조사한다.
 
-## 필수 확인 순서
-
-1. 루트 `CLAUDE.md`와 `AGENTS.md`
-2. `DESIGN.md`
-3. `.agents/skills/SKILL.md`
-4. `.agents/skills/policy/SKILL.md`
-5. `.agents/skills/reference/SKILL.md`
-6. 대상 UI와 같은 디렉터리 및 인접 구현
-
-작업에 필요한 세부 정책만 `.agents/skills/**`에서 추가로 읽는다. `.claude/skills/**`에 이전 프로젝트 자산을 다시 복제하지 않는다.
-
-## 역할 경계
-
-- Claude Code는 production UI, CSS, 접근성, 반응형 레이아웃과 props/callback 계약만 구현한다.
-- hook, util, API, DTO, parser, validator, store와 도메인 상태 전이는 Logic Session 작업으로 사용자에게 전달한다.
-- 공용 통합 파일은 수정하지 않는다.
-- 완료 시 `UI_COMPLETE` 형식으로 인계한다.
-
-## 검증 제한
-
-- 기존 테스트, `npm run build`, `npm run lint`만 사용한다.
-- 리뷰 plugin/agent, 이미지 캡처, 화면 비교와 시각 QA를 실행하지 않는다.
+완료·인계·검증은 `.agent-policy/common/AGENT_POLICY.md`와 `.agent-policy/common/skills/policy/task-role-routing/references/handoff-and-ownership.md`를 따른다.

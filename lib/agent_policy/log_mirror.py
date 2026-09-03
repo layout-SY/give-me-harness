@@ -5,20 +5,26 @@ from pathlib import Path
 from typing import Final
 
 from .core import CENTRAL_ROOT, PolicyError, ProjectConfig, atomic_write
+from .role_profiles import HOST_ARTIFACT_SESSION_ROOTS, RUNTIME_CONTRACT
 
-REQUIRED_ARTIFACTS: Final = (
-    "plan.md",
-    "exploration.md",
-    "implementation-log.md",
-    "grill-me-review.md",
-    "review-log.md",
-    "evaluation-log.md",
-    "final-summary.md",
-    "portfolio-log.md",
+ACTIVE_CHANNELS: Final = ("codex", "claude", "opencode", "unknown")
+_ARTIFACT_CONTRACT = RUNTIME_CONTRACT.get("artifacts")
+if not isinstance(_ARTIFACT_CONTRACT, dict):
+    raise RuntimeError("공통 runtime 계약의 artifacts가 object가 아닙니다.")
+REQUIRED_ARTIFACTS: Final = tuple(
+    str(name)
+    for name in _ARTIFACT_CONTRACT.get("required", ())
+    if isinstance(name, str)
+) + (str(_ARTIFACT_CONTRACT.get("handoff", "handoff.md")),)
+UNKNOWN_DIRECTORY: Final = str(
+    _ARTIFACT_CONTRACT.get("unknown_directory", "unknown")
 )
 CHANNEL_SOURCES: Final = {
+    channel: Path(relative)
+    for channel, relative in HOST_ARTIFACT_SESSION_ROOTS.items()
+} | {
+    # 2026-09-02 이전 수동 수집 명령과 중앙 archive를 위한 호환 alias.
     "logic": Path(".codex/logs/sessions"),
-    "claude": Path(".claude/logs/sessions"),
 }
 
 
@@ -33,7 +39,7 @@ class LogMirrorResult:
 
 def selected_channels(selector: str) -> tuple[str, ...]:
     if selector == "all":
-        return tuple(CHANNEL_SOURCES)
+        return ACTIVE_CHANNELS
     if selector not in CHANNEL_SOURCES:
         raise PolicyError(f"지원하지 않는 로그 채널입니다: {selector}")
     return (selector,)
@@ -61,13 +67,20 @@ def collect_project_logs(
         for session in sessions:
             if session.is_symlink() or not session.is_dir():
                 continue
-            for artifact_name in REQUIRED_ARTIFACTS:
-                source = session / artifact_name
+            sources = [session / artifact_name for artifact_name in REQUIRED_ARTIFACTS]
+            unknown_root = session / UNKNOWN_DIRECTORY
+            if unknown_root.is_dir() and not unknown_root.is_symlink():
+                sources.extend(
+                    source
+                    for source in sorted(unknown_root.rglob("*"))
+                    if source.is_file() and not source.is_symlink()
+                )
+            for source in sources:
                 if source.is_symlink() or not source.is_file():
                     continue
                 source.resolve().relative_to(source_root.resolve())
 
-                relative = Path(session.name) / artifact_name
+                relative = Path(session.name) / source.relative_to(session)
                 target = target_root / project.id / channel / "sessions" / relative
                 target.parent.resolve().relative_to(target_root)
                 content = source.read_bytes()

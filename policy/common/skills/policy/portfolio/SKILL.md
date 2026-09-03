@@ -5,7 +5,7 @@ description: 변경 작업 완료 후 필수 `portfolio-log.md`를 문제 상황
 
 # 포트폴리오
 
-검증을 거쳐 완료된 모든 변경 작업은 `.codex/logs/sessions/{YYYY-MM-DD-task-slug}/portfolio-log.md`를 작성한다. 애플리케이션 기능·버그 수정·리팩터링·문서·설정뿐 아니라 `.agents/`, `.codex/`, `.claude/`, `.harness/`의 AI 하네스·스킬·훅·워크플로 변경도 같은 구조로 기록한다. 다른 필수 산출물을 포트폴리오 서술로 대체하지 않는다.
+검증을 거쳐 완료된 `owner` assignment는 실행 호스트의 세션 디렉터리에 `portfolio-log.md`를 작성한다. 형식은 Claude 작업에서 확정된 포트폴리오 프롬프트를 승격한 `.agent-policy/common/templates/portfolio-log.template.md`가 정본이다. 애플리케이션 기능·버그 수정·리팩터링·문서·설정뿐 아니라 중앙 정책과 각 host adapter의 AI 하네스·스킬·hook·workflow 변경도 같은 구조로 기록한다. 다른 필수 산출물을 포트폴리오 서술로 대체하지 않는다.
 
 ## 근거 수집
 

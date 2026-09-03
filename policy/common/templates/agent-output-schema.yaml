@@ -1,0 +1,100 @@
+version: 1
+required:
+  - role
+  - status
+  - summary
+  - decision
+  - reasons
+  - artifacts
+  - next_action
+  - log
+  - evidence
+properties:
+  role:
+    enum: [planner, publisher, implementer, generator, refactorer, watcher, evaluator, harness]
+  status:
+    enum: [draft, planned, ready_for_approval, awaiting_approval, approved, in_progress, implemented, review_requested, pass, fail, rejected, blocked, escalated, completed, deferred, evaluated, recommendation_ready, handed_off]
+  summary:
+    type: string
+  decision:
+    enum: [proceed, blocked, escalated, approved, rejected, handed_off, hold, evaluated]
+  reasons:
+    type: array
+    items:
+      type: string
+  artifacts:
+    type: array
+    items:
+      type: string
+  evidence:
+    type: array
+    items:
+      type: string
+  next_action:
+    type: string
+  log:
+    type: array
+    items:
+      type: string
+  can_proceed:
+    type: boolean
+  missing_requirements:
+    type: array
+    items:
+      type: string
+  role_violation_detected:
+    type: boolean
+  approval_status:
+    enum: [approved, pending, missing, not_applicable]
+  retry_count:
+    type: integer
+    minimum: 0
+  escalation_signal:
+    type: boolean
+agent_specific_fields:
+  planner:
+    - work_type
+    - scope
+    - sections
+    - required_agents
+    - required_skills
+    - approval_request
+  publisher:
+    - ui_structure
+    - reusable_components_found
+    - new_components_needed
+    - event_interface_points
+    - handoff_to_generator_or_refactorer
+  implementer_or_generator:
+    - implementation_summary
+    - reused_assets
+    - newly_created_assets
+    - validation_points
+    - known_risks
+    - handoff_to_watcher
+  refactorer:
+    - refactor_targets
+    - applied_changes
+    - deferred_improvements
+    - risk_notes
+    - handoff_to_watcher
+  watcher:
+    - review_result
+    - pass_fail
+    - violations
+    - required_fixes
+    - repeat_issue_detected
+    - escalation_needed
+  evaluator:
+    - diagnosis_report
+    - architectural_risks
+    - improvement_options
+    - recommended_backlog
+    - handoff_to_planner_optional
+  harness:
+    - can_proceed
+    - missing_requirements
+    - role_violation_detected
+    - approval_status
+    - retry_count
+    - escalation_signal

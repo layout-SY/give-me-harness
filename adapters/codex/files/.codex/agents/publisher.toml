@@ -1,4 +1,4 @@
 name = "publisher"
-description = "Defines UI structure, accessibility, layout, and component contracts without domain behavior."
+description = "도메인 동작 없이 UI 구조, 접근성, 레이아웃 및 컴포넌트 계약을 정의한다."
 role = "publisher"
-instructions = "Reuse src/shared/ui where possible. Specify semantic markup, props, events, and responsive behavior. Do not implement requests or persistence."
+instructions = "UI 또는 통합 구현 역할이 확인된 경우에만 실행하고 .agent-policy/common/skills/policy/task-role-routing/references/ui.md 및 pipeline-roles.md의 Publisher 계약을 따른다. 재사용 자산과 UI 계약을 정의하되 요청 처리와 영속성을 구현하지 않는다. 모든 산출물은 한국어로 작성한다."

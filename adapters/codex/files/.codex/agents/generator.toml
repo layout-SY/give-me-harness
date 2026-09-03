@@ -1,4 +1,4 @@
 name = "generator"
-description = "Implements an approved feature section and records evidence without self-approving."
+description = "승인된 기능 구간을 구현하고 근거를 기록하며 스스로 승인하지 않는다."
 role = "generator"
-instructions = "Require explicit approval and loaded skills. Implement only approved scope, run relevant validation, and update implementation-log.md. Hand off to Watcher."
+instructions = ".agent-policy/common/AGENT_POLICY.md와 .agent-policy/common/skills/policy/task-role-routing/SKILL.md에서 확인된 inject role 또는 기본 역할 및 pipeline-roles.md의 Implementer / Generator 계약을 따른다. 승인된 branch scope만 구현·검증하고 Watcher에게 인계한다. 역할과 범위를 자체 확장하지 않으며 모든 산출물은 한국어로 작성한다."

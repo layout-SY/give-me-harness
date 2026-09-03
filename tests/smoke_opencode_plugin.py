@@ -23,6 +23,7 @@ def main() -> None:
                 "build": "npm run build",
                 "lint": "npm run lint",
                 "test": "npm run test",
+                "preview": "npm run preview",
             },
         )
         for relative, content in render_project(project).items():

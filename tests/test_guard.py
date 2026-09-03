@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 import uuid
 from pathlib import Path
+from types import ModuleType
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
-from agent_policy.core import CENTRAL_ROOT
+from agent_policy.core import CENTRAL_ROOT, load_project, render_project
 
 GUARD = CENTRAL_ROOT / "policy/guards/managed_policy_guard.py"
 
@@ -46,13 +48,18 @@ class GuardTests(unittest.TestCase):
         mode: str,
         host: str,
         event: dict[str, object],
+        environment: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
+        selected_environment = dict(os.environ)
+        if environment:
+            selected_environment.update(environment)
         return subprocess.run(
             ["python3", "-I", str(GUARD), mode, host],
             input=json.dumps({"cwd": str(self.root), "session_id": self.session_id, **event}),
             text=True,
             capture_output=True,
             cwd=self.root,
+            env=selected_environment,
             check=False,
         )
 
@@ -66,6 +73,116 @@ class GuardTests(unittest.TestCase):
             "pre-tool",
             host,
             {"tool_name": tool_name, "tool_input": tool_input},
+        )
+
+    def record_common_readiness(
+        self,
+        host: str,
+        contract_sha256: str = "",
+    ) -> None:
+        environment = {"ASAN_AGENT_POLICY_ROLE": "logic"}
+        skill = self.run_mode(
+            "post-tool",
+            host,
+            {"tool_name": "Skill", "tool_input": {"skill": "policy"}},
+            environment,
+        )
+        exploration = self.run_mode(
+            "post-tool",
+            host,
+            {"tool_name": "Read", "tool_input": {"file_path": "src/App.tsx"}},
+            environment,
+        )
+        prompt = f"승인 {contract_sha256}" if contract_sha256 else "진행"
+        approval = self.run_mode("user-prompt", host, {"prompt": prompt}, environment)
+        self.assertEqual(skill.returncode, 0, skill.stderr)
+        self.assertEqual(exploration.returncode, 0, exploration.stderr)
+        self.assertEqual(approval.returncode, 0, approval.stderr)
+
+    def rendered_guard(self) -> Path:
+        rendered = render_project(load_project("user-ui"))
+        bundle = self.root.parent / f"rendered-guard-{self.session_id}"
+        runtime = bundle / ".agent-policy/runtime"
+        runtime.mkdir(parents=True)
+        managed = runtime / "managed_policy_guard.py"
+        managed.write_bytes(rendered[".agent-policy/runtime/managed_policy_guard.py"])
+        (runtime / "branch_guard.py").write_bytes(
+            rendered[".agent-policy/runtime/branch_guard.py"]
+        )
+        contract = bundle / ".agent-policy/common/contracts/runtime-policy.json"
+        contract.parent.mkdir(parents=True)
+        contract.write_bytes(rendered[".agent-policy/common/contracts/runtime-policy.json"])
+        return managed
+
+    @staticmethod
+    def write_complete_artifacts(session: Path) -> None:
+        session.mkdir(parents=True, exist_ok=True)
+        ordinary = (
+            "plan.md",
+            "exploration.md",
+            "implementation-log.md",
+            "review-log.md",
+            "evaluation-log.md",
+            "final-summary.md",
+        )
+        for name in ordinary:
+            (session / name).write_text(
+                f"# {name}\n\n검증 가능한 작업 근거를 충분히 기록했습니다.\n",
+                encoding="utf-8",
+            )
+        (session / "grill-me-review.md").write_text(
+            """# Grill Me 검토
+
+## Method Guardrails
+
+- neutral question-first 적용 여부: 예
+
+## Neutral Question Flow
+
+| 영역 | 중립적 질문 | 답변 | 근거 | Recommended Answer |
+| --- | --- | --- | --- | --- |
+| 계약 | 범위가 맞는가? | 예 | 테스트 | 현재 범위를 유지한다 |
+
+## 결론
+
+계약을 충족합니다.
+""",
+            encoding="utf-8",
+        )
+        (session / "portfolio-log.md").write_text(
+            """# 이력서·포트폴리오 기록
+
+## 사례 1 — 정책 검증
+
+- 작업 유형: 테스트
+- 관련 도메인/서비스: 중앙 정책
+- 문제 출처: 회귀 테스트
+
+### 문제 상황
+
+정책 회귀를 막아야 했습니다.
+
+### 고민과 선택
+
+공통 검증을 선택했습니다.
+
+### 적용
+
+구조 검사를 적용했습니다.
+
+### 사용 기술과 구체적 목적
+
+Python unittest로 정책 계약을 검증했습니다.
+
+### 결과
+
+회귀를 자동 검출합니다.
+
+### 이력서·포트폴리오 문구
+
+중앙 정책 검증을 자동화했습니다.
+""",
+            encoding="utf-8",
         )
 
     def test_codex_returns_native_deny_shape(self) -> None:
@@ -110,12 +227,143 @@ class GuardTests(unittest.TestCase):
                 result = self.run_guard("claude", "Bash", {"command": command})
                 self.assertEqual(result.returncode, 2)
 
-    def test_read_only_shell_and_application_edit_are_allowed(self) -> None:
+    def test_read_only_shell_is_allowed_and_application_edit_needs_common_readiness(self) -> None:
         read = self.run_guard("claude", "Bash", {"command": "sed -n '1,20p' AGENTS.md"})
+        denied = self.run_guard("codex", "Write", {"file_path": "src/App.tsx"})
+        self.record_common_readiness("codex")
         application = self.run_guard("codex", "Write", {"file_path": "src/App.tsx"})
         self.assertEqual(read.returncode, 0, read.stderr)
+        self.assertEqual(
+            json.loads(denied.stdout)["hookSpecificOutput"]["permissionDecision"],
+            "deny",
+        )
+        self.assertIn("사용자 구현 승인", denied.stdout)
         self.assertEqual(application.returncode, 0, application.stderr)
         self.assertEqual(application.stdout, "")
+
+    def test_common_readiness_gate_applies_to_every_host(self) -> None:
+        for host in ("codex", "claude", "opencode"):
+            with self.subTest(host=host):
+                denied = self.run_guard(host, "Write", {"file_path": "src/feature.ts"})
+                if host == "codex":
+                    self.assertEqual(
+                        json.loads(denied.stdout)["hookSpecificOutput"]["permissionDecision"],
+                        "deny",
+                    )
+                else:
+                    self.assertEqual(denied.returncode, 2)
+                    self.assertIn("공통 구현 gate", denied.stderr)
+                self.record_common_readiness(host)
+                allowed = self.run_guard(host, "Write", {"file_path": "src/feature.ts"})
+                self.assertEqual(allowed.returncode, 0, allowed.stderr)
+                self.assertEqual(allowed.stdout, "")
+
+    def test_ui_readiness_requires_shared_ui_exploration(self) -> None:
+        environment = {"ASAN_AGENT_POLICY_ROLE": "ui"}
+        self.run_mode(
+            "post-tool",
+            "claude",
+            {"tool_name": "Skill", "tool_input": {"skill": "project-ui"}},
+            environment,
+        )
+        self.run_mode(
+            "post-tool",
+            "claude",
+            {"tool_name": "Read", "tool_input": {"file_path": "src/App.tsx"}},
+            environment,
+        )
+        self.run_mode("user-prompt", "claude", {"prompt": "작업 진행"}, environment)
+        denied = self.run_mode(
+            "pre-tool",
+            "claude",
+            {"tool_name": "Write", "tool_input": {"file_path": "src/feature.ts"}},
+            environment,
+        )
+        self.assertEqual(denied.returncode, 2)
+        self.assertIn("src/shared/ui", denied.stderr)
+
+        self.run_mode(
+            "post-tool",
+            "claude",
+            {
+                "tool_name": "Glob",
+                "tool_input": {"path": "src/shared/ui"},
+            },
+            environment,
+        )
+        allowed = self.run_mode(
+            "pre-tool",
+            "claude",
+            {"tool_name": "Write", "tool_input": {"file_path": "src/feature.ts"}},
+            environment,
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
+    def test_exec_alias_is_governed_as_a_shell_tool(self) -> None:
+        guard = self.rendered_guard()
+        for host in ("codex", "claude", "opencode"):
+            for command in ("git -C . reset --hard", "git -C . push origin HEAD"):
+                with self.subTest(host=host, command=command):
+                    completed = subprocess.run(
+                        ["python3", "-I", str(guard), "pre-tool", host],
+                        input=json.dumps(
+                            {
+                                "cwd": str(self.root),
+                                "session_id": self.session_id,
+                                "tool_name": "functions.exec",
+                                "tool_input": {"command": command},
+                            }
+                        ),
+                        text=True,
+                        capture_output=True,
+                        cwd=self.root,
+                        check=False,
+                    )
+                    message = completed.stdout if host == "codex" else completed.stderr
+                    self.assertIn("사용자 전용", message)
+                    self.assertNotIn("명령 실행 승인", message)
+
+    def test_non_git_shell_file_mutation_requires_structured_write_tool(self) -> None:
+        self.record_common_readiness("claude")
+        for command in (
+            "touch src/unscoped.ts",
+            "git status --short && touch src/unscoped.ts",
+        ):
+            with self.subTest(command=command):
+                denied = self.run_guard(
+                    "claude",
+                    "functions.exec",
+                    {"command": command},
+                )
+                self.assertEqual(denied.returncode, 2)
+                self.assertIn("비구조적 파일 변경", denied.stderr)
+                self.assertIn("apply_patch", denied.stderr)
+
+    def test_harmless_stderr_redirects_do_not_count_as_policy_writes(self) -> None:
+        commands = (
+            "ls .agents/skills/policy/SKILL.md 2>&1",
+            "ls .agents/skills/policy/SKILL.md 2>/dev/null",
+            "ls .agents/skills/policy/SKILL.md 2>/tmp/asan-policy-errors.log",
+            "ls .codex/logs/sessions/2026-09-02-task/handoff.md 2>&1",
+            "ls .codex/logs/sessions/2026-09-02-task/handoff.md 2>/dev/null",
+            "sed -n '1,20p' AGENTS.md >/dev/null",
+            "sed -n '1,20p' AGENTS.md >& /dev/null",
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.run_guard("claude", "Bash", {"command": command})
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "")
+
+    def test_fd_duplication_does_not_hide_a_managed_file_redirect(self) -> None:
+        for command in (
+            "printf x > AGENTS.md 2>&1",
+            "printf x >& AGENTS.md",
+        ):
+            with self.subTest(command=command):
+                result = self.run_guard("claude", "Bash", {"command": command})
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("AGENTS.md", result.stderr)
 
     def test_claude_asks_for_git_build_and_dev_commands(self) -> None:
         for command, expected_category in (
@@ -209,7 +457,643 @@ class GuardTests(unittest.TestCase):
             "deny",
         )
 
+    def test_never_agent_git_commands_cannot_be_unlocked_by_codex_approval(self) -> None:
+        guard = self.rendered_guard()
+
+        def run(mode: str, command: str = "", prompt: str = "") -> subprocess.CompletedProcess[str]:
+            event: dict[str, object] = {
+                "cwd": str(self.root),
+                "session_id": self.session_id,
+            }
+            if command:
+                event.update({"tool_name": "Bash", "tool_input": {"command": command}})
+            if prompt:
+                event["prompt"] = prompt
+            return subprocess.run(
+                ["python3", "-I", str(guard), mode, "codex"],
+                input=json.dumps(event),
+                text=True,
+                capture_output=True,
+                cwd=self.root,
+                check=False,
+            )
+
+        for command in ("git -C . reset --hard", "git push origin HEAD"):
+            with self.subTest(command=command):
+                first = run("pre-tool", command=command)
+                first_reason = json.loads(first.stdout)["hookSpecificOutput"][
+                    "permissionDecisionReason"
+                ]
+                self.assertIn("사용자 전용", first_reason)
+                self.assertNotIn("명령 실행 승인", first_reason)
+                _ = run("user-prompt", prompt="명령 실행 승인")
+                second = run("pre-tool", command=command)
+                second_reason = json.loads(second.stdout)["hookSpecificOutput"][
+                    "permissionDecisionReason"
+                ]
+                self.assertIn("사용자 전용", second_reason)
+
+    def test_artifact_reads_are_cross_host_but_writes_are_current_session_only(self) -> None:
+        current = ".claude/logs/sessions/2026-09-03-current/plan.md"
+        own_unknown = ".claude/logs/sessions/2026-09-03-current/unknown/notes.md"
+        foreign = ".codex/logs/sessions/2026-09-03-foreign/plan.md"
+
+        bound = self.run_guard("claude", "Write", {"file_path": current})
+        self.assertEqual(bound.returncode, 0, bound.stderr)
+        read = self.run_guard("claude", "Read", {"file_path": foreign})
+        self.assertEqual(read.returncode, 0, read.stderr)
+        foreign_write = self.run_guard("claude", "Write", {"file_path": foreign})
+        self.assertEqual(foreign_write.returncode, 2)
+        self.assertIn("읽기 전용", foreign_write.stderr)
+        other_session = self.run_guard(
+            "claude",
+            "Write",
+            {"file_path": ".claude/logs/sessions/2026-09-03-other/plan.md"},
+        )
+        self.assertEqual(other_session.returncode, 2)
+        unknown = self.run_guard("claude", "Write", {"file_path": own_unknown})
+        self.assertEqual(unknown.returncode, 0, unknown.stderr)
+        misplaced = self.run_guard(
+            "claude",
+            "Write",
+            {"file_path": ".claude/logs/sessions/2026-09-03-current/notes.md"},
+        )
+        self.assertEqual(misplaced.returncode, 2)
+        self.assertIn("unknown/", misplaced.stderr)
+
+    def test_artifact_write_without_session_identity_requires_declared_directory(self) -> None:
+        event = {
+            "cwd": str(self.root),
+            "tool_name": "Write",
+            "tool_input": {
+                "file_path": ".opencode/logs/sessions/2026-09-03-task/plan.md"
+            },
+        }
+        missing = subprocess.run(
+            ["python3", "-I", str(GUARD), "pre-tool", "opencode"],
+            input=json.dumps(event),
+            text=True,
+            capture_output=True,
+            cwd=self.root,
+            check=False,
+        )
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("ASAN_SESSION_DIR", missing.stderr)
+
+        environment = dict(os.environ)
+        environment["ASAN_SESSION_DIR"] = ".opencode/logs/sessions/2026-09-03-task"
+        declared = subprocess.run(
+            ["python3", "-I", str(GUARD), "pre-tool", "opencode"],
+            input=json.dumps(event),
+            text=True,
+            capture_output=True,
+            cwd=self.root,
+            env=environment,
+            check=False,
+        )
+        self.assertEqual(declared.returncode, 0, declared.stderr)
+
     def test_opencode_operation_gate_is_delegated_to_native_permissions(self) -> None:
         result = self.run_guard("opencode", "bash", {"command": "git status"})
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
+
+    def test_inject_ignores_stale_manifest_and_protects_central_bundle(self) -> None:
+        bundle = self.root / "central-bundle"
+        bundle.mkdir()
+        environment = {
+            "ASAN_AGENT_POLICY_MODE": "inject",
+            "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+            "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(bundle),
+        }
+        stale_manifest_target = self.run_mode(
+            "pre-tool",
+            "claude",
+            {"tool_name": "Write", "tool_input": {"file_path": ".codex/config.toml"}},
+            environment,
+        )
+        central_write = self.run_mode(
+            "pre-tool",
+            "claude",
+            {"tool_name": "Write", "tool_input": {"file_path": str(bundle / "AGENTS.md")}},
+            environment,
+        )
+        central_workdir = self.run_mode(
+            "pre-tool",
+            "opencode",
+            {
+                "tool_name": "bash",
+                "tool_input": {"command": "touch output", "workdir": str(bundle)},
+            },
+            environment,
+        )
+        self.assertEqual(stale_manifest_target.returncode, 2)
+        self.assertEqual(central_write.returncode, 2)
+        self.assertEqual(central_workdir.returncode, 2)
+
+    def test_inject_allows_trusted_branch_workflow_from_policy_snapshot(self) -> None:
+        bundle = self.root / "central-bundle"
+        script = (
+            bundle
+            / "policy/.agent-policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py"
+        )
+        script.parent.mkdir(parents=True)
+        script.write_text("# trusted test fixture\n", encoding="utf-8")
+        environment = {
+            "ASAN_AGENT_POLICY_MODE": "inject",
+            "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+            "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(bundle),
+        }
+        commands = (
+            (
+                f"python3 {script} proposal --branch task/icon-policy --purpose icon "
+                "--parent sy-main --scope src --reason 'git restore . 오판 회귀'"
+            ),
+            (
+                f"python3 {script} context 2>/dev/null"
+            ),
+        )
+        for command in commands:
+            with self.subTest(command=command):
+                result = self.run_mode(
+                    "pre-tool",
+                    "claude",
+                    {"tool_name": "Bash", "tool_input": {"command": command}},
+                    environment,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, "")
+
+        chained = self.run_mode(
+            "pre-tool",
+            "claude",
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": f"{commands[0]} && touch {bundle / 'modified'}",
+                },
+            },
+            environment,
+        )
+        self.assertEqual(chained.returncode, 2)
+        self.assertIn("중앙 프로젝트", chained.stderr)
+
+    def test_trusted_create_still_enforces_the_contract_git_integrator(self) -> None:
+        bundle = self.root / "central-bundle"
+        script = (
+            bundle
+            / "policy/.agent-policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py"
+        )
+        script.parent.mkdir(parents=True)
+        script.write_text("# trusted test fixture\n", encoding="utf-8")
+        proposal = self.root / "proposal.json"
+        proposal.write_text(json.dumps({"git_integrator": "codex"}), encoding="utf-8")
+        environment = {
+            "ASAN_AGENT_POLICY_MODE": "inject",
+            "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+            "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(bundle),
+        }
+        command = (
+            f"python3 {script} create --proposal-file {proposal} "
+            f"--proposal-sha256 {'0' * 64}"
+        )
+
+        self.record_common_readiness("codex", "0" * 64)
+
+        denied = self.run_mode(
+            "pre-tool",
+            "claude",
+            {"tool_name": "Bash", "tool_input": {"command": command}},
+            environment,
+        )
+        allowed = self.run_mode(
+            "pre-tool",
+            "codex",
+            {"tool_name": "Bash", "tool_input": {"command": command}},
+            environment,
+        )
+
+        self.assertEqual(denied.returncode, 2)
+        self.assertIn("Git 통합 담당자는 codex", denied.stderr)
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertEqual(allowed.stdout, "")
+
+    def test_proposal_posttool_binds_user_approval_to_full_sha256(self) -> None:
+        bundle = self.root / "central-bundle"
+        script = (
+            bundle
+            / "policy/.agent-policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py"
+        )
+        script.parent.mkdir(parents=True)
+        script.write_text("# trusted test fixture\n", encoding="utf-8")
+        proposal = self.root / "proposal.json"
+        proposal.write_text(json.dumps({"git_integrator": "codex"}), encoding="utf-8")
+        environment = {
+            "ASAN_AGENT_POLICY_MODE": "inject",
+            "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+            "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(bundle),
+        }
+        digest = "a" * 64
+        proposal_command = f"python3 {script} proposal --branch task/full-digest"
+        create = (
+            f"python3 {script} create --proposal-file {proposal} "
+            f"--proposal-sha256 {digest}"
+        )
+        self.run_mode(
+            "post-tool",
+            "codex",
+            {
+                "tool_name": "Bash",
+                "tool_input": {"command": proposal_command},
+                "tool_output": f"proposal 파일: /tmp/{digest}.json\nproposal SHA-256: {digest}\n",
+            },
+            environment,
+        )
+        self.run_mode(
+            "post-tool",
+            "codex",
+            {"tool_name": "Skill", "tool_input": {"skill": "git-branch-strategy"}},
+            environment,
+        )
+        self.run_mode(
+            "post-tool",
+            "codex",
+            {"tool_name": "Read", "tool_input": {"file_path": "src/App.tsx"}},
+            environment,
+        )
+        self.run_mode("user-prompt", "codex", {"prompt": "승인"}, environment)
+
+        allowed = self.run_mode(
+            "pre-tool",
+            "codex",
+            {"tool_name": "Bash", "tool_input": {"command": create}},
+            environment,
+        )
+        mismatch = self.run_mode(
+            "pre-tool",
+            "codex",
+            {
+                "tool_name": "Bash",
+                "tool_input": {
+                    "command": create.replace(digest, "b" * 64),
+                },
+            },
+            environment,
+        )
+
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertEqual(allowed.stdout, "")
+        mismatch_reason = json.loads(mismatch.stdout)["hookSpecificOutput"][
+            "permissionDecisionReason"
+        ]
+        self.assertIn("현재 proposal SHA-256", mismatch_reason)
+
+    def test_preserve_requires_handoff_and_contributor_cannot_finish(self) -> None:
+        bundle = self.root / "central-bundle"
+        script = (
+            bundle
+            / "policy/.agent-policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py"
+        )
+        script.parent.mkdir(parents=True)
+        script.write_text("# trusted test fixture\n", encoding="utf-8")
+        environment = {
+            "ASAN_AGENT_POLICY_MODE": "inject",
+            "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+            "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(bundle),
+            "ASAN_ARTIFACT_RESPONSIBILITY": "contributor",
+            "ASAN_SESSION_DIR": ".claude/logs/sessions/2026-09-03-preserved",
+        }
+        preserve = f"python3 {script} preserve --reason handoff"
+        missing = self.run_mode(
+            "pre-tool",
+            "claude",
+            {"tool_name": "Bash", "tool_input": {"command": preserve}},
+            environment,
+        )
+        self.assertEqual(missing.returncode, 2)
+        self.assertIn("handoff", missing.stderr)
+
+        relative = ".claude/logs/sessions/2026-09-03-preserved/handoff.md"
+        binding = self.run_mode(
+            "pre-tool",
+            "claude",
+            {"tool_name": "Write", "tool_input": {"file_path": relative}},
+            environment,
+        )
+        self.assertEqual(binding.returncode, 0, binding.stderr)
+        handoff = self.root / relative
+        handoff.parent.mkdir(parents=True)
+        handoff.write_text("다음 세션이 재개할 상태와 검증 결과를 기록했습니다.\n", encoding="utf-8")
+        self.record_common_readiness("claude")
+        allowed = self.run_mode(
+            "pre-tool",
+            "claude",
+            {"tool_name": "Bash", "tool_input": {"command": preserve}},
+            environment,
+        )
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+
+        finish_proposal = f"python3 {script} finish-proposal --verify-command 'npm run test'"
+        contributor = self.run_mode(
+            "pre-tool",
+            "claude",
+            {"tool_name": "Bash", "tool_input": {"command": finish_proposal}},
+            environment,
+        )
+        self.assertEqual(contributor.returncode, 2)
+        self.assertIn("owner assignment", contributor.stderr)
+
+    def test_bash_artifact_write_is_rejected_before_session_stop(self) -> None:
+        command = (
+            "cat <<'EOF' > .claude/logs/sessions/2026-09-02-task/handoff.md\n"
+            "handoff content\nEOF"
+        )
+
+        result = self.run_guard("claude", "Bash", {"command": command})
+
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("구조화된 파일 쓰기 도구", result.stderr)
+        self.assertIn("귀속", result.stderr)
+
+    def test_git_cannot_stage_another_host_or_session_artifact(self) -> None:
+        current = ".claude/logs/sessions/2026-09-03-current/plan.md"
+        self.assertEqual(
+            self.run_guard("claude", "Write", {"file_path": current}).returncode,
+            0,
+        )
+        targets = (
+            ".codex/logs/sessions/2026-09-03-foreign/plan.md",
+            ".claude/logs/sessions/2026-09-03-other/plan.md",
+        )
+        for relative in targets:
+            target = self.root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("다른 소유자의 산출물입니다.\n", encoding="utf-8")
+            with self.subTest(relative=relative):
+                denied = self.run_guard(
+                    "claude",
+                    "Bash",
+                    {"command": f"git add -- {relative}"},
+                )
+                self.assertEqual(denied.returncode, 2)
+                self.assertIn("산출물", denied.stderr)
+            target.unlink()
+
+    def test_stop_detects_clean_committed_changes_since_the_approved_parent(self) -> None:
+        subprocess.run(["git", "branch", "-M", "sy-main"], cwd=self.root, check=True)
+        subprocess.run(["git", "add", ".agent-policy/manifest.json"], cwd=self.root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "-qm",
+                "baseline",
+            ],
+            cwd=self.root,
+            check=True,
+        )
+        parent_head = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        subprocess.run(["git", "switch", "-qc", "task/committed-change"], cwd=self.root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "config",
+                "branch.task/committed-change.asan-parent-head",
+                parent_head,
+            ],
+            cwd=self.root,
+            check=True,
+        )
+        source = self.root / "src/committed.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const committed = true\n", encoding="utf-8")
+        subprocess.run(["git", "add", "src/committed.ts"], cwd=self.root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "-qm",
+                "committed change",
+            ],
+            cwd=self.root,
+            check=True,
+        )
+
+        self.assertEqual(
+            subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=self.root,
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout,
+            "",
+        )
+        result = self.run_mode("documentation-stop", "codex", {})
+        self.assertEqual(json.loads(result.stdout)["decision"], "block")
+        self.assertIn("산출물 디렉터리", json.loads(result.stdout)["reason"])
+
+    def test_active_session_directory_cannot_change_before_close(self) -> None:
+        first = ".claude/logs/sessions/2026-09-01-first/handoff.md"
+        second = ".claude/logs/sessions/2026-09-02-second/handoff.md"
+        self.assertEqual(
+            self.run_guard("claude", "Write", {"file_path": first}).returncode,
+            0,
+        )
+
+        changed = self.run_guard("claude", "Write", {"file_path": second})
+
+        self.assertEqual(changed.returncode, 2)
+        self.assertIn("CLOSED", changed.stderr)
+        self.assertIn("별도 worktree와 세션", changed.stderr)
+
+    def test_claude_stop_requires_bound_handoff_for_application_changes(self) -> None:
+        source = self.root / "src/App.tsx"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const App = () => null\n", encoding="utf-8")
+
+        missing = self.run_mode("documentation-stop", "claude", {})
+        self.assertEqual(json.loads(missing.stdout)["decision"], "block")
+
+        relative = ".claude/logs/sessions/2026-08-31-task/handoff.md"
+        binding = self.run_guard("claude", "Write", {"file_path": relative})
+        self.assertEqual(binding.returncode, 0, binding.stderr)
+        handoff = self.root / relative
+        handoff.parent.mkdir(parents=True)
+        handoff.write_text("구현 결과와 후속 연결 계약을 기록합니다.\n", encoding="utf-8")
+
+        complete = self.run_mode("documentation-stop", "claude", {})
+        self.assertEqual(json.loads(complete.stdout), {})
+
+    def test_v2_full_artifact_mode_does_not_accept_handoff_only(self) -> None:
+        branch = subprocess.run(
+            ["git", "branch", "--show-current"],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        subprocess.run(
+            ["git", "config", f"branch.{branch}.asan-contract-version", "2"],
+            cwd=self.root,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", f"branch.{branch}.asan-artifact-mode", "full"],
+            cwd=self.root,
+            check=True,
+        )
+        source = self.root / "src/App.tsx"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const App = () => null\n", encoding="utf-8")
+        relative = ".codex/logs/sessions/2026-09-02-full/handoff.md"
+        self.assertEqual(self.run_guard("codex", "Write", {"file_path": relative}).returncode, 0)
+        session = (self.root / relative).parent
+        session.mkdir(parents=True)
+        (session / "handoff.md").write_text("부분 인계 내용이 충분히 있습니다.\n", encoding="utf-8")
+
+        handoff_only = self.run_mode("documentation-stop", "codex", {})
+
+        self.assertIn("필수 산출물 8종", json.loads(handoff_only.stdout)["reason"])
+        self.write_complete_artifacts(session)
+        complete = self.run_mode("documentation-stop", "codex", {})
+        self.assertEqual(json.loads(complete.stdout), {})
+
+    def test_closed_merged_task_can_rebind_same_session_to_next_task(self) -> None:
+        subprocess.run(["git", "checkout", "-qb", "sy-main"], cwd=self.root, check=True)
+        subprocess.run(["git", "add", ".agent-policy/manifest.json"], cwd=self.root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "baseline",
+            ],
+            cwd=self.root,
+            check=True,
+        )
+        rendered = render_project(load_project("user-ui"))
+        bundle = self.root.parent / f"runtime-{self.session_id}"
+        runtime = bundle / ".agent-policy/runtime"
+        runtime.mkdir(parents=True)
+        runtime_guard = runtime / "managed_policy_guard.py"
+        runtime_guard.write_bytes(rendered[".agent-policy/runtime/managed_policy_guard.py"])
+        branch_source = rendered[".agent-policy/runtime/branch_guard.py"]
+        (runtime / "branch_guard.py").write_bytes(branch_source)
+        contract = bundle / ".agent-policy/common/contracts/runtime-policy.json"
+        contract.parent.mkdir(parents=True)
+        contract.write_bytes(rendered[".agent-policy/common/contracts/runtime-policy.json"])
+        branch_guard = ModuleType("test_branch_guard")
+        branch_guard.__file__ = str(runtime / "branch_guard.py")
+        exec(compile(branch_source, branch_guard.__file__, "exec"), branch_guard.__dict__)
+
+        def configure(branch: str, parent: str) -> None:
+            parent_head = branch_guard.head(self.root, parent)
+            roles = ("documentation", "logic")
+            proposal = branch_guard.proposal_id(
+                branch,
+                parent,
+                parent_head,
+                parent,
+                "",
+                roles,
+                "claude",
+                "full",
+            )
+            for field, value in {
+                "contract-version": "2",
+                "purpose": branch,
+                "parent": parent,
+                "parent-head": parent_head,
+                "merge-target": parent,
+                "proposal": proposal,
+                "git-integrator": "claude",
+                "artifact-mode": "full",
+            }.items():
+                subprocess.run(
+                    ["git", "config", f"branch.{branch}.asan-{field}", value],
+                    cwd=self.root,
+                    check=True,
+                )
+            for role in roles:
+                subprocess.run(
+                    ["git", "config", "--add", f"branch.{branch}.asan-role", role],
+                    cwd=self.root,
+                    check=True,
+                )
+            subprocess.run(
+                ["git", "config", "--add", f"branch.{branch}.asan-scope", "src"],
+                cwd=self.root,
+                check=True,
+            )
+
+        def run_rendered(file_path: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["python3", "-I", str(runtime_guard), "pre-tool", "claude"],
+                input=json.dumps(
+                    {
+                        "cwd": str(self.root),
+                        "session_id": self.session_id,
+                        "tool_name": "Write",
+                        "tool_input": {"file_path": file_path},
+                    }
+                ),
+                text=True,
+                capture_output=True,
+                cwd=self.root,
+                check=False,
+            )
+
+        subprocess.run(["git", "switch", "-qc", "task/first"], cwd=self.root, check=True)
+        configure("task/first", "sy-main")
+        first_relative = ".claude/logs/sessions/2026-09-02-first/plan.md"
+        first_binding = run_rendered(first_relative)
+        self.assertEqual(first_binding.returncode, 0, first_binding.stderr)
+        first_session = (self.root / first_relative).parent
+        first_session.mkdir(parents=True)
+        self.write_complete_artifacts(first_session)
+        source = self.root / "src/first.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const first = true\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=self.root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "-qm",
+                "first",
+            ],
+            cwd=self.root,
+            check=True,
+        )
+        subprocess.run(["git", "switch", "-q", "sy-main"], cwd=self.root, check=True)
+        subprocess.run(["git", "merge", "-q", "--ff-only", "task/first"], cwd=self.root, check=True)
+        subprocess.run(["git", "switch", "-qc", "task/second"], cwd=self.root, check=True)
+        configure("task/second", "sy-main")
+
+        second = run_rendered(".claude/logs/sessions/2026-09-02-second/plan.md")
+
+        self.assertEqual(second.returncode, 0, second.stderr)

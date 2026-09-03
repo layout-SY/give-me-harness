@@ -37,6 +37,7 @@ class SyncTests(unittest.TestCase):
                 "build": "npm run build",
                 "lint": "npm run lint",
                 "test": "npm run test",
+                "preview": "npm run preview",
             },
         )
 
@@ -84,33 +85,51 @@ class SyncTests(unittest.TestCase):
         run.return_value.stdout = "?? logs/projects/user-ui/logic/sessions/task/plan.md\n"
         self.assertTrue(central_is_clean())
 
-        run.return_value.stdout = " M policy/common/AGENTS.template.md\n"
+        run.return_value.stdout = " M policy/common/AGENT_POLICY.template.md\n"
         self.assertFalse(central_is_clean())
 
         run.return_value.stdout = "R  policy/old.md -> logs/old.md\n"
         self.assertFalse(central_is_clean())
 
     @patch("agent_policy.core.central_is_clean", return_value=True)
-    def test_rendered_consumer_guard_tests_pass(self, _clean: object) -> None:
+    def test_rendered_consumer_common_guard_blocks_never_agent_git(self, _clean: object) -> None:
         sync_project(self.project)
         completed = subprocess.run(
-            ["python3", "-I", ".codex/hooks/test_governance_hooks.py"],
+            [
+                "python3",
+                "-I",
+                ".agent-policy/runtime/managed_policy_guard.py",
+                "pre-tool",
+                "codex",
+            ],
+            input=json.dumps(
+                {
+                    "cwd": str(self.root),
+                    "session_id": "session-test",
+                    "tool_name": "Bash",
+                    "tool_input": {"command": "git -C . reset --hard"},
+                }
+            ),
             cwd=self.root,
             capture_output=True,
             text=True,
             check=False,
         )
-        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        output = json.loads(completed.stdout)["hookSpecificOutput"]
+        self.assertEqual(output["permissionDecision"], "deny")
+        self.assertIn("사용자 전용", output["permissionDecisionReason"])
 
     @patch("agent_policy.core.central_is_clean", return_value=True)
-    def test_rendered_codex_baseline_hook_bootstrap_executes(self, _clean: object) -> None:
+    def test_rendered_codex_common_hook_registration_executes(self, _clean: object) -> None:
         sync_project(self.project)
         hooks = json.loads((self.root / ".codex/hooks.json").read_text(encoding="utf-8"))["hooks"]
         command = next(
             item["hooks"][0]["command"]
             for item in hooks["UserPromptSubmit"]
-            if "HOOK_SHA256" in item["hooks"][0]["command"]
+            if "managed_policy_guard.py" in item["hooks"][0]["command"]
         )
+        self.assertNotIn("HOOK_SHA256", command)
         environment = os.environ.copy()
         environment["TMPDIR"] = str(self.root)
         completed = subprocess.run(
@@ -118,10 +137,8 @@ class SyncTests(unittest.TestCase):
             input=json.dumps(
                 {
                     "session_id": "session-test",
-                    "task_id": "task-test",
                     "cwd": str(self.root),
-                    "hook_event_name": "UserPromptSubmit",
-                    "prompt": "Proceed",
+                    "prompt": "일반 사용자 요청",
                 }
             ),
             cwd=self.root,
@@ -132,4 +149,4 @@ class SyncTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
-        self.assertEqual(json.loads(completed.stdout), {})
+        self.assertEqual(completed.stdout, "")

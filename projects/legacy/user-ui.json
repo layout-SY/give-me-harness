@@ -1,7 +1,7 @@
 {
   "version": 1,
   "project_id": "user-ui",
-  "captured_on": "2026-08-26",
+  "captured_on": "2026-08-31",
   "entries": [
     {
       "path": ".agents/skills/reference/components/COMMON_COMPONENTS.md",
@@ -17,7 +17,7 @@
     },
     {
       "path": ".claude/hooks/harness_core.py",
-      "sha256": "3a30f9158a46b40e412f5d50ec65ab4077b250914f7d4ea76c488cd275638bdd"
+      "sha256": "16c7e25f65ee178a67864c2902f14c3a65672e039f27ea0e23b9cc5cf86e553a"
     },
     {
       "path": ".claude/hooks/harness_hook.py",
@@ -29,7 +29,7 @@
     },
     {
       "path": ".codex/hooks/harness_core.py",
-      "sha256": "3a30f9158a46b40e412f5d50ec65ab4077b250914f7d4ea76c488cd275638bdd"
+      "sha256": "16c7e25f65ee178a67864c2902f14c3a65672e039f27ea0e23b9cc5cf86e553a"
     },
     {
       "path": ".codex/hooks/harness_hook.py",
@@ -41,11 +41,11 @@
     },
     {
       "path": ".opencode/plugins/harness.js",
-      "sha256": "eb28a34318fe824122a96221fbbdfb304f0238a3d609f3221bcb658b55918184"
+      "sha256": "9ed72e2e004d1f293ab19ef8c91d757d1c0e515a9fa7ed0524e11bb6fe05dc11"
     },
     {
       "path": ".opencode/plugins/harness_core.py",
-      "sha256": "3a30f9158a46b40e412f5d50ec65ab4077b250914f7d4ea76c488cd275638bdd"
+      "sha256": "16c7e25f65ee178a67864c2902f14c3a65672e039f27ea0e23b9cc5cf86e553a"
     },
     {
       "path": ".opencode/plugins/harness_hook.py",

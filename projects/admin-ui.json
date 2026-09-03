@@ -2,10 +2,12 @@
   "id": "admin-ui",
   "name": "asan-metaverse-admin-ui",
   "path": "/Users/okand/SynologyDrive/asan-metaverse-admin-ui",
+  "base_branch": "sy-main",
   "commands": {
     "dev": "npm run dev",
     "build": "npm run build",
     "lint": "npm run lint",
-    "test": "npm run test"
+    "test": "npm run test",
+    "preview": "npm run preview"
   }
 }
