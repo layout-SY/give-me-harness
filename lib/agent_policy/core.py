@@ -214,6 +214,12 @@ def add_tree(
         rendered[relative] = render_content(source.read_bytes(), project)
 
 
+def project_overlay_root(project: ProjectConfig) -> Path:
+    """프로젝트 전용 자산 카탈로그의 중앙 원본 경로를 반환한다."""
+
+    return CENTRAL_ROOT / "projects/overlay" / project.id
+
+
 def hook_command(project: ProjectConfig, mode: str, host: str) -> str:
     """cwd와 무관한 sync runtime 절대 경로로 hook 명령을 렌더한다."""
 
@@ -405,6 +411,10 @@ def render_project(project: ProjectConfig) -> dict[str, bytes]:
         Path(".agent-policy/common/skills"),
         project,
     )
+    overlay_skills = project_overlay_root(project) / "skills"
+    if overlay_skills.is_dir():
+        add_tree(rendered, overlay_skills, Path(".agents/skills"), project)
+        add_tree(rendered, overlay_skills, Path(".agent-policy/common/skills"), project)
     add_tree(
         rendered,
         CENTRAL_ROOT / "policy/common/contracts",
@@ -900,6 +910,25 @@ def audit_source_contract() -> tuple[str, ...]:
             for phrase in forbidden_role_phrases:
                 if phrase.casefold() in text.casefold():
                     issues.append(f"fixed host-role phrase {phrase}: {path.relative_to(CENTRAL_ROOT)}")
+
+    for project_id in project_ids():
+        project = load_project(project_id)
+        overlay_root = project_overlay_root(project)
+        if overlay_root.is_dir():
+            for path in sorted(overlay_root.rglob("*.md")):
+                relative = path.relative_to(CENTRAL_ROOT)
+                text = path.read_text(encoding="utf-8")
+                if "synthoria" in text.casefold():
+                    issues.append(f"{project_id}: overlay keeps a stale project name: {relative}")
+                # overlay가 주장하는 소비자 경로는 실제로 존재해야 한다.
+                # 이 검사가 V1 카탈로그를 낡게 만든 원인을 재발시키지 않는다.
+                if not project.path.is_dir():
+                    continue
+                for reference in sorted(set(re.findall(r"`(src/[A-Za-z0-9/_.\-]+)`", text))):
+                    if not (project.path / reference).exists():
+                        issues.append(
+                            f"{project_id}: overlay references a missing path: {relative} -> {reference}"
+                        )
 
     for project_id in project_ids():
         rendered = render_project(load_project(project_id))

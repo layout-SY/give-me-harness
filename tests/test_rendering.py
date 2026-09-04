@@ -286,6 +286,36 @@ class RenderingTests(unittest.TestCase):
             rendered["CLAUDE.md"],
         )
 
+    def test_project_overlay_renders_only_for_its_own_project(self) -> None:
+        admin = render_project(load_project("admin-ui"))
+        user = render_project(load_project("user-ui"))
+        entry = "skills/reference/components/button/SKILL.md"
+        for root in (".agents/", ".agent-policy/common/"):
+            self.assertIn(f"{root}{entry}", admin)
+            self.assertNotIn(f"{root}{entry}", user)
+
+    def test_project_overlay_is_rendered_with_project_metadata(self) -> None:
+        admin = render_project(load_project("admin-ui"))
+        overlay_paths = tuple(
+            path
+            for path in admin
+            if path.startswith(".agents/skills/reference/")
+            and path.count("/") > 4
+        )
+        self.assertTrue(overlay_paths)
+        for path in overlay_paths:
+            content = admin[path]
+            self.assertNotIn(b"{{", content, path)
+            self.assertNotIn(b"synthoria", content.lower(), path)
+            self.assertIn(b"asan-metaverse-admin-ui", content, path)
+
+    def test_project_overlay_never_shadows_the_common_catalog_index(self) -> None:
+        common_root = CENTRAL_ROOT / "policy/common/skills"
+        overlay_root = CENTRAL_ROOT / "projects/overlay/admin-ui/skills"
+        common = {path.relative_to(common_root) for path in common_root.rglob("*.md")}
+        overlay = {path.relative_to(overlay_root) for path in overlay_root.rglob("*.md")}
+        self.assertEqual(common & overlay, set())
+
     def test_source_digest_includes_project_metadata(self) -> None:
         self.assertNotEqual(
             source_digest(load_project("user-ui")),
