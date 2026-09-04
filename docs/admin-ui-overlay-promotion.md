@@ -106,13 +106,28 @@ DAO·activity 도메인 자체가 존재하지 않는다. 현재 admin-ui의 도
 
 `src/features/select-users/ui/select-users.tsx`로 파일은 존재하나 **pub-sub 배선이 주석 처리되어 현재 열 수 없다.** `src` 어디에서도 import하지 않는다. 열림 경로를 되살리는 것은 보충이 아닌 기능 복구 결정이므로 사용자 판단이 필요하다.
 
-## 5. 승격하지 않은 신규 자산
+## 5. 신규 작성한 12개
 
-현재 `src/shared/ui`에 있으나 V1 카탈로그에 없어 이번 승격 범위 밖인 자산이다. 후속 작성 대상이다.
+V1 카탈로그에 없던 `src/shared/ui` 자산이다. 실제 코드를 읽어 새로 작성했다.
 
-`author`, `category`, `choice-chip-group`, `date-range-picker`, `definition-list`, `dialog`, `form`, `kpi-card`, `ratio-bar`, `section-card`, `status`, `status-transition-field`, `timeline-list`
+| 문서 | 기록한 핵심 계약 |
+| --- | --- |
+| `components/dialog` | `useDialog().alert/confirm`. `confirm`은 store에 resolver를 저장해 `Promise<boolean>`을 반환한다. `Dialog` 컴포넌트가 앱에 마운트되어 있어야 하며, 제거하면 `useApi`의 오류 표시까지 죽는다. 애니메이션 이름이 CSS 계약이다 |
+| `components/date-range-picker` | HeroUI·react-aria·`@internationalized/date` import를 이 파일에만 두는 anti-corruption layer. `Group` 래퍼를 `div`로 바꾸면 팝오버 앵커가 사라지고, `RangeCalendar.Cell`에 children을 주면 날짜 숫자가 사라진다 |
+| `components/status` | 의미 색 → HeroUI 팔레트 2단계 매핑. 상태 코드 30여 개의 기본 색과 미등록 코드가 `neutral`로 떨어지는 동작 |
+| `components/category` | 같은 2단계 매핑이지만 빈 값에서 `null`을 반환한다(`StatusBadge`는 `-`). `purple`과 `blue`가 같은 Chip color를 쓴다 |
+| `components/author` | 결측 상태 네 갈래 분기. `getAuthorAvatarColorByAuthorId`로 사용자별 색이 고정된다 |
+| `components/kpi-card` | `value`가 `ReactNode`이며 포맷은 소비처 책임. tone 이름이 `StatusBadge`와 겹치지만 다른 타입이다 |
+| `components/definition-list` | `inline/rows/stack/grid` layout. `columns`·`labelWidth`는 `grid`·`rows`에서만 유효하다 |
+| `components/section-card` | 헤더가 `title` 또는 `actions`가 있을 때만 렌더링된다. `description`만 넘기면 보이지 않는다 |
+| `components/ratio-bar` | `percent` 합 정규화는 소비처 책임. 세그먼트는 `aria-hidden`이고 범례가 의미를 전달한다. 키가 `label`이라 중복 시 충돌한다 |
+| `components/choice-chip-group` | 단일 선택이며 **해제가 없다**(`dropdown`과 다름). `data-selected`와 `aria-pressed` 이중 표기 |
+| `components/timeline-list` | 빈 상태에서 `NoResults`가 아니라 `cp-caption` 문구를 렌더링한다. 날짜 포맷·정렬은 소비처 책임 |
+| `components/status-transition-field` | `dropdown`을 감싸 value ↔ index 변환을 흡수한다. `dropdown`의 해제(-1)가 여기서는 선택 취소(`null`)로 이어진다 |
 
-`dialog`는 `useDialog`로 다수 화면과 `use-api`가 의존하므로 우선순위가 높다.
+`src/shared/ui/form`은 제외했다. `index.ts`가 `export {}`뿐인 **미구현 placeholder**다. react-hook-form 설치 후 구현 예정이라는 주석만 있어 설명할 자산이 없다.
+
+이로써 overlay 문서는 35개, `admin-ui` managed 파일은 253개가 됐다. 검증 대상 참조 경로는 96개이며 전부 실재한다.
 
 ## 6. 렌더링과 재발 방지
 
