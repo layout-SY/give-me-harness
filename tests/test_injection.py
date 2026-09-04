@@ -162,6 +162,7 @@ class InjectionTests(unittest.TestCase):
         self.assertNotIn('join(directory, ".agent-policy/runtime', plugin)
         self.assertEqual(launch.environment["OPENCODE_CONFIG_DIR"], str(home))
         self.assertEqual(launch.environment["OPENCODE_DISABLE_PROJECT_CONFIG"], "1")
+        self.assertEqual(launch.environment["OPENCODE_DISABLE_EXTERNAL_SKILLS"], "1")
         self.assertEqual(launch.command[-2:], ("--model", "provider/model"))
 
     def test_claude_uses_plugin_settings_and_injected_prompt(self) -> None:
@@ -270,6 +271,33 @@ class InjectionTests(unittest.TestCase):
         self.assertEqual(second.bundle_root, first.bundle_root)
         self.assertIn("중앙 정책 inject 실행 컨텍스트", prompt.read_text(encoding="utf-8"))
         self.assertEqual(self.consumer_snapshot(), before)
+
+    def test_opencode_runtime_dependencies_do_not_invalidate_bundle(self) -> None:
+        first = self.prepare("opencode", role="review")
+        home = first.bundle_root / "opencode-home"
+        (home / ".gitignore").write_text("node_modules\n", encoding="utf-8")
+        (home / "package.json").write_text('{"dependencies": {}}\n', encoding="utf-8")
+        (home / "package-lock.json").write_text('{"lockfileVersion": 3}\n', encoding="utf-8")
+        dependency = home / "node_modules/@opencode-ai/plugin/index.js"
+        dependency.parent.mkdir(parents=True)
+        dependency.write_text("export default {}\n", encoding="utf-8")
+        executable = home / "node_modules/.bin/opencode-plugin"
+        executable.parent.mkdir(parents=True)
+        executable.symlink_to(dependency)
+
+        second = self.prepare("opencode", role="review")
+
+        self.assertEqual(second.bundle_root, first.bundle_root)
+        self.assertTrue(dependency.is_file())
+        self.assertTrue(executable.is_symlink())
+
+        unexpected = home / "unexpected.txt"
+        unexpected.write_text("not managed by OpenCode\n", encoding="utf-8")
+        third = self.prepare("opencode", role="review")
+
+        self.assertEqual(third.bundle_root, first.bundle_root)
+        self.assertFalse(dependency.exists())
+        self.assertFalse(unexpected.exists())
 
     def test_role_profiles_create_distinct_scoped_bundles(self) -> None:
         logic = self.prepare("claude", role="logic")

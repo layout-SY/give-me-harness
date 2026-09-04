@@ -168,6 +168,9 @@ class RenderingTests(unittest.TestCase):
         self.assertIn('"collect-logs"', plugin)
         self.assertIn('"opencode"', plugin)
         self.assertIn('const PROJECT_ID = "user-ui"', plugin)
+        self.assertIn("client.app", plugin)
+        self.assertIn("client.tui.showToast", plugin)
+        self.assertNotIn("process.stderr.write", plugin)
 
         config = json.loads(rendered["opencode.json"])
         bash = config["permission"]["bash"]
@@ -195,6 +198,23 @@ class RenderingTests(unittest.TestCase):
         self.assertIn("역할을 제안".encode(), planner)
         self.assertIn("모든 산출물은 한국어".encode(), rendered[".codex/agents/planner.toml"])
         self.assertIn("장기".encode(), evaluator)
+
+    def test_request_clarity_gate_is_rendered_for_every_project(self) -> None:
+        for project_id in ("user-ui", "admin-ui"):
+            with self.subTest(project=project_id):
+                rendered = render_project(load_project(project_id))
+                common = rendered[".agent-policy/common/AGENT_POLICY.md"]
+                routing = rendered[
+                    ".agent-policy/common/skills/policy/task-role-routing/SKILL.md"
+                ]
+
+                self.assertEqual(rendered["AGENTS.md"], common)
+                self.assertIn("사용자 요청 명확성 게이트".encode(), common)
+                self.assertIn("육하원칙".encode(), common)
+                self.assertIn(b"can_proceed: false", common)
+                self.assertIn("다음 파이프라인 호출은 시작하지 않는다".encode(), routing)
+                self.assertIn(b"needs_clarification", routing)
+                self.assertIn("사용자 답변이 올 때까지".encode(), routing)
 
     def test_policy_and_strategy_docs_have_no_fixed_host_role_assignment(self) -> None:
         forbidden = (

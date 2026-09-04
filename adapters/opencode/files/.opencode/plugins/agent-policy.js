@@ -60,10 +60,42 @@ const collectLogs = () =>
     },
   )
 
-export const AgentPolicyPlugin = async ({ directory }) => {
+const logDiagnostic = (client, directory, level, message) =>
+  client.app
+    .log({
+      body: {
+        service: "agent-policy",
+        level,
+        message,
+      },
+      query: { directory },
+    })
+    .catch(() => undefined)
+
+const showNotification = async (client, directory, title, message, variant = "warning") => {
+  await logDiagnostic(client, directory, variant === "error" ? "error" : "warn", message)
+  try {
+    await client.tui.showToast({
+      body: {
+        title,
+        message,
+        variant,
+      },
+      query: { directory },
+    })
+  } catch {
+    // The structured server log above remains available when no TUI is attached.
+  }
+}
+
+export const AgentPolicyPlugin = async ({ client, directory }) => {
   const startup = evaluate(directory, "session-start")
-  if (startup.stdout?.trim()) process.stderr.write(`${startup.stdout.trim()}\n`)
-  if (startup.stderr?.trim()) process.stderr.write(`${startup.stderr.trim()}\n`)
+  if (startup.stdout?.trim()) {
+    void logDiagnostic(client, directory, "warn", startup.stdout.trim())
+  }
+  if (startup.stderr?.trim()) {
+    void logDiagnostic(client, directory, "error", startup.stderr.trim())
+  }
 
   return {
     "chat.message": async (input, output) => {
@@ -93,11 +125,17 @@ export const AgentPolicyPlugin = async ({ directory }) => {
         try {
           const verdict = JSON.parse(output)
           if (verdict.decision === "block") {
-            process.stderr.write(`산출물 확인 필요: ${verdict.reason}\n`)
+            await showNotification(client, directory, "산출물 확인 필요", verdict.reason)
             return
           }
         } catch {
-          process.stderr.write(`산출물 판정 결과를 해석할 수 없습니다: ${output}\n`)
+          await showNotification(
+            client,
+            directory,
+            "산출물 판정 오류",
+            `산출물 판정 결과를 해석할 수 없습니다: ${output}`,
+            "error",
+          )
           return
         }
       }
@@ -105,7 +143,13 @@ export const AgentPolicyPlugin = async ({ directory }) => {
       const result = collectLogs()
       if (result.status === 0) return
       const message = result.stderr?.trim() || result.error?.message || "알 수 없는 오류"
-      process.stderr.write(`중앙 필수 산출물 로그 수집 실패: ${message}\n`)
+      await showNotification(
+        client,
+        directory,
+        "중앙 필수 산출물 로그 수집 실패",
+        message,
+        "error",
+      )
     },
     "tool.execute.before": async (input, output) => {
       if (!POLICY_TOOLS.has(String(input.tool).toLowerCase())) return

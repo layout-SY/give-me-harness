@@ -45,6 +45,15 @@ INJECT_TASK_ENV: Final = "ASAN_AGENT_POLICY_TASK"
 ARTIFACT_RESPONSIBILITY_ENV: Final = "ASAN_ARTIFACT_RESPONSIBILITY"
 BUNDLE_MANIFEST: Final = "manifest.json"
 CODEX_STATE_MANIFEST: Final = ".asan-agent-policy-inject.json"
+OPENCODE_RUNTIME_FILES: Final[frozenset[str]] = frozenset(
+    {
+        "opencode-home/.gitignore",
+        "opencode-home/bun.lock",
+        "opencode-home/package-lock.json",
+        "opencode-home/package.json",
+    }
+)
+OPENCODE_NODE_MODULES: Final = "opencode-home/node_modules"
 
 
 @dataclass(frozen=True)
@@ -385,11 +394,15 @@ def _bundle_is_valid(bundle_root: Path, digest: str) -> bool:
         return False
     actual_files: set[str] = set()
     for path in bundle_root.rglob("*"):
+        relative = path.relative_to(bundle_root).as_posix()
+        if relative in OPENCODE_RUNTIME_FILES or relative.startswith(
+            f"{OPENCODE_NODE_MODULES}/"
+        ):
+            continue
         if path.is_symlink():
             return False
         if not path.is_file():
             continue
-        relative = path.relative_to(bundle_root).as_posix()
         if relative == BUNDLE_MANIFEST:
             continue
         actual_files.add(relative)
@@ -755,6 +768,7 @@ def prepare_injection(
     elif host == "opencode":
         environment["OPENCODE_CONFIG_DIR"] = str(bundle_root / "opencode-home")
         environment["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"
+        environment["OPENCODE_DISABLE_EXTERNAL_SKILLS"] = "1"
 
     prompt_path = bundle_root / "system-prompt.md"
     prompt = prompt_path.read_text(encoding="utf-8")
