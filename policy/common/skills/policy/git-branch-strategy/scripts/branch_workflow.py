@@ -419,6 +419,12 @@ def proposal(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> in
             f"  dirty worktree: {rendered}\n"
             "변경 소유자가 parent 작업을 commit하거나 handoff로 보존한 뒤 다시 proposal 하세요."
         )
+    if parent != str(guard.BASE_BRANCH) and guard.task_state(root, parent) != "ACTIVE":
+        raise SystemExit(
+            "ACTIVE 상태의 task parent에서만 child branch를 제안할 수 있습니다.\n"
+            f"  parent: {parent}\n"
+            f"  현재 상태: {guard.task_state(root, parent) or '없음'}"
+        )
     merge_target = parent
     contract = guard.canonical_contract(
         arguments.branch,
@@ -549,6 +555,12 @@ def create(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
     dirty_parent_worktrees = dirty_branch_worktrees(root, parent)
     if parent != str(guard.BASE_BRANCH) and dirty_parent_worktrees:
         raise SystemExit("승인 후 task parent worktree가 dirty 상태가 되어 branch 생성을 중단했습니다.")
+    if parent != str(guard.BASE_BRANCH) and guard.task_state(root, parent) != "ACTIVE":
+        raise SystemExit(
+            "승인 후 task parent가 ACTIVE 상태가 아니어서 child branch 생성을 중단했습니다.\n"
+            f"  parent: {parent}\n"
+            f"  현재 상태: {guard.task_state(root, parent) or '없음'}"
+        )
 
     active_root = root
     if worktree:
@@ -582,9 +594,10 @@ def create(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
         raise SystemExit(f"브랜치는 생성됐지만 계약 검증에 실패했습니다:\n{denial}")
     if worktree:
         print(
-            "격리 worktree가 생성되었습니다. 현재 세션의 활성 task가 이 작업 하나라면 "
+            "격리 worktree가 생성되었습니다. 현재 session assignment의 권한 root 또는 "
+            "그 V3 자손에서 만든 branch라면 "
             f"도구 workdir 또는 git -C 대상으로 이 경로를 사용해 계속 진행하세요: {worktree}\n"
-            "미완료 task를 병행하거나 담당자를 인계할 때만 handoff 후 새 세션을 시작합니다.\n"
+            "권한 계보 밖의 독립 task를 병행하거나 담당자를 인계할 때만 handoff 후 새 세션을 시작합니다.\n"
         )
     print(guard.branch_context(active_root, str(guard.BASE_BRANCH)))
     return 0

@@ -63,7 +63,7 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 
 기본 세션 cwd는 `projects/*.json`의 프로젝트 경로입니다. 승인된 격리 worktree에서 시작할 때는 `--worktree <path> --branch task/<name>`을 사용합니다. `--session-dir`은 선택 host에 맞춰 `.codex/logs/sessions/<task>`, `.claude/logs/sessions/<task>` 또는 `.opencode/logs/sessions/<task>`를 지정합니다. 도구는 지정 경로가 같은 Git 저장소인지와 현재 branch가 일치하는지만 확인하며 branch를 임의 전환하지 않습니다.
 
-격리 worktree 생성이 언제나 새 세션을 뜻하지는 않습니다. 한 세션의 활성 task가 하나인 동안에는 현재 세션이 승인된 worktree를 도구 `workdir` 또는 `git -C` 대상으로 사용해 계속할 수 있습니다. 이전 task가 `CLOSED`이면 같은 세션에서 다음 task로 전환할 수 있고, 미완료 task를 `PRESERVED`로 남겨 다른 task를 병행할 때만 별도 worktree·세션이 필요합니다. sync hook은 실행 cwd가 아니라 `projects/*.json`에 등록된 소비자 기본 checkout의 절대 runtime 경로를 사용합니다.
+격리 worktree 생성이 언제나 새 세션을 뜻하지는 않습니다. 한 세션의 assignment 권한 root에서 승인 생성한 V3 자손 branch는 `asan-parent` 계보를 따라 같은 세션이 도구 `workdir` 또는 `git -C` 대상으로 사용해 계속할 수 있습니다. 권한은 하향으로만 상속되고 각 child의 scope·상태·Git 통합 담당자·worktree는 독립 검증됩니다. 권한 root가 `CLOSED`이면 같은 세션에서 다음 독립 task로 전환할 수 있고, 미완료 task를 `PRESERVED`로 남겨 계보 밖 작업을 병행할 때만 별도 worktree·세션이 필요합니다. sync hook은 실행 cwd가 아니라 `projects/*.json`에 등록된 소비자 기본 checkout의 절대 runtime 경로를 사용합니다.
 
 ## 세션 동작
 

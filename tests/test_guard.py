@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
@@ -184,6 +185,65 @@ Python unittest로 정책 계약을 검증했습니다.
 """,
             encoding="utf-8",
         )
+
+    @staticmethod
+    def configure_v3_branch(
+        root: Path,
+        guard: ModuleType,
+        branch: str,
+        parent: str,
+        *,
+        scopes: tuple[str, ...] = ("src",),
+        integrator: str = "claude",
+    ) -> None:
+        parent_head = guard.head(root, parent)
+        subprocess.run(["git", "branch", branch, parent_head], cwd=root, check=True)
+        roles = ("logic",)
+        purpose = f"{branch} 세션 계보 검증"
+        reason = f"{parent}의 승인된 하위 작업"
+        contract = guard.canonical_contract(
+            branch,
+            purpose,
+            parent,
+            parent_head,
+            parent,
+            scopes,
+            reason,
+            "",
+            roles,
+            integrator,
+        )
+        digest = guard.contract_sha256(contract)
+        for field, value in {
+            "contract-version": "3",
+            "task-id": branch.removeprefix("task/"),
+            "purpose": purpose,
+            "parent": parent,
+            "parent-head": parent_head,
+            "merge-target": parent,
+            "proposal": f"asan-v3:{digest}",
+            "contract-sha256": digest,
+            "reason": reason,
+            "git-integrator": integrator,
+            "state": "ACTIVE",
+        }.items():
+            subprocess.run(
+                ["git", "config", f"branch.{branch}.asan-{field}", value],
+                cwd=root,
+                check=True,
+            )
+        for role in roles:
+            subprocess.run(
+                ["git", "config", "--add", f"branch.{branch}.asan-role", role],
+                cwd=root,
+                check=True,
+            )
+        for scope in scopes:
+            subprocess.run(
+                ["git", "config", "--add", f"branch.{branch}.asan-scope", scope],
+                cwd=root,
+                check=True,
+            )
 
     def test_codex_returns_native_deny_shape(self) -> None:
         result = self.run_guard("codex", "Write", {"file_path": "AGENTS.md"})
@@ -693,8 +753,188 @@ Python unittest로 정책 계약을 검증했습니다.
         active_reason = json.loads(active_task_denied.stdout)["hookSpecificOutput"][
             "permissionDecisionReason"
         ]
-        self.assertIn("CLOSED", active_reason)
+        self.assertIn("권한 root", active_reason)
         self.assertIn("task/current", active_reason)
+
+    def test_parent_assignment_can_create_descendants_but_not_unrelated_tasks(self) -> None:
+        subprocess.run(["git", "branch", "-M", "sy-main"], cwd=self.root, check=True)
+        subprocess.run(["git", "add", ".agent-policy/manifest.json"], cwd=self.root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "-qm",
+                "baseline",
+            ],
+            cwd=self.root,
+            check=True,
+        )
+        runtime_guard = self.rendered_guard()
+        branch_source = (runtime_guard.parent / "branch_guard.py").read_bytes()
+        rendered_branch_guard = ModuleType("descendant_assignment_branch_guard")
+        rendered_branch_guard.__file__ = str(runtime_guard.parent / "branch_guard.py")
+        exec(
+            compile(branch_source, rendered_branch_guard.__file__, "exec"),
+            rendered_branch_guard.__dict__,
+        )
+        parent = "task/meeting-reserve-ui"
+        child = "task/reserve-option-lazy-load"
+        unrelated = "task/unrelated-reserve"
+        self.configure_v3_branch(self.root, rendered_branch_guard, parent, "sy-main")
+        self.configure_v3_branch(
+            self.root,
+            rendered_branch_guard,
+            child,
+            parent,
+            scopes=("src/child",),
+        )
+        self.configure_v3_branch(self.root, rendered_branch_guard, unrelated, "sy-main")
+        subprocess.run(["git", "switch", "-q", child], cwd=self.root, check=True)
+
+        bundle = runtime_guard.parents[2]
+        script = (
+            bundle
+            / "policy/.agent-policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py"
+        )
+        script.parent.mkdir(parents=True)
+        script.write_text("# trusted test fixture\n", encoding="utf-8")
+        proposal = self.root / "proposal.json"
+        command = (
+            f"python3 {script} create --proposal-file {proposal} "
+            f"--proposal-sha256 {'0' * 64}"
+        )
+        environment = {
+            "ASAN_AGENT_POLICY_MODE": "inject",
+            "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+            "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(bundle),
+            "ASAN_AGENT_POLICY_ROLE": "logic",
+            "ASAN_AGENT_POLICY_TASK": parent,
+        }
+
+        def run_create(parent_branch: str) -> subprocess.CompletedProcess[str]:
+            proposal.write_text(
+                json.dumps(
+                    {
+                        "branch": "task/reserve-option-child",
+                        "parent": parent_branch,
+                        "git_integrator": "claude",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            return subprocess.run(
+                ["python3", "-I", str(runtime_guard), "pre-tool", "claude"],
+                input=json.dumps(
+                    {
+                        "cwd": str(self.root),
+                        "session_id": self.session_id,
+                        "tool_name": "Bash",
+                        "tool_input": {"command": command},
+                    }
+                ),
+                text=True,
+                capture_output=True,
+                cwd=self.root,
+                env={**os.environ, **environment},
+                check=False,
+            )
+
+        self.record_common_readiness("claude", "0" * 64)
+        allowed = run_create(child)
+        denied = run_create(unrelated)
+
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertEqual(allowed.stdout, "")
+        self.assertEqual(denied.returncode, 2)
+        self.assertIn("권한 root", denied.stderr)
+        self.assertIn(unrelated, denied.stderr)
+
+        proposal.unlink()
+
+        def run_tool(
+            tool_name: str,
+            tool_input: dict[str, object],
+        ) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["python3", "-I", str(runtime_guard), "pre-tool", "claude"],
+                input=json.dumps(
+                    {
+                        "cwd": str(self.root),
+                        "session_id": self.session_id,
+                        "tool_name": tool_name,
+                        "tool_input": tool_input,
+                    }
+                ),
+                text=True,
+                capture_output=True,
+                cwd=self.root,
+                env={**os.environ, **environment},
+                check=False,
+            )
+
+        source_relative = "src/child/feature.ts"
+        child_write = run_tool("Write", {"file_path": source_relative})
+        self.assertEqual(child_write.returncode, 0, child_write.stderr)
+        repository_identity = rendered_branch_guard.git_common_directory(self.root)
+        assert repository_identity is not None
+        binding_digest = hashlib.sha256(
+            f"{repository_identity}\0claude\0{self.session_id}".encode()
+        ).hexdigest()
+        binding_path = (
+            Path(tempfile.gettempdir())
+            / "asan-agent-policy-session-bindings"
+            / f"{binding_digest}.txt"
+        )
+        child_binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        self.assertEqual(child_binding["task"], parent)
+        self.assertEqual(child_binding["branch"], child)
+        source = self.root / source_relative
+        source.parent.mkdir(parents=True)
+        source.write_text("export const child = true\n", encoding="utf-8")
+
+        artifact_write = run_tool(
+            "Write",
+            {
+                "file_path": (
+                    ".claude/logs/sessions/2026-09-05-meeting-reserve-ui/plan.md"
+                )
+            },
+        )
+        self.assertEqual(artifact_write.returncode, 0, artifact_write.stderr)
+        add = run_tool("Bash", {"command": f"git add -- {source_relative}"})
+        self.assertEqual(add.returncode, 0, add.stderr)
+        outside_child_scope = run_tool(
+            "Write",
+            {"file_path": "src/parent-only.ts"},
+        )
+        self.assertEqual(outside_child_scope.returncode, 2)
+        self.assertIn("승인된 작업 범위 밖", outside_child_scope.stderr)
+
+        subprocess.run(["git", "add", source_relative], cwd=self.root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "-qm",
+                "child change",
+            ],
+            cwd=self.root,
+            check=True,
+        )
+        subprocess.run(["git", "switch", "-q", parent], cwd=self.root, check=True)
+        parent_write = run_tool("Write", {"file_path": "src/parent.ts"})
+        self.assertEqual(parent_write.returncode, 0, parent_write.stderr)
+        parent_binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        self.assertEqual(parent_binding["task"], parent)
+        self.assertEqual(parent_binding["branch"], parent)
 
     def test_proposal_posttool_binds_user_approval_to_full_sha256(self) -> None:
         bundle = self.root / "central-bundle"
@@ -1000,7 +1240,7 @@ Python unittest로 정책 계약을 검증했습니다.
                 {"command": f"git -C {self.root} add -- .agent-policy/manifest.json"},
             )
             self.assertEqual(denied.returncode, 2)
-            self.assertIn("활성 task", denied.stderr)
+            self.assertIn("assignment 권한", denied.stderr)
 
             self.write_complete_artifacts(artifact.parent)
             subprocess.run(["git", "add", "."], cwd=worktree, check=True)

@@ -7,11 +7,12 @@
 ## 1. 가장 먼저 알아둘 원칙
 
 - host는 실행 환경이고 role은 현재 세션의 책임이다. Codex, Claude Code, OpenCode 중 어느 host도 Logic, UI 또는 오케스트레이션을 고정 소유하지 않는다.
-- 한 세션에는 한 시점에 하나의 ACTIVE task만 둔다.
-- 하나의 세션에서 여러 task를 순차적으로 수행할 수 있다. 단, 이전 task가 검증·병합까지 끝나 CLOSED 상태여야 한다.
+- 한 세션에는 assignment 권한 root 하나와 한 시점에 하나의 작업 branch 초점만 둔다.
+- 권한 root나 그 ACTIVE V3 자손에서 승인 생성한 child는 `asan-parent` 계보를 따라 같은 세션이 전이적으로 작업할 수 있다. 이름이 비슷하다는 이유만으로 권한이 생기지는 않는다.
+- parent-root 세션은 root와 승인된 자손 사이에서 초점을 바꿀 수 있지만 child-root 세션은 ancestor·형제 branch를 수정할 수 없다. 계보 밖 독립 task는 이전 권한 root가 검증·병합까지 끝나 CLOSED 상태여야 같은 세션에서 시작할 수 있다.
 - 기준 branch가 dirty이면 기존 변경을 commit, stash, reset 또는 restore하지 않는다. 승인 계약에 격리 worktree를 포함해 별도 index와 작업 폴더를 만든다.
-- 격리 worktree를 만들었다는 이유만으로 새 세션을 열 필요는 없다. 현재 ACTIVE task가 하나라면 기존 세션이 그 worktree를 도구 workdir 또는 git -C 대상으로 사용해 계속할 수 있다.
-- 미완료 task를 PRESERVED로 남겨 놓고 다른 task를 병행하거나, host·role·담당자를 인계할 때는 별도 worktree와 세션을 사용한다.
+- 격리 worktree를 만들었다는 이유만으로 새 세션을 열 필요는 없다. 현재 assignment 권한 계보 안의 branch라면 기존 세션이 그 worktree를 도구 workdir 또는 git -C 대상으로 사용해 계속할 수 있다.
+- 미완료 task를 PRESERVED로 남겨 놓고 계보 밖 독립 task를 병행하거나, host·role·담당자를 인계할 때는 별도 worktree와 세션을 사용한다.
 - 소비자 저장소의 관리 정책 파일은 직접 수정하지 않는다. 중앙 원본을 변경한 뒤 mode에 맞는 재적용 절차를 따른다.
 - Git push, git reset --hard, git clean, git update-ref는 승인으로 해제되지 않는 사용자 전용 명령이다.
 
@@ -347,7 +348,7 @@ python3 <absolute-branch-workflow.py> proposal \
 
 ### 기존 세션에서 계속하는 방법
 
-격리 worktree를 만들었더라도 현재 세션의 ACTIVE task가 하나라면 새 세션을 만들 필요가 없다.
+격리 worktree를 만들었더라도 그 branch가 현재 session assignment의 권한 root 또는 승인된 V3 자손이라면 새 세션을 만들 필요가 없다.
 
 - 파일 도구에는 격리 worktree의 절대 경로를 전달한다.
 - shell 명령에는 도구의 workdir를 격리 worktree로 지정하거나 `git -C WORKTREE_PATH`를 사용한다.
@@ -365,11 +366,23 @@ git -C /absolute/path/to/admin-ui-spinner add -- src/shared/ui/loading/loading.t
 git -C /absolute/path/to/primary-sy-main add -- src/shared/ui/loading/loading.tsx
 ~~~
 
-task worktree에서 primary sy-main의 index를 변경하는 것은 현재 cwd와 관계없이 차단된다.
+task worktree에서 primary sy-main의 index를 변경하는 것은 현재 cwd와 관계없이 차단된다. child-root로 시작한 세션이 parent worktree를 수정하는 것도 같은 이유로 차단된다.
 
 ## 9. 같은 세션에서 여러 task 수행
 
-하나의 세션은 여러 task를 순차 처리할 수 있지만 동시에 두 ACTIVE task를 가질 수 없다.
+### 같은 assignment 계보의 child 작업
+
+세션 레코드의 `task`는 권한 root로 유지되고 `branch`만 현재 초점으로 갱신된다. 예를 들어 `task/meeting-reserve-ui` assignment에서 승인 생성한 `task/reserve-option-lazy-load`는 새 세션 없이 같은 산출물 디렉터리와 책임으로 작업할 수 있다. child에서 다시 생성한 grandchild도 `asan-parent` 계보가 유효하면 같은 권한에 포함된다.
+
+- child 생성 parent는 ACTIVE여야 하고 commit되지 않은 변경이 없어야 한다.
+- child의 scope, role, Git integrator, 상태와 worktree 계약을 그대로 적용한다.
+- 한 파일/Git mutation은 한 branch만 대상으로 한다.
+- parent assignment는 child 완료 후 parent로 돌아올 수 있으며 merge는 leaf부터 `child -> parent -> sy-main` 순서로 수행한다.
+- child 자체를 권한 root로 시작한 세션에는 parent나 형제 권한이 없다.
+
+### 계보 밖의 독립 task
+
+하나의 세션은 독립 task를 순차 처리할 수 있다. 이 경우 이전 assignment 권한 root가 CLOSED여야 한다.
 
 ### 이전 task가 CLOSED인 경우
 
@@ -382,9 +395,9 @@ task worktree에서 primary sy-main의 index를 변경하는 것은 현재 cwd�
 
 이때 새 세션이나 새 worktree가 항상 필요한 것은 아니다. 기준 worktree가 clean하고 다른 작업과 충돌하지 않으면 재사용할 수 있다.
 
-### 이전 task가 ACTIVE인 경우
+### 이전 권한 root가 ACTIVE인 경우
 
-다른 task로 전환할 수 없다. 먼저 현재 task를 완료하거나 PRESERVED로 전환해야 한다.
+같은 승인 계보의 root·자손 초점 전환은 가능하지만, 계보 밖의 독립 task로 전환할 수 없다. 먼저 현재 root 작업군을 완료하거나 PRESERVED로 전환해야 한다.
 
 ### 이전 task가 PRESERVED인 경우
 
@@ -664,7 +677,7 @@ bin/agent-policy collect-logs \
 | task worktree에서 primary sy-main add가 통과          | 오래된 guard가 -C 대상을 무시                                | 새 guard는 실제 대상 worktree를 판정해 차단                                                              |
 | sync start가 소비자 drift로 중단                      | manifest 또는 관리 파일이 중앙 결과와 다름                   | 중앙에서 diff 확인 후 별도 승인된 sync                                                                   |
 | inject에서 drift 경고 출력                            | 소비자 배포본과 중앙 bundle이 다름                           | inject는 계속 가능. 팀 배포가 필요할 때만 별도 sync                                                      |
-| 다른 task로 전환할 수 없음                            | 현재 세션의 task가 ACTIVE 또는 기존 산출물 디렉터리에 바인딩 | 기존 task를 CLOSED로 만들거나 PRESERVED 후 별도 세션 사용                                                |
+| 다른 task로 전환할 수 없음                            | 대상이 현재 assignment root의 승인된 자손이 아닌 독립 task | 같은 계보면 `asan-parent` metadata·ACTIVE 상태를 확인하고, 독립 task면 root를 CLOSED로 만들거나 PRESERVED 후 별도 세션 사용 |
 | 다른 host의 산출물을 수정할 수 없음                   | 산출물은 host·session별 write 소유권 적용                    | 읽기만 수행하고 현재 host의 session directory 또는 handoff 사용                                          |
 | role 범위를 벗어난 요청이 차단                        | inject role은 세션 시작 시 고정                              | 올바른 --role로 새 inject 세션 시작                                                                      |
 

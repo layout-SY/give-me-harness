@@ -84,10 +84,12 @@ session assignment가 `contributor`인 작업자는 `handoff.md`를 작성한다
 
 ### 세션과 작업 귀속
 
-- 한 세션에는 한 시점에 하나의 활성 작업만 둔다.
-- 활성 작업을 바꾸기 전에 기존 작업을 검증·문서화·commit하고 직접 target에 merge하여 `CLOSED`로 만들거나, handoff를 작성해 `PRESERVED`로 둔다.
-- `CLOSED` 후에는 같은 세션에서 새 작업을 시작할 수 있다. `PRESERVED` 작업과 새 작업을 병행하려면 별도 worktree·세션을 사용한다.
-- dirty 기준 폴더를 피하려고 승인된 격리 worktree를 만든 경우, 현재 활성 작업이 하나라면 같은 세션에서 도구 `workdir` 또는 `git -C`의 대상으로 그 worktree를 사용해 계속할 수 있다. 세션 시작 cwd가 아니라 ACTIVE task의 승인 worktree가 변경 경계다.
+- 한 세션에는 하나의 assignment 권한 root와 한 시점에 하나의 작업 branch 초점만 둔다. 세션 레코드의 `task`는 권한 root, `branch`는 현재 초점이다.
+- 권한 root 또는 그 아래 ACTIVE V3 task에서 승인 절차로 생성한 child는 `asan-parent` 계보를 따라 같은 세션 권한에 직계·전이 자손으로 포함된다. 이름 접두사로 계보를 추론하지 않는다.
+- 권한은 하향으로만 상속된다. parent-root assignment는 root와 승인된 자손 사이를 오갈 수 있지만, child-root assignment는 ancestor·형제·무관 branch를 수정할 수 없다. 각 초점 branch의 scope, role, Git 통합 담당자, 상태와 승인 worktree는 독립적으로 검증하고 한 mutation은 한 branch만 대상으로 한다.
+- 같은 권한 계보 안의 초점 전환에는 기존 task의 `CLOSED`나 새 session directory가 필요하지 않다. 계보 밖 독립 작업으로 바꾸기 전에는 기존 root 작업을 검증·문서화·commit하고 직접 target에 merge하여 `CLOSED`로 만들거나, handoff를 작성해 `PRESERVED`로 둔다.
+- `CLOSED` 후에는 같은 세션에서 새 독립 작업을 시작할 수 있다. `PRESERVED` 작업과 독립 작업을 병행하려면 별도 worktree·세션을 사용한다.
+- dirty 기준 폴더를 피하려고 승인된 격리 worktree를 만든 경우, 현재 assignment 권한 계보 안의 branch라면 같은 세션에서 도구 `workdir` 또는 `git -C`의 대상으로 그 worktree를 사용해 계속할 수 있다. 세션 시작 cwd가 아니라 현재 초점 task의 승인 worktree가 변경 경계다.
 - `PRESERVED` 전환에는 현재 상태를 설명하는 `handoff.md`가 필요하다. contributor assignment는 인계까지만 수행하며, merge·사후 검증·close는 필수 8종을 책임지는 owner assignment만 수행한다.
 - 다른 host 또는 다른 세션의 산출물 디렉터리에 쓰지 않는다. 필요한 문서는 읽을 수 있다. 이어받을 때는 handoff와 선택된 inject role의 일치 여부를 확인하고, role이 없는 세션이면 역할을 다시 확인한 뒤 새 assignment와 승인된 디렉터리를 사용한다.
 - 산출물의 최초 쓰기는 파일 경로를 구조적으로 전달하는 호스트 쓰기 도구로 수행한다. Bash heredoc·리다이렉션은 귀속을 기록하지 못하므로 사용하지 않는다. 호스트별 구체 도구는 adapter 문서를 따른다.

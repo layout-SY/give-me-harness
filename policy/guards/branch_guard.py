@@ -430,12 +430,27 @@ def artifact_write_denial(targets: tuple[str, ...], host: str) -> str | None:
     return None
 
 
-def _lineage_denial(root: Path, branch: str, base_branch: str) -> str | None:
+def _lineage_denial(
+    root: Path,
+    branch: str,
+    base_branch: str,
+    *,
+    allow_merged: bool = False,
+    required_ancestor: str = "",
+) -> str | None:
     seen: set[str] = set()
     cursor = branch
+    ancestor_found = not required_ancestor
+    descendant_contracts_are_v3 = True
     for _ in range(MAX_LINEAGE_DEPTH):
+        if cursor == required_ancestor and descendant_contracts_are_v3:
+            ancestor_found = True
         if cursor == base_branch:
-            return None
+            return (
+                None
+                if ancestor_found
+                else f"{branch}는 assignment 권한 root {required_ancestor}의 V3 자손이 아닙니다."
+            )
         if cursor in seen:
             return f"브랜치 계보가 순환합니다: {cursor}"
         seen.add(cursor)
@@ -449,6 +464,8 @@ def _lineage_denial(root: Path, branch: str, base_branch: str) -> str | None:
         proposal = str(values["proposal"])
         worktree = str(values.get("worktree") or "")
         contract_version = str(values.get("contract-version") or "")
+        if required_ancestor and not ancestor_found and contract_version != CONTRACT_VERSION:
+            descendant_contracts_are_v3 = False
         if parent != merge_target:
             return f"{cursor}의 분기 기준({parent})과 직접 merge 대상({merge_target})이 다릅니다."
         if FULL_SHA_PATTERN.fullmatch(parent_head) is None:
@@ -513,13 +530,54 @@ def _lineage_denial(root: Path, branch: str, base_branch: str) -> str | None:
         if not is_ancestor(root, parent_head, cursor):
             return f"{cursor}가 승인된 부모 HEAD {parent_head[:12]}를 포함하지 않습니다."
         actual_base = merge_base(root, cursor, parent)
-        if actual_base != parent_head:
+        if actual_base != parent_head and not (
+            allow_merged and is_ancestor(root, cursor, parent)
+        ):
             return (
                 f"{cursor}의 실제 분기점({actual_base[:12]})이 승인된 부모 HEAD"
                 f"({parent_head[:12]})와 다릅니다."
             )
         cursor = parent
     return f"브랜치 계보가 {MAX_LINEAGE_DEPTH}단계를 초과했습니다."
+
+
+def assignment_includes_branch(
+    root: Path,
+    assignment_root: str,
+    branch: str,
+    base_branch: str = BASE_BRANCH,
+) -> bool:
+    """assignment root와 승인된 V3 자손 branch만 같은 작업 권한으로 인정한다."""
+
+    if assignment_root and assignment_root == branch:
+        return True
+    return not (
+        TASK_BRANCH_PATTERN.fullmatch(assignment_root) is None
+        or TASK_BRANCH_PATTERN.fullmatch(branch) is None
+        or not branch_exists(root, assignment_root)
+        or not branch_exists(root, branch)
+        or _lineage_denial(
+            root,
+            branch,
+            base_branch,
+            allow_merged=True,
+            required_ancestor=assignment_root,
+        )
+        is not None
+    )
+
+
+def assignment_allows_branch_mutation(
+    root: Path,
+    assignment_root: str,
+    branch: str,
+    base_branch: str = BASE_BRANCH,
+) -> bool:
+    """권한 root가 ACTIVE인 동안에만 그 V3 자손 변경 권한을 활성화한다."""
+
+    if not assignment_includes_branch(root, assignment_root, branch, base_branch):
+        return False
+    return branch == assignment_root or task_state(root, assignment_root) == "ACTIVE"
 
 
 def active_branch_denial(
@@ -1457,10 +1515,15 @@ def command_denial(
             )
         if subcommand in {"add", "commit", "restore"} and expected_branch:
             actual_branch = current_branch(operation_root)
-            if actual_branch != expected_branch:
+            if not assignment_allows_branch_mutation(
+                operation_root,
+                expected_branch,
+                actual_branch,
+                base_branch,
+            ):
                 return (
-                    "현재 세션의 활성 task와 Git 변경 대상 branch가 다릅니다.\n"
-                    f"  활성 task: {expected_branch}\n"
+                    "현재 세션의 assignment 권한 계보와 Git 변경 대상 branch가 다릅니다.\n"
+                    f"  권한 root: {expected_branch}\n"
                     f"  명령 대상: {actual_branch or 'detached HEAD'} ({operation_root})"
                 )
         if subcommand == "fetch":
@@ -1528,13 +1591,18 @@ def command_denial(
             current = current_branch(operation_root)
             if (
                 expected_branch
-                and current == expected_branch
-                and target_branch != expected_branch
+                and target_branch
+                and not assignment_allows_branch_mutation(
+                    operation_root,
+                    expected_branch,
+                    target_branch,
+                    base_branch,
+                )
                 and task_state(operation_root, expected_branch) != "CLOSED"
             ):
                 return (
-                    f"현재 세션의 활성 task({expected_branch})가 CLOSED 상태가 아니므로 "
-                    "다른 branch로 전환할 수 없습니다."
+                    f"현재 세션의 assignment 권한 root({expected_branch})가 CLOSED 상태가 아니므로 "
+                    "권한 계보 밖의 branch로 전환할 수 없습니다."
                 )
             integrator_branch = current
             if integrator_branch == base_branch and branch_exists(operation_root, target_branch):

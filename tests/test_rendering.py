@@ -261,9 +261,11 @@ class RenderingTests(unittest.TestCase):
         )
         self.assertIn(b"FULL_SHA_PATTERN", runtime)
         self.assertIn(b"ALLOWED_ROLES", runtime)
+        self.assertIn(b"def assignment_includes_branch(", runtime)
         strategy = rendered[".agent-policy/common/skills/policy/git-branch-strategy/SKILL.md"]
         self.assertIn(b"owner|contributor", strategy)
         self.assertIn(b"proposal-sha256", strategy)
+        self.assertIn("assignment 권한 root".encode(), strategy)
         self.assertIn(
             b'git(root, "worktree", "add"',
             rendered[

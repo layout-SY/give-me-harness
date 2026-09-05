@@ -646,15 +646,25 @@ def branch_workflow_integrator_denial(
     if not arguments:
         return None
     action = arguments[0]
+    assignment_root = active_assignment_branch(event, root, host)
     if action == "create":
         contract = branch_workflow_contract(event, root, arguments)
         requested_branch = contract.get("branch")
-        active_branch = active_assignment_branch(event, root, host)
-        if active_branch and requested_branch != active_branch:
-            return (
-                f"현재 세션의 활성 task({active_branch})가 CLOSED 상태가 아니므로 "
-                f"다른 task({requested_branch or '확인 불가'})를 생성할 수 없습니다."
-            )
+        parent_value = contract.get("parent")
+        parent = parent_value if isinstance(parent_value, str) else ""
+        if assignment_root:
+            if not branch_guard.assignment_allows_branch_mutation(
+                root,
+                assignment_root,
+                parent,
+            ):
+                return (
+                    f"현재 세션의 assignment 권한 root({assignment_root}) 밖에서 "
+                    f"task({requested_branch or '확인 불가'})를 생성할 수 없습니다.\n"
+                    f"  요청 parent: {parent or '확인 불가'}"
+                )
+            if branch_guard.task_state(root, parent) != "ACTIVE":
+                return f"ACTIVE 상태의 권한 계보 branch에서만 자식 task를 생성할 수 있습니다: {parent}"
         integrator = contract.get("git_integrator")
         if not isinstance(integrator, str) or not integrator:
             return "branch create proposal에서 Git 통합 담당자를 확인할 수 없습니다."
@@ -676,6 +686,15 @@ def branch_workflow_integrator_denial(
         return None
     if not source:
         return f"branch_workflow.py {action}의 source task를 확인할 수 없습니다."
+    if assignment_root and not branch_guard.assignment_allows_branch_mutation(
+        root,
+        assignment_root,
+        source,
+    ):
+        return (
+            f"현재 세션의 assignment 권한 root({assignment_root}) 밖의 "
+            f"task({source})에 {action}을 실행할 수 없습니다."
+        )
     return branch_guard.git_integrator_denial(root, source, host)
 
 
@@ -802,10 +821,14 @@ def branch_denial(event: dict[str, Any], root: Path, host: str) -> str | None:
     expected_branch = active_assignment_branch(event, root, host)
     for target_root, relatives in grouped.items():
         actual_branch = branch_guard.current_branch(target_root)
-        if expected_branch and actual_branch != expected_branch:
+        if expected_branch and not branch_guard.assignment_allows_branch_mutation(
+            target_root,
+            expected_branch,
+            actual_branch,
+        ):
             return (
-                "현재 세션의 활성 task와 구조화된 변경 대상 branch가 다릅니다.\n"
-                f"  활성 task: {expected_branch}\n"
+                "현재 세션의 assignment 권한 계보와 구조화된 변경 대상 branch가 다릅니다.\n"
+                f"  권한 root: {expected_branch}\n"
                 f"  변경 대상: {actual_branch or 'detached HEAD'} ({target_root})"
             )
         denial = branch_guard.active_branch_denial(
@@ -1001,10 +1024,14 @@ def binding_worktree(root: Path, record: dict[str, str]) -> Path:
 
 
 def active_assignment_branch(event: dict[str, Any], root: Path, host: str) -> str:
-    """CLOSED 전까지 같은 세션이 변경할 수 있는 단일 task branch를 반환한다."""
+    """CLOSED 전까지 같은 세션이 소유하는 assignment 권한 root를 반환한다."""
 
     record = session_binding_record(event, root, host)
-    branch = record.get("branch", "") or os.environ.get(TASK_ENV, "").strip()
+    branch = (
+        record.get("task", "")
+        or os.environ.get(TASK_ENV, "").strip()
+        or record.get("branch", "")
+    )
     if not branch:
         return ""
     lookup_root = binding_worktree(root, record)
@@ -1111,6 +1138,19 @@ def bind_artifact_session(event: dict[str, Any], root: Path, host: str) -> str |
         return "한 번의 작업에서 서로 다른 세션 산출물 디렉터리를 수정할 수 없습니다."
     path = session_binding_path(event, root, host)
     record = session_binding_record(event, root, host)
+    relative = requested.resolve().relative_to(requested_root.resolve()).as_posix()
+    branch = branch_guard.current_branch(requested_root)
+    values = branch_guard.metadata(requested_root, branch) if branch else {}
+    assignment_root = active_assignment_branch(event, root, host)
+    in_assignment = bool(
+        assignment_root
+        and branch
+        and branch_guard.assignment_allows_branch_mutation(
+            requested_root,
+            assignment_root,
+            branch,
+        )
+    )
     existing = (
         bound_session_directory(event, root, host)
         if record
@@ -1123,29 +1163,53 @@ def bind_artifact_session(event: dict[str, Any], root: Path, host: str) -> str |
             "지정하세요."
         )
     can_rebind = False
+    declared_session = os.environ.get(SESSION_DIR_ENV, "").strip().strip("/")
+    logical_session = record.get("directory", "") or declared_session
+    lineage_worktree_move = bool(in_assignment and logical_session == relative)
     if existing is not None and existing.resolve() != requested.resolve():
-        can_rebind = session_rebind_allowed(requested_root, existing, record)
-        if not can_rebind:
+        if not lineage_worktree_move:
+            can_rebind = session_rebind_allowed(requested_root, existing, record)
+        if not can_rebind and not lineage_worktree_move:
             return (
                 "현재 세션의 기존 작업이 CLOSED 상태가 아니므로 다른 산출물 디렉터리로 전환할 수 없습니다. "
                 "기존 작업을 완료·merge·검증하거나 handoff 후 별도 worktree와 세션을 사용하세요."
             )
-    relative = requested.resolve().relative_to(requested_root.resolve()).as_posix()
-    branch = branch_guard.current_branch(requested_root)
-    values = branch_guard.metadata(requested_root, branch) if branch else {}
-    if record.get("branch") and record["branch"] != branch and not can_rebind:
+    if assignment_root and branch and not (in_assignment or can_rebind):
         return (
-            "현재 세션의 기존 task와 다른 branch에 같은 산출물 디렉터리를 사용할 수 없습니다. "
-            "이전 task를 CLOSED로 만든 뒤 새 task의 새 산출물 디렉터리를 사용하세요."
+            "현재 세션의 assignment 권한 계보와 산출물 대상 branch가 다릅니다.\n"
+            f"  권한 root: {assignment_root}\n"
+            f"  산출물 대상: {branch} ({requested_root})"
+        )
+    if record.get("branch") and record["branch"] != branch and not (can_rebind or in_assignment):
+        return (
+            "현재 세션의 assignment 권한 계보 밖 branch에 같은 산출물 디렉터리를 사용할 수 없습니다. "
+            "독립 task는 이전 task를 CLOSED로 만든 뒤 새 산출물 디렉터리에 바인딩하세요."
         )
     declared_task = os.environ.get(TASK_ENV, "").strip()
-    if declared_task and declared_task != branch and not can_rebind:
-        return (
-            f"session assignment task와 현재 branch가 다릅니다: "
-            f"task={declared_task}, branch={branch or 'detached HEAD'}"
+    declared_includes_branch = bool(
+        declared_task
+        and branch
+        and branch_guard.assignment_allows_branch_mutation(
+            requested_root,
+            declared_task,
+            branch,
         )
-    task = branch or declared_task
-    responsibility = os.environ.get(ARTIFACT_RESPONSIBILITY_ENV, "").strip().casefold() or "owner"
+    )
+    if declared_task and declared_task != branch and not (can_rebind or declared_includes_branch):
+        return (
+            f"session assignment 권한 계보와 현재 branch가 다릅니다: "
+            f"root={declared_task}, branch={branch or 'detached HEAD'}"
+        )
+    task = (
+        (branch or declared_task)
+        if can_rebind
+        else assignment_root or declared_task or branch
+    )
+    responsibility = (
+        os.environ.get(ARTIFACT_RESPONSIBILITY_ENV, "").strip().casefold()
+        or record.get("responsibility", "").casefold()
+        or "owner"
+    )
     if responsibility not in tuple(branch_guard.ARTIFACT_RESPONSIBILITIES):
         return f"지원하지 않는 산출물 책임입니다: {responsibility}"
     if path is None:
@@ -1167,7 +1231,7 @@ def bind_artifact_session(event: dict[str, Any], root: Path, host: str) -> str |
 
 
 def bind_task_assignment(event: dict[str, Any], root: Path, host: str) -> str | None:
-    """첫 source/Git mutation에서 session을 실제 ACTIVE task worktree에 고정한다."""
+    """source/Git mutation에서 권한 root를 보존하고 현재 branch 초점을 갱신한다."""
 
     path = session_binding_path(event, root, host)
     if path is None:
@@ -1211,27 +1275,40 @@ def bind_task_assignment(event: dict[str, Any], root: Path, host: str) -> str | 
     target_root = roots_by_branch[branch]
     record = session_binding_record(event, root, host)
     previous = record.get("branch", "")
-    if previous and previous != branch:
+    assignment_root = active_assignment_branch(event, root, host)
+    in_assignment = bool(
+        assignment_root
+        and branch_guard.assignment_allows_branch_mutation(
+            target_root,
+            assignment_root,
+            branch,
+        )
+    )
+    if previous and previous != branch and not in_assignment:
         if branch_guard.task_state(binding_worktree(root, record), previous) != "CLOSED":
             return (
-                f"현재 세션의 활성 task({previous})가 CLOSED 상태가 아니므로 "
-                f"다른 task({branch})로 전환할 수 없습니다."
+                f"현재 세션의 assignment 권한 root({assignment_root or previous}) 밖인 "
+                f"task({branch})로 전환할 수 없습니다."
             )
         return (
-            "CLOSED 뒤 다음 task를 시작하려면 먼저 새 task의 새 산출물 디렉터리를 "
+            "CLOSED 뒤 다음 독립 task를 시작하려면 먼저 새 task의 새 산출물 디렉터리를 "
             "구조화된 Write 도구로 바인딩하세요."
         )
     if previous == branch:
         return None
     values = branch_guard.metadata(target_root, branch)
-    responsibility = os.environ.get(ARTIFACT_RESPONSIBILITY_ENV, "").strip().casefold() or "owner"
+    responsibility = (
+        os.environ.get(ARTIFACT_RESPONSIBILITY_ENV, "").strip().casefold()
+        or record.get("responsibility", "").casefold()
+        or "owner"
+    )
     if responsibility not in tuple(branch_guard.ARTIFACT_RESPONSIBILITIES):
         return f"지원하지 않는 산출물 책임입니다: {responsibility}"
     binding = {
         "directory": record.get("directory", ""),
         "branch": branch,
         "merge_target": str(values.get("merge-target") or ""),
-        "task": branch,
+        "task": assignment_root or branch,
         "responsibility": responsibility,
         "contract_version": str(values.get("contract-version") or ""),
         "worktree": str(target_root),
@@ -1513,9 +1590,16 @@ def documentation_denial(event: dict[str, Any], root: Path, host: str) -> str | 
     )
     if responsibility not in tuple(branch_guard.ARTIFACT_RESPONSIBILITIES):
         return f"지원하지 않는 산출물 책임이라 완료할 수 없습니다: {responsibility}"
-    assigned_task = os.environ.get(TASK_ENV, "").strip() or record.get("task", "")
-    if assigned_task and branch and assigned_task != branch:
-        return f"session assignment task와 산출물 branch가 다릅니다: task={assigned_task}, branch={branch}"
+    assigned_task = record.get("task", "") or os.environ.get(TASK_ENV, "").strip()
+    if assigned_task and branch and not branch_guard.assignment_includes_branch(
+        root,
+        assigned_task,
+        branch,
+    ):
+        return (
+            "session assignment 권한 계보와 산출물 branch가 다릅니다: "
+            f"root={assigned_task}, branch={branch}"
+        )
     if contract_version == str(branch_guard.CONTRACT_VERSION):
         if responsibility == "owner" and full_complete:
             return None

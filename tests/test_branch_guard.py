@@ -128,6 +128,62 @@ class BranchGuardTests(unittest.TestCase):
             )
         return branch, worktree
 
+    def configure_v3_task(
+        self,
+        branch: str,
+        parent: str,
+        scopes: tuple[str, ...] = ("src",),
+    ) -> str:
+        parent_head = self.guard.head(self.root, parent)
+        subprocess.run(["git", "branch", branch, parent_head], cwd=self.root, check=True)
+        roles = ("logic",)
+        purpose = f"{branch} 계보 권한 검증"
+        reason = f"{parent}에서 승인된 하위 작업 분리"
+        contract = self.guard.canonical_contract(
+            branch,
+            purpose,
+            parent,
+            parent_head,
+            parent,
+            scopes,
+            reason,
+            "",
+            roles,
+            "codex",
+        )
+        digest = self.guard.contract_sha256(contract)
+        for field, value in {
+            "contract-version": "3",
+            "task-id": branch.removeprefix("task/"),
+            "purpose": purpose,
+            "parent": parent,
+            "parent-head": parent_head,
+            "merge-target": parent,
+            "proposal": f"asan-v3:{digest}",
+            "contract-sha256": digest,
+            "reason": reason,
+            "git-integrator": "codex",
+            "state": "ACTIVE",
+        }.items():
+            subprocess.run(
+                ["git", "config", f"branch.{branch}.asan-{field}", value],
+                cwd=self.root,
+                check=True,
+            )
+        for role in roles:
+            subprocess.run(
+                ["git", "config", "--add", f"branch.{branch}.asan-role", role],
+                cwd=self.root,
+                check=True,
+            )
+        for scope in scopes:
+            subprocess.run(
+                ["git", "config", "--add", f"branch.{branch}.asan-scope", scope],
+                cwd=self.root,
+                check=True,
+            )
+        return branch
+
     def install_workflow(self) -> Path:
         runtime_source = self.rendered[".agent-policy/runtime/branch_guard.py"]
         runtime = self.root / ".agent-policy/runtime/branch_guard.py"
@@ -236,6 +292,121 @@ class BranchGuardTests(unittest.TestCase):
                 ("src/shared/ui/button/Button.tsx",),
             )
         )
+
+    def test_assignment_authority_is_inherited_only_by_v3_descendants(self) -> None:
+        parent = self.configure_v3_task("task/meeting-reserve-ui", "sy-main")
+        child = self.configure_v3_task("task/reserve-option-lazy-load", parent)
+        grandchild = self.configure_v3_task("task/reserve-option-api", child)
+        unrelated = self.configure_v3_task("task/unrelated-reserve", "sy-main")
+
+        self.assertTrue(self.guard.assignment_includes_branch(self.root, parent, parent))
+        self.assertTrue(self.guard.assignment_includes_branch(self.root, parent, child))
+        self.assertTrue(self.guard.assignment_includes_branch(self.root, parent, grandchild))
+        self.assertFalse(self.guard.assignment_includes_branch(self.root, child, parent))
+        self.assertFalse(self.guard.assignment_includes_branch(self.root, child, unrelated))
+        self.assertFalse(self.guard.assignment_includes_branch(self.root, parent, "sy-main"))
+
+        subprocess.run(["git", "switch", "-q", child], cwd=self.root, check=True)
+        source = self.root / "src/merged-child.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const mergedChild = true\n", encoding="utf-8")
+        subprocess.run(["git", "add", "src/merged-child.ts"], cwd=self.root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "-qm",
+                "child change",
+            ],
+            cwd=self.root,
+            check=True,
+        )
+        subprocess.run(["git", "switch", "-q", parent], cwd=self.root, check=True)
+        subprocess.run(["git", "merge", "-q", "--ff-only", child], cwd=self.root, check=True)
+
+        self.assertTrue(self.guard.assignment_includes_branch(self.root, parent, child))
+        self.assertTrue(self.guard.assignment_includes_branch(self.root, parent, grandchild))
+
+    def test_assignment_root_can_mutate_and_switch_within_descendant_family(self) -> None:
+        parent = self.configure_v3_task("task/meeting-reserve-ui", "sy-main")
+        child = self.configure_v3_task("task/reserve-option-lazy-load", parent)
+        grandchild = self.configure_v3_task("task/reserve-option-api", child)
+        unrelated = self.configure_v3_task("task/unrelated-reserve", "sy-main")
+        subprocess.run(["git", "switch", "-q", child], cwd=self.root, check=True)
+        source = self.root / "src/child.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const child = true\n", encoding="utf-8")
+
+        self.assertIsNone(
+            self.guard.command_denial(
+                self.root,
+                "git add -- src/child.ts",
+                host="codex",
+                expected_branch=parent,
+            )
+        )
+        denied_mutation = self.guard.command_denial(
+            self.root,
+            "git add -- src/child.ts",
+            host="codex",
+            expected_branch=unrelated,
+        )
+        self.assertIsNotNone(denied_mutation)
+        self.assertIn("권한 root", denied_mutation)
+
+        source.unlink()
+        subprocess.run(
+            ["git", "config", f"branch.{parent}.asan-state", "PRESERVED"],
+            cwd=self.root,
+            check=True,
+        )
+        inactive_root_denial = self.guard.command_denial(
+            self.root,
+            "git add -- src/child.ts",
+            host="codex",
+            expected_branch=parent,
+        )
+        self.assertIsNotNone(inactive_root_denial)
+        self.assertIn("권한 계보", inactive_root_denial)
+        subprocess.run(
+            ["git", "config", f"branch.{parent}.asan-state", "ACTIVE"],
+            cwd=self.root,
+            check=True,
+        )
+        self.assertIsNone(
+            self.guard.command_denial(
+                self.root,
+                f"git switch {grandchild}",
+                host="codex",
+                expected_branch=parent,
+            )
+        )
+        self.assertIsNone(
+            self.guard.command_denial(
+                self.root,
+                f"git switch {parent}",
+                host="codex",
+                expected_branch=parent,
+            )
+        )
+        for expected, target in (
+            (parent, unrelated),
+            (parent, "sy-main"),
+            (child, parent),
+        ):
+            with self.subTest(expected=expected, target=target):
+                denial = self.guard.command_denial(
+                    self.root,
+                    f"git switch {target}",
+                    host="codex",
+                    expected_branch=expected,
+                )
+                self.assertIsNotNone(denial)
+                self.assertIn("권한 계보 밖", denial)
 
     def test_short_parent_sha_is_rejected_with_actionable_message(self) -> None:
         branch = self.configure_task_branch()
@@ -370,7 +541,7 @@ class BranchGuardTests(unittest.TestCase):
             expected_branch=branch,
         )
         self.assertIsNotNone(denied)
-        self.assertIn("활성 task", denied)
+        self.assertIn("assignment 권한", denied)
 
         self.assertIsNone(
             self.guard.command_denial(
@@ -720,6 +891,90 @@ class BranchGuardTests(unittest.TestCase):
         denial = self.guard.active_branch_denial(self.root, (foreign,), host="claude")
         self.assertIsNotNone(denial)
         self.assertIn("읽기 전용", denial)
+
+    def test_child_workflow_requires_parent_to_remain_active(self) -> None:
+        parent = self.configure_v3_task("task/meeting-reserve-ui", "sy-main")
+        workflow = self.install_inject_workflow()
+        environment = {
+            **os.environ,
+            "ASAN_AGENT_POLICY_MODE": "inject",
+            "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(workflow.parents[6]),
+            "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+        }
+
+        def run_workflow(*arguments: str) -> subprocess.CompletedProcess[str]:
+            return subprocess.run(
+                ["python3", str(workflow), *arguments],
+                cwd=self.root,
+                capture_output=True,
+                text=True,
+                env=environment,
+                check=False,
+            )
+
+        proposed = run_workflow(
+            "proposal",
+            "--branch",
+            "task/reserve-option-lazy-load",
+            "--purpose",
+            "예약 옵션 지연 로딩",
+            "--parent",
+            parent,
+            "--scope",
+            "src",
+            "--reason",
+            "parent 작업에서 분리된 후속 변경",
+            "--role",
+            "logic",
+            "--git-integrator",
+            "codex",
+        )
+        self.assertEqual(proposed.returncode, 0, proposed.stderr)
+        proposal_path = next(
+            line.removeprefix("- canonical proposal 파일: ")
+            for line in proposed.stdout.splitlines()
+            if line.startswith("- canonical proposal 파일: ")
+        )
+        proposal_sha = next(
+            line.removeprefix("- canonical proposal SHA-256: ")
+            for line in proposed.stdout.splitlines()
+            if line.startswith("- canonical proposal SHA-256: ")
+        )
+        subprocess.run(
+            ["git", "config", f"branch.{parent}.asan-state", "PRESERVED"],
+            cwd=self.root,
+            check=True,
+        )
+
+        stale_create = run_workflow(
+            "create",
+            "--proposal-file",
+            proposal_path,
+            "--proposal-sha256",
+            proposal_sha,
+        )
+        new_proposal = run_workflow(
+            "proposal",
+            "--branch",
+            "task/reserve-option-second",
+            "--purpose",
+            "두 번째 예약 옵션 작업",
+            "--parent",
+            parent,
+            "--scope",
+            "src",
+            "--reason",
+            "PRESERVED parent 차단 검증",
+            "--role",
+            "logic",
+            "--git-integrator",
+            "codex",
+        )
+
+        self.assertNotEqual(stale_create.returncode, 0)
+        self.assertIn("ACTIVE", stale_create.stderr)
+        self.assertNotEqual(new_proposal.returncode, 0)
+        self.assertIn("ACTIVE", new_proposal.stderr)
 
     def test_v3_finish_verify_and_close_lifecycle(self) -> None:
         workflow = self.install_inject_workflow()

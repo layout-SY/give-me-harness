@@ -12,14 +12,15 @@ description: 저장소 변경 작업의 V3 task 계약, 격리 worktree, session
 - **branch task 계약**: 목적, parent, 40자리 parent SHA, merge target, 역할, scope, Git 통합 담당자, 분기 근거와 worktree를 고정한다.
 - **session assignment**: 현재 host·세션이 맡은 role, 산출물 디렉터리와 `owner|contributor` 책임을 정한다.
 - 역할이나 산출물 책임은 host 이름에 내장하지 않는다. 같은 branch에서 다른 host·역할이 순차적으로 각자 assignment를 받을 수 있다.
-- 한 세션에는 활성 task 하나만 둔다. `CLOSED` 뒤에는 같은 세션에서 다음 task로 바꿀 수 있다. 미완료 task를 `PRESERVED`로 남기고 다른 작업을 병행하면 별도 worktree·세션을 사용한다.
+- 한 세션에는 assignment 권한 root 하나와 현재 작업 branch 초점 하나만 둔다. root 또는 그 ACTIVE V3 자손에서 승인 생성한 child는 `asan-parent` 계보를 따라 같은 권한에 전이적으로 포함된다.
+- parent-root assignment는 root와 승인된 자손 사이에서 초점을 바꿀 수 있다. child-root assignment에는 ancestor·형제 권한이 없고, 이름 유사성은 권한 근거가 아니다. 계보 밖 독립 task는 기존 root가 `CLOSED`된 뒤 같은 세션에서 시작하거나, `PRESERVED` 후 별도 worktree·세션에서 병행한다.
 
 ## 분기 판단
 
 1. 현재 branch, HEAD, `git status --short --branch`, 관련 미병합 branch와 worktree를 읽는다.
 2. 새 작업이 이전 미병합 commit에 의존하거나 수정 경로가 겹치면 그 task branch를 parent로 삼는다.
 3. 독립 작업은 `{{BASE_BRANCH}}`를 parent로 삼는다.
-4. task parent의 worktree에 commit되지 않은 변경이 있으면 child를 만들지 않는다. 그 변경은 child 기준 commit에 포함되지 않기 때문이다.
+4. child는 ACTIVE task parent에서만 만들고, parent worktree에 commit되지 않은 변경이 있으면 생성하지 않는다. 그 변경은 child 기준 commit에 포함되지 않기 때문이다.
 5. 기준 branch worktree가 dirty이거나 사용 중이면 기존 변경을 commit·stash·reset·restore하지 않고, 저장소 밖의 격리 `--worktree`를 계약에 넣는다.
 6. branch 이름은 `task/<ascii-kebab-summary>`이고 parent와 직접 merge target은 같다.
 
@@ -55,11 +56,11 @@ python3 <absolute-branch-workflow.py> create \
   --proposal-sha256 <printed-64-character-sha256>
 ```
 
-create는 파일 경로, canonical bytes, SHA-256, parent HEAD, branch 존재 여부와 worktree 상태를 재검증한다. 값 하나라도 달라지면 새 proposal과 승인이 필요하다. V3 metadata는 task id, purpose, parent/full SHA, merge target, roles, scopes, reason, integrator, contract SHA와 `ACTIVE` 상태를 기록한다.
+create는 파일 경로, canonical bytes, SHA-256, parent HEAD, parent의 `ACTIVE` 상태, branch 존재 여부와 worktree 상태를 재검증한다. 값 하나라도 달라지면 새 proposal과 승인이 필요하다. V3 metadata는 task id, purpose, parent/full SHA, merge target, roles, scopes, reason, integrator, contract SHA와 `ACTIVE` 상태를 기록한다.
 
 ## session과 worktree 선택
 
-격리 worktree를 만들었다는 이유만으로 현재 세션을 종료하지 않는다. 현재 세션의 활성 task가 아직 하나이고 기존 assignment와 충돌하지 않으면, 생성된 승인 worktree를 이후 도구의 `workdir` 또는 `git -C` 대상으로 삼아 그대로 작업을 계속할 수 있다. 새 세션은 미완료 task를 `PRESERVED`로 보존한 채 다른 task를 병행하거나, host·role·담당자를 인계할 때 필요하다. 매번 폴더를 새로 만들 필요는 없고, 동시에 보존할 독립 작업이 있거나 기준 worktree가 dirty·사용 중일 때만 격리한다.
+격리 worktree를 만들었다는 이유만으로 현재 세션을 종료하지 않는다. 생성된 branch가 현재 assignment 권한 root 또는 승인된 V3 자손이면, 해당 worktree를 이후 도구의 `workdir` 또는 `git -C` 대상으로 삼아 그대로 작업을 계속할 수 있다. 세션의 산출물 디렉터리와 책임은 유지하고 현재 branch 초점만 갱신한다. 새 세션은 권한 계보 밖의 미완료 task를 `PRESERVED`로 보존한 채 다른 독립 task를 병행하거나, host·role·담당자를 인계할 때 필요하다. 매번 폴더를 새로 만들 필요는 없고, 동시에 보존할 독립 작업이 있거나 기준 worktree가 dirty·사용 중일 때만 격리한다.
 
 세션을 격리 worktree에서 새로 시작해야 하는 경우에는 다음 launcher 계약을 사용한다.
 
@@ -81,7 +82,7 @@ bin/agent-policy start \
 - 다른 host·다른 세션 산출물은 읽을 수 있지만 쓸 수 없다.
 - 정의되지 않은 보조 문서는 자기 세션의 `unknown/`에 둔다.
 
-미완료 task를 다른 worktree·세션에 그대로 남길 때는 handoff를 작성한 뒤 다음 명령으로 상태를 고정한다. 같은 worktree에서 다른 task로 전환하지 않는다.
+미완료 task를 다른 worktree·세션에 그대로 남길 때는 handoff를 작성한 뒤 다음 명령으로 상태를 고정한다. 같은 worktree에서 권한 계보 밖의 독립 task로 전환하지 않는다.
 
 ```sh
 python3 <absolute-branch-workflow.py> preserve --reason "<보존·인계 이유>"

@@ -59,6 +59,8 @@ V3는 정적 **branch task 계약**, 동적 **session assignment**, 검증 가�
 | Git 통합 담당자 | branch·index·commit·완료 workflow 단일 소유자 | host 하나 또는 `user` |
 | owner assignment | 작업 전체와 공통 8종을 책임지는 세션 | 통합 구현 또는 최종 마무리 |
 | contributor assignment | 일부 역할과 `handoff.md`를 책임지는 세션 | UI 계약, Logic 일부, review |
+| assignment 권한 root | 세션이 시작한 task이자 하향 권한의 기준 | `task/meeting-reserve-ui` |
+| 현재 branch 초점 | 세션이 지금 수정하는 root 또는 승인된 V3 자손 | `task/reserve-option-lazy-load` |
 | CLOSED | merge·target 검증·종료 기록이 끝난 task | 같은 세션에서 다음 task 가능 |
 | PRESERVED | handoff 후 미완료 상태로 보존한 task | 다른 task는 별도 worktree·세션 |
 
@@ -76,9 +78,9 @@ V3는 정적 **branch task 계약**, 동적 **session assignment**, 검증 가�
 
 따라서 기본 폴더가 dirty이거나 다른 세션이 사용 중인 독립 작업은 격리한다. 모든 작업마다 worktree가 필요한 것은 아니다. 기존 task가 CLOSED이고 현재 폴더가 clean하며 단일 세션이 소유하면 같은 폴더에서 다음 task를 시작할 수 있다.
 
-격리 worktree도 현재 세션이 맡은 단일 활성 task의 실행 공간이 될 수 있다. 세션을 시작한 cwd가 소유권 경계가 되는 것이 아니라, branch 계약에 기록된 worktree와 현재 ACTIVE assignment가 변경 경계가 된다. 따라서 기본 폴더에서 `git -C <승인된-task-worktree> add -- <scope-path>`를 실행하는 것은 허용할 수 있지만, task worktree에서 `git -C <기본-sy-main-worktree> add ...`로 기준 branch index를 바꾸는 것은 차단해야 한다.
+격리 worktree도 현재 세션 assignment가 소유한 root 또는 승인된 V3 자손의 실행 공간이 될 수 있다. 세션을 시작한 cwd가 소유권 경계가 되는 것이 아니라, 현재 초점 branch 계약에 기록된 worktree가 변경 경계가 된다. 따라서 기본 폴더에서 `git -C <승인된-descendant-worktree> add -- <scope-path>`를 실행하는 것은 허용할 수 있지만, task worktree에서 `git -C <기본-sy-main-worktree> add ...`로 기준 branch index를 바꾸는 것은 차단해야 한다.
 
-task parent에 commit되지 않은 변경이 있는 경우는 다르다. child branch는 parent ref의 마지막 commit에서 시작하므로 그 dirty 변경을 포함하지 않는다. V3 도구는 이 경우 child 생성을 막고 parent 소유자의 commit 또는 handoff를 요구한다.
+task parent에 commit되지 않은 변경이 있는 경우는 다르다. child branch는 parent ref의 마지막 commit에서 시작하므로 그 dirty 변경을 포함하지 않는다. V3 도구는 이 경우 child 생성을 막고 parent 소유자의 commit 또는 handoff를 요구한다. child는 ACTIVE task parent에서만 생성한다.
 
 ## 5. immutable branch proposal
 
@@ -222,17 +224,29 @@ raw merge·V3 branch 삭제·worktree remove는 사용하지 않는다. merge나
 
 ## 10. 같은 세션에서 여러 작업
 
-같은 세션에서 독립 작업을 순차 수행할 수 있다. 전환 조건은 이전 assignment의 문서뿐 아니라 task의 `CLOSED`, clean 상태와 merge ancestry다.
+세션 레코드는 `task`에 불변 assignment 권한 root를, `branch`에 현재 작업 초점을 기록한다. 권한 root나 그 ACTIVE V3 자손에서 승인 생성한 child는 `asan-parent` metadata를 따라 같은 작업군에 직계·전이 자손으로 들어간다. `task/aaa-bbb` 같은 이름은 설명일 뿐 권한 판정에 사용하지 않는다.
 
-- ACTIVE 또는 READY_TO_MERGE: 다음 task 전환 불가.
-- PRESERVED: 현재 상태를 handoff하고 별도 worktree·세션에서 새 task 시작.
-- CLOSED: 같은 프로세스에서 새 branch와 새 session directory로 전환 가능.
+```text
+assignment root: task/meeting-reserve-ui
+  └─ child: task/reserve-option-lazy-load
+       └─ grandchild: task/reserve-option-api
+```
+
+이 assignment는 세 branch를 전이적으로 다룰 수 있고, clean worktree에서 root·자손 사이로 초점을 되돌릴 수도 있다. 각 mutation은 한 branch만 대상으로 하며 현재 초점 branch의 ACTIVE 상태, scope, role, Git 통합 담당자와 승인 worktree를 별도로 검증한다. 따라서 넓은 parent scope가 child의 좁은 scope를 덮어쓰지 않는다.
+
+권한 상속은 하향 단방향이다. `task/reserve-option-lazy-load`를 root로 시작한 별도 assignment는 `task/meeting-reserve-ui`, 그 형제나 무관 branch를 수정할 수 없다. metadata가 없거나 손상됐거나 순환·깊이 제한을 위반하면 권한을 부여하지 않는다.
+
+계보 밖의 독립 작업은 다음 규칙으로 전환한다.
+
+- ACTIVE 또는 READY_TO_MERGE인 권한 root를 둔 채 독립 task 전환 불가.
+- PRESERVED: 현재 상태를 handoff하고 별도 worktree·세션에서 독립 task 시작.
+- CLOSED: 같은 프로세스에서 새 독립 branch와 새 session directory로 전환 가능.
 
 미완료 task의 상태 전이는 `branch_workflow.py preserve --reason <근거>`로 기록하고, 같은 worktree에서 새 assignment로 재개할 때 `branch_workflow.py resume`으로 `ACTIVE`를 복원한다. `PRESERVED` 상태에서는 애플리케이션·산출물 쓰기를 허용하지 않는다.
 
-이 제한은 “항상 새 폴더·새 세션”을 강제하려는 것이 아니다. 미완료 작업을 번갈아 다루면서 context, index, stage와 commit 범위가 섞이는 상황만 격리한다.
+이 제한은 “항상 새 폴더·새 세션”을 강제하려는 것이 아니다. 하나의 승인 계보는 같은 세션에서 이어가고, 무관한 미완료 작업을 번갈아 다루면서 context, index, stage와 commit 범위가 섞이는 상황만 격리한다.
 
-dirty 기준 폴더 때문에 격리 worktree를 새로 만든 경우에도 현재 task가 하나라면 같은 세션이 그 worktree로 실행 위치를 옮겨 계속할 수 있다. 반대로 `PRESERVED` 작업을 남겨 둔 채 다른 작업을 동시에 진행하는 경우에는 두 task의 assignment를 한 세션에 함께 바인딩하지 않고 별도 worktree·세션을 사용한다.
+dirty 기준 폴더 때문에 격리 worktree를 새로 만든 경우에도 그 branch가 권한 root의 승인된 자손이면 같은 세션이 산출물 디렉터리와 책임을 유지한 채 실행 위치와 현재 초점을 옮겨 계속할 수 있다. 반대로 `PRESERVED` 작업을 남겨 둔 채 계보 밖 작업을 동시에 진행하는 경우에는 두 독립 task의 assignment를 한 세션에 함께 바인딩하지 않고 별도 worktree·세션을 사용한다.
 
 ## 11. 실패 원칙
 
