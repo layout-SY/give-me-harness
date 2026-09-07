@@ -1036,6 +1036,16 @@ Python unittest로 정책 계약을 검증했습니다.
             integrator="codex",
         )
         subprocess.run(["git", "switch", "-q", branch], cwd=self.root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "config",
+                f"branch.{branch}.asan-proposal",
+                f"asan-v3:{'0' * 64}",
+            ],
+            cwd=self.root,
+            check=True,
+        )
         session_dir = ".codex/logs/sessions/2026-09-07-meeting-reservation-logic"
         environment = {
             "ASAN_AGENT_POLICY_MODE": "inject",
@@ -1066,6 +1076,31 @@ Python unittest로 정책 계약을 검증했습니다.
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "")
+
+        source_write = subprocess.run(
+            ["python3", "-I", str(runtime_guard), "pre-tool", "codex"],
+            input=json.dumps(
+                {
+                    "cwd": str(self.root),
+                    "session_id": self.session_id,
+                    "tool_name": "Write",
+                    "tool_input": {"file_path": "src/blocked.ts"},
+                }
+            ),
+            text=True,
+            capture_output=True,
+            cwd=self.root,
+            env={**os.environ, **environment},
+            check=False,
+        )
+
+        self.assertEqual(source_write.returncode, 0, source_write.stderr)
+        source_decision = json.loads(source_write.stdout)["hookSpecificOutput"]
+        self.assertEqual(source_decision["permissionDecision"], "deny")
+        self.assertIn(
+            "승인 요청 식별자가 분기 계약과 일치하지 않습니다",
+            source_decision["permissionDecisionReason"],
+        )
 
     def test_proposal_posttool_binds_user_approval_to_full_sha256(self) -> None:
         bundle = self.root / "central-bundle"

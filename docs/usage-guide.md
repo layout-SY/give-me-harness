@@ -424,6 +424,8 @@ python3 <absolute-branch-workflow.py> resume
 
 Bash heredoc, tee 또는 redirect로 산출물을 만들면 session assignment 귀속이 기록되지 않아 완료·보존 workflow에서 차단될 수 있다. 일반 대화 종료와 읽기 전용 조사는 산출물 완료 검사를 실행하지 않는다.
 
+현재 assignment와 host·session directory가 일치하는 산출물 전용 구조화 쓰기는 branch 계약 식별자가 손상된 경우에도 허용한다. 이 예외는 오류를 기록하고 handoff하기 위한 것이며 source 변경, Git mutation, finish·verify·close 권한까지 허용하지 않는다.
+
 잘못된 예:
 
 ~~~sh
@@ -670,7 +672,7 @@ bin/agent-policy collect-logs \
 | 외부 worktree에서 hook 파일을 찾지 못함               | 오래된 sync hook이 현재 worktree에서 runtime을 찾음          | sync 세션은 수정 정책을 배포하고 재시작. inject 세션은 sync 없이 중앙 launcher로 새 번들을 만들어 재시작 |
 | inject 재시작 후에도 소비자 .claude/hooks 경로를 사용 | 현재 inject launcher가 아닌 legacy/sync 설정으로 실행        | --print-only에서 build bundle의 절대 guard 경로 확인                                                     |
 | proposal/create가 정책 snapshot 경로 때문에 차단      | 오래된 guard가 inject snapshot workflow를 신뢰하지 못함      | 새 inject 번들로 재시작하고 system prompt가 제공한 절대 branch_workflow.py 사용                          |
-| 승인 요청 식별자 불일치                               | 축약 SHA 또는 다른 proposal 값 사용                          | 출력된 동일 파일과 64자리 SHA-256 전체값 사용                                                            |
+| 승인 요청 식별자 불일치                               | 축약 SHA 또는 다른 proposal 값 사용                          | 현재 세션 산출물에 오류를 기록한 뒤 출력된 동일 파일과 64자리 SHA-256 전체값으로 계약 복구; source·Git 작업은 복구 전 중단 |
 | finish·close가 산출물 누락·귀속 오류 보고             | 구조화된 Write 없이 산출물을 만들었거나 owner 문서가 미완료 | 현재 session directory에 구조화된 Write 도구로 필수 문서를 완성                                          |
 | Codex SessionStart hook JSON 오류                      | 오래된 guard가 context를 일반 텍스트로 출력                 | 새 정책으로 sync하거나 새 inject 번들로 세션 재시작                                                       |
 | 읽기 전용 Git 조회가 구현·명령 승인을 요구             | 오래된 guard가 모든 Git 호출을 변경형으로 분류              | 새 정책으로 sync하거나 inject 재시작 후 단순 조회 명령을 다시 실행                                       |

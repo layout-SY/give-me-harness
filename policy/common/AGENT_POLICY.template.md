@@ -95,6 +95,7 @@ session assignment가 `contributor`인 작업자는 `handoff.md`를 작성한다
 - `PRESERVED` 전환에는 현재 상태를 설명하는 `handoff.md`가 필요하다. contributor assignment는 인계까지만 수행하며, merge·사후 검증·close는 필수 8종을 책임지는 owner assignment만 수행한다.
 - 다른 host 또는 다른 세션의 산출물 디렉터리에 쓰지 않는다. 필요한 문서는 읽을 수 있다. 이어받을 때는 handoff와 선택된 inject role의 일치 여부를 확인하고, role이 없는 세션이면 역할을 다시 확인한 뒤 새 assignment와 승인된 디렉터리를 사용한다.
 - 산출물의 최초 쓰기는 파일 경로를 구조적으로 전달하는 호스트 쓰기 도구로 수행한다. Bash heredoc·리다이렉션은 귀속을 기록하지 못하므로 사용하지 않는다. 호스트별 구체 도구는 adapter 문서를 따른다.
+- 현재 assignment·host·session 귀속이 확인된 산출물만을 구조화된 도구로 쓰는 작업은 branch 계약 오류를 기록하고 인계할 수 있도록 허용한다. 이는 애플리케이션 source, Git mutation 또는 완료 lifecycle 권한을 부여하지 않는다.
 - 저장소 파일의 일반 생성·수정·삭제도 branch scope를 검증할 수 있는 구조화된 Edit/Write/apply_patch 계열 도구를 사용한다. Git과 승인된 branch workflow 외의 `rm`, `mv`, `cp`, `touch`, `sed -i` 같은 비구조적 shell 변경은 사용하지 않는다.
 - `git status`, `git diff`, `git log`, 조회형 `git branch`와 `git worktree list`는 읽기 전용 조사로 허용한다. 저장소를 변경하거나 안전하게 분류할 수 없는 Git 명령에만 구현 gate, branch 계약과 호스트별 명령 승인을 적용한다.
 

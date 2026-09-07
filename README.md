@@ -75,6 +75,7 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 - 세 호스트 모두 공통 UserPrompt/PostTool 상태로 구현 승인, 관련 skill 확인과 역할별 재사용·인접 구현 탐색을 기록하며, 조건을 갖추기 전 source mutation을 차단합니다.
 - branch create와 finish 계열은 proposal 출력 뒤 사용자가 승인한 64자리 SHA-256이 실행 인자와 일치해야 합니다.
 - 저장소를 변경하는 Git 명령과 build/dev/start/preview 계열 명령은 실행 전에 사용자가 직접 판단합니다. `status`, `diff`, `log`, branch 목록과 `worktree list` 같은 읽기 전용 Git 조사는 별도 명령 승인이나 구현 gate 없이 허용합니다.
+- 현재 assignment·host·session에 귀속된 산출물 전용 구조화 쓰기는 branch 계약 오류를 기록할 수 있도록 허용하지만, source·Git 변경과 완료 workflow는 유효한 계약을 계속 요구합니다.
 - sync 모드에서 중앙 원본을 바꾼 뒤에는 sync하고 실행 중인 세션을 handoff한 다음 새 세션을 시작해야 합니다. inject 모드는 새 세션 시작 때 현재 중앙 source digest의 새 번들을 선택합니다.
 
 ## 역할과 병렬 세션

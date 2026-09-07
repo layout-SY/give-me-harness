@@ -795,6 +795,14 @@ def branch_denial(event: dict[str, Any], root: Path, host: str) -> str | None:
     shell_tool = tool_name in SHELL_TOOLS
     if not edit_tool and not shell_tool:
         return None
+    if edit_tool and target_contexts and all(
+        relative.startswith(ARTIFACT_SESSIONS_PREFIXES)
+        for _, relative in target_contexts
+    ):
+        # bind_artifact_session이 바로 앞에서 host·session·layout·assignment 귀속을
+        # 검증했다. 진단·handoff 문서는 손상된 branch 계약을 복구하는 데도 필요하므로
+        # artifact-only 구조화 쓰기를 source branch 유효성 검사와 결합하지 않는다.
+        return None
     if shell_tool:
         for raw_target in shell_redirect_targets(command):
             target = resolved_shell_target(root, tool_input, raw_target)
