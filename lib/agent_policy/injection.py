@@ -619,6 +619,49 @@ def _skill_config_override(
     return f"skills.config={_toml_value(entries)}" if entries else None
 
 
+def _codex_hook_event_key(event_name: str) -> str:
+    """Codex hook state에서 사용하는 snake_case 이벤트 키를 만든다."""
+
+    words = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", event_name)
+    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", words).casefold()
+
+
+def _consumer_hook_disable_overrides(project: ProjectConfig) -> tuple[str, ...]:
+    """inject 세션에서 소비자 project hooks.json handler만 비활성화한다."""
+
+    hooks_path = project.path / ".codex/hooks.json"
+    if not hooks_path.is_file():
+        return ()
+    try:
+        raw = json.loads(hooks_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return ()
+    registrations = raw.get("hooks") if isinstance(raw, dict) else None
+    if not isinstance(registrations, dict):
+        return ()
+
+    overrides: list[str] = []
+    source = str(hooks_path)
+    for event_name, groups in registrations.items():
+        if not isinstance(event_name, str) or not isinstance(groups, list):
+            continue
+        event_key = _codex_hook_event_key(event_name)
+        for group_index, group in enumerate(groups):
+            handlers = group.get("hooks") if isinstance(group, dict) else None
+            if not isinstance(handlers, list):
+                continue
+            for handler_index, handler in enumerate(handlers):
+                if not isinstance(handler, dict):
+                    continue
+                state_key = (
+                    f"{source}:{event_key}:{group_index}:{handler_index}"
+                )
+                overrides.append(
+                    f"hooks.state.{json.dumps(state_key, ensure_ascii=False)}.enabled=false"
+                )
+    return tuple(overrides)
+
+
 def _prepare_codex_home(
     project: ProjectConfig,
     rendered: Mapping[str, bytes],
@@ -666,6 +709,7 @@ def _prepare_codex_home(
     overrides = list(_flatten_toml(policy_config))
     project_key = json.dumps(str(project.path), ensure_ascii=False)
     overrides.append(f"projects.{project_key}.trust_level=\"untrusted\"")
+    overrides.extend(_consumer_hook_disable_overrides(project))
     skill_override = _skill_config_override(user_config, project)
     if skill_override is not None:
         overrides.append(skill_override)

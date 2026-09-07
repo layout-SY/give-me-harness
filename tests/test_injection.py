@@ -262,6 +262,64 @@ class InjectionTests(unittest.TestCase):
         self.assertEqual(executed.returncode, 0, executed.stderr)
         self.assertEqual(executed.stdout, "")
 
+    def test_codex_disables_consumer_hooks_but_keeps_central_guard(self) -> None:
+        hooks_path = self.project_root / ".codex/hooks.json"
+        hooks_path.parent.mkdir(parents=True)
+        hooks_path.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {"hooks": [{"type": "command", "command": "legacy start"}]}
+                        ],
+                        "PreToolUse": [
+                            {
+                                "hooks": [
+                                    {"type": "command", "command": "legacy first"},
+                                    {"type": "command", "command": "legacy second"},
+                                ]
+                            }
+                        ],
+                        "Stop": [
+                            {"hooks": [{"type": "command", "command": "legacy stop"}]}
+                        ],
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        launch = self.prepare("codex")
+        command = list(launch.command)
+        source = str(hooks_path)
+
+        for event, group, handler in (
+            ("session_start", 0, 0),
+            ("pre_tool_use", 0, 0),
+            ("pre_tool_use", 0, 1),
+            ("stop", 0, 0),
+        ):
+            state_key = f"{source}:{event}:{group}:{handler}"
+            self.assertIn(
+                f"hooks.state.{json.dumps(state_key)}.enabled=false",
+                command,
+            )
+
+        central_hooks = Path(launch.environment["CODEX_HOME"]) / "hooks.json"
+        self.assertTrue(central_hooks.is_file())
+        central_commands = self.command_strings(
+            json.loads(central_hooks.read_text(encoding="utf-8"))
+        )
+        self.assertTrue(
+            any("managed_policy_guard.py" in value for value in central_commands)
+        )
+        self.assertFalse(
+            any(
+                str(central_hooks) in value and "enabled=false" in value
+                for value in command
+            )
+        )
+
     def test_bundle_reuse_repairs_invalid_snapshot_and_keeps_consumer_unchanged(self) -> None:
         before = self.consumer_snapshot()
         first = self.prepare("opencode", role="review")
@@ -418,6 +476,22 @@ class InjectionTests(unittest.TestCase):
 
         self.assertEqual(selected.path, worktree.resolve())
         self.assertEqual(selected.policy_root, repository.resolve())
+        launch = prepare_injection(
+            selected,
+            "codex",
+            "logic",
+            build_root=self.build_root,
+            state_root=self.state_root,
+            source_codex_home=self.source_codex_home,
+        )
+        self.assertEqual(
+            launch.environment["ASAN_AGENT_POLICY_PROJECT_PATH"],
+            str(worktree.resolve()),
+        )
+        self.assertIn(
+            f'projects."{worktree.resolve()}".trust_level="untrusted"',
+            launch.command,
+        )
         with self.assertRaises(PolicyError):
             active_project(project, str(worktree), "task/other")
 

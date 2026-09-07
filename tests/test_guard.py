@@ -195,6 +195,7 @@ Python unittest로 정책 계약을 검증했습니다.
         *,
         scopes: tuple[str, ...] = ("src",),
         integrator: str = "claude",
+        worktree: str = "",
     ) -> None:
         parent_head = guard.head(root, parent)
         subprocess.run(["git", "branch", branch, parent_head], cwd=root, check=True)
@@ -209,7 +210,7 @@ Python unittest로 정책 계약을 검증했습니다.
             parent,
             scopes,
             reason,
-            "",
+            worktree,
             roles,
             integrator,
         )
@@ -226,6 +227,7 @@ Python unittest로 정책 계약을 검증했습니다.
             "reason": reason,
             "git-integrator": integrator,
             "state": "ACTIVE",
+            "worktree": worktree,
         }.items():
             subprocess.run(
                 ["git", "config", f"branch.{branch}.asan-{field}", value],
@@ -243,6 +245,101 @@ Python unittest로 정책 계약을 검증했습니다.
                 ["git", "config", "--add", f"branch.{branch}.asan-scope", scope],
                 cwd=root,
                 check=True,
+            )
+
+    def test_codex_apply_patch_uses_absolute_v3_worktree_without_shell_parsing(self) -> None:
+        subprocess.run(["git", "branch", "-M", "sy-main"], cwd=self.root, check=True)
+        subprocess.run(["git", "add", ".agent-policy/manifest.json"], cwd=self.root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "-qm",
+                "baseline",
+            ],
+            cwd=self.root,
+            check=True,
+        )
+        runtime_guard = self.rendered_guard()
+        branch_source = (runtime_guard.parent / "branch_guard.py").read_bytes()
+        rendered_branch_guard = ModuleType("codex_absolute_worktree_branch_guard")
+        rendered_branch_guard.__file__ = str(runtime_guard.parent / "branch_guard.py")
+        exec(
+            compile(branch_source, rendered_branch_guard.__file__, "exec"),
+            rendered_branch_guard.__dict__,
+        )
+        branch = "task/codex-absolute-worktree"
+        worktree = self.root.parent / f"codex-worktree-{self.session_id}"
+        self.configure_v3_branch(
+            self.root,
+            rendered_branch_guard,
+            branch,
+            "sy-main",
+            scopes=("src/feature",),
+            integrator="codex",
+            worktree=str(worktree.resolve()),
+        )
+        subprocess.run(
+            ["git", "worktree", "add", "-q", str(worktree), branch],
+            cwd=self.root,
+            check=True,
+        )
+        try:
+            self.record_common_readiness("codex")
+            environment = {
+                **os.environ,
+                "ASAN_AGENT_POLICY_MODE": "inject",
+                "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+                "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(runtime_guard.parents[2]),
+                "ASAN_AGENT_POLICY_ROLE": "logic",
+                "ASAN_AGENT_POLICY_TASK": branch,
+            }
+
+            def run_patch(target: Path) -> subprocess.CompletedProcess[str]:
+                command = (
+                    "*** Begin Patch\n"
+                    f"*** Add File: {target}\n"
+                    "+export const parse = () => {\n"
+                    "+  return true;\n"
+                    "+};\n"
+                    "*** End Patch"
+                )
+                return subprocess.run(
+                    ["python3", "-I", str(runtime_guard), "pre-tool", "codex"],
+                    input=json.dumps(
+                        {
+                            "cwd": str(self.root),
+                            "session_id": self.session_id,
+                            "tool_name": "apply_patch",
+                            "tool_input": {"command": command},
+                        }
+                    ),
+                    text=True,
+                    capture_output=True,
+                    cwd=self.root,
+                    env=environment,
+                    check=False,
+                )
+
+            allowed = run_patch(worktree / "src/feature/parser.ts")
+            self.assertEqual(allowed.returncode, 0, allowed.stderr)
+            self.assertEqual(allowed.stdout, "")
+
+            denied = run_patch(worktree / "src/outside.ts")
+            self.assertEqual(denied.returncode, 0, denied.stderr)
+            decision = json.loads(denied.stdout)["hookSpecificOutput"]
+            self.assertEqual(decision["permissionDecision"], "deny")
+            self.assertIn("승인된 작업 범위 밖", decision["permissionDecisionReason"])
+        finally:
+            subprocess.run(
+                ["git", "worktree", "remove", "--force", str(worktree)],
+                cwd=self.root,
+                check=False,
+                capture_output=True,
             )
 
     def test_codex_returns_native_deny_shape(self) -> None:
