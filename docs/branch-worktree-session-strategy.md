@@ -171,14 +171,16 @@ Codex legacy hook의 기능을 공통 guard와 비교했다.
 | skill·재사용 탐색 marker | 세 host의 PostTool event에서 성공한 skill·역할별 재사용/인접 구현 탐색 근거를 공통 guard가 기록 |
 | source mutation marker | parent HEAD부터 current branch까지 committed diff와 dirty diff를 함께 검사 |
 | session artifact 귀속 | host+session binding과 구조화된 Write 경로로 공통 처리 |
-| Stop 8종 내용 검사 | 제목-only, Grill Me 데이터 행, portfolio 사례 구조 검사를 공통 guard로 이동 |
+| 완료 단계 8종 내용 검사 | 제목-only, Grill Me 데이터 행, portfolio 사례 구조 검사를 명시적인 finish·verify·close 단계의 공통 guard로 이동 |
 | Codex bootstrap hash | 단일 managed runtime bundle digest와 manifest 검증으로 통합 |
 
-Codex는 matching hook을 모두 실행하므로 legacy를 남겨 두고 공통 hook을 앞에 배치해도 중복이 사라지지 않는다. 따라서 adapter의 legacy Python hook과 등록은 제거하고 `managed_policy_guard.py` 하나로 통일한다. 공통 guard는 UserPrompt, PreTool, PostTool, Stop mode로 기존 승인·탐색·변경·산출물 보호를 포함하며 Claude Code와 OpenCode도 같은 상태 계약을 사용한다.
+Codex는 matching hook을 모두 실행하므로 legacy를 남겨 두고 공통 hook을 앞에 배치해도 중복이 사라지지 않는다. 따라서 adapter의 legacy Python hook과 등록은 제거하고 `managed_policy_guard.py` 하나로 통일한다. 공통 guard는 SessionStart, UserPrompt, PreTool과 PostTool mode로 승인·탐색·변경·산출물 보호를 포함하며 Claude Code와 OpenCode도 같은 상태 계약을 사용한다. Stop은 로그 수집만 수행하고, 호환용 `documentation-stop` mode는 항상 비차단이다.
 
 ## 8. Git 명령 분류와 사용자 전용 명령
 
 parser는 `git -C <path>`, `git -c key=value`, `--git-dir` 같은 global option 뒤의 실제 subcommand를 찾는다. 해석 실패는 허용하지 않고 fail-closed한다.
+
+`status`, `diff`, `log`, 조회형 `branch`, `worktree list`는 읽기 전용으로 분류해 구현 gate와 명령 승인을 적용하지 않는다. 나머지 변경형 또는 미분류 Git 호출에만 mutation 계약과 사용자 승인을 적용한다.
 
 다음 명령은 host 승인 요청으로 해제하지 않는다.
 
@@ -268,7 +270,7 @@ dirty 기준 폴더 때문에 격리 worktree를 새로 만든 경우에도 그 
 | 역할·workflow·소유권 | `policy/common/skills/policy/task-role-routing/` |
 | branch 규범·CLI | `policy/common/skills/policy/git-branch-strategy/` |
 | 계보·scope·Git parser | `policy/guards/branch_guard.py` |
-| managed path·session·Stop guard | `policy/guards/managed_policy_guard.py` |
+| managed path·session·완료 단계 guard | `policy/guards/managed_policy_guard.py` |
 | sync renderer | `lib/agent_policy/core.py` |
 | inject bundle | `lib/agent_policy/injection.py` |
 | worktree/session launcher | `lib/agent_policy/cli.py` |

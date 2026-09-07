@@ -70,11 +70,11 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 - sync 모드의 Codex와 Claude Code는 SessionStart hook에서 중앙 source digest와 로컬 파일 hash를 검사합니다.
 - sync 모드의 OpenCode는 plugin 로드 시 같은 검사를 사용자에게 경고하고, `start` wrapper는 drift가 있으면 실행을 중단합니다.
 - inject 모드는 소비자 drift를 경고하되 중앙 digest 번들을 기준으로 계속하며, SessionStart hook도 같은 상태와 브랜치 context를 보고합니다.
-- Codex와 Claude Code는 Stop hook, OpenCode는 `session.idle`에서 역할 계약에 맞는 산출물을 확인하고 실행 호스트 채널로 수집합니다.
+- Codex와 Claude Code의 Stop hook 및 OpenCode의 `session.idle`은 세션 로그를 수집하되 대화를 차단하지 않습니다. 역할 계약에 맞는 산출물 검증은 명시적인 `finish-proposal`, `finish`, `verify`, `close`, `preserve` 단계에서 수행합니다.
 - 세 호스트 모두 managed file 편집과 명시적인 shell write를 차단합니다.
 - 세 호스트 모두 공통 UserPrompt/PostTool 상태로 구현 승인, 관련 skill 확인과 역할별 재사용·인접 구현 탐색을 기록하며, 조건을 갖추기 전 source mutation을 차단합니다.
 - branch create와 finish 계열은 proposal 출력 뒤 사용자가 승인한 64자리 SHA-256이 실행 인자와 일치해야 합니다.
-- 에이전트가 제안한 모든 Git 명령과 build/dev/start/preview 계열 명령은 실행 전에 사용자가 직접 판단합니다.
+- 저장소를 변경하는 Git 명령과 build/dev/start/preview 계열 명령은 실행 전에 사용자가 직접 판단합니다. `status`, `diff`, `log`, branch 목록과 `worktree list` 같은 읽기 전용 Git 조사는 별도 명령 승인이나 구현 gate 없이 허용합니다.
 - sync 모드에서 중앙 원본을 바꾼 뒤에는 sync하고 실행 중인 세션을 handoff한 다음 새 세션을 시작해야 합니다. inject 모드는 새 세션 시작 때 현재 중앙 source digest의 새 번들을 선택합니다.
 
 ## 역할과 병렬 세션
@@ -88,6 +88,7 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 
 ## 보호 명령 승인 방식
 
+- 아래 승인은 저장소를 변경하는 Git 명령에만 적용합니다. 읽기 전용 Git 조회는 허용하며, 해석할 수 없는 Git 형태는 변경형으로 간주해 fail-closed합니다.
 - Codex: 첫 시도를 차단하고 정확한 명령을 표시합니다. 사용자가 `명령 실행 승인`만 독립된 메시지로 보내면 같은 명령을 30분 안에 한 번 실행할 수 있습니다.
 - Claude Code: 중앙 `PreToolUse` 훅이 `ask`를 반환하여 호스트 권한 UI에서 사용자가 결정합니다.
 - OpenCode 1.18.x: 생성된 `opencode.json`의 `permission.bash`가 명령 패턴별 권한 UI를 표시합니다. 기본적으로 `once`를 선택하고 `always`는 사용자가 의도한 경우에만 선택합니다.
@@ -97,7 +98,9 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 
 OpenCode V2는 `permission`/`bash` 대신 `permissions`/`shell` 규칙 배열을 사용합니다. 현재 adapter는 설치된 OpenCode 1.18.25의 V1 스키마를 대상으로 하므로 V2로 올릴 때 config renderer와 smoke test를 함께 마이그레이션해야 합니다.
 
-정책 훅이 중앙 manifest와 저장소 루트를 찾기 위해 수행하는 내부 읽기 전용 저장소 확인은 에이전트가 제안하는 Git 작업과 구분합니다.
+`전부 승인`과 `모두 승인`은 보고된 구현 계획에 대한 승인으로만 기록합니다. Codex의 정확한 shell 명령 1회 승인을 대신하지 않습니다.
+
+정책 훅이 중앙 manifest와 저장소 루트를 찾기 위해 수행하는 내부 읽기 전용 저장소 확인도 같은 조회 분류를 사용합니다.
 
 ## 중앙 로그 운영
 

@@ -243,6 +243,32 @@ class BranchGuardTests(unittest.TestCase):
         self.assertIsNotNone(denial)
         self.assertIn("기준 브랜치", denial)
 
+    def test_git_query_classification_is_shared_and_fail_closed(self) -> None:
+        read_only = (
+            "git status --short --branch",
+            "git diff --stat",
+            "git log -1 --oneline",
+            "git branch -a -vv --no-abbrev",
+            "git branch --list 'task/*'",
+            "git worktree list --porcelain",
+            "git -C . worktree list --verbose",
+        )
+        mutating_or_unknown = (
+            "git branch task/new",
+            "git branch -D task/old",
+            "git worktree add ../next task/new",
+            "git worktree prune",
+            "git mystery-command",
+        )
+
+        for command in read_only:
+            with self.subTest(command=command):
+                self.assertFalse(self.guard.git_command_mutates(command))
+                self.assertIsNone(self.guard.command_denial(self.root, command, host="codex"))
+        for command in mutating_or_unknown:
+            with self.subTest(command=command):
+                self.assertTrue(self.guard.git_command_mutates(command))
+
     def test_approved_task_branch_enforces_scope_and_reports_context(self) -> None:
         branch = self.configure_task_branch()
         self.assertIsNone(

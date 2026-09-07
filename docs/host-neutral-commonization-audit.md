@@ -43,7 +43,7 @@ Codex에서는 같은 이벤트에 일치하는 hook이 모두 실행되며 하�
 | mutation target 검사 | 구조화된 경로, patch 경로, shell 쓰기와 branch scope 검사로 확대 |
 | 세션 귀속 상태 | host·session·task·responsibility binding으로 확대 |
 | source 변경 감지 | working tree뿐 아니라 승인 parent HEAD 이후 committed diff까지 검사 |
-| Stop 산출물 검사 | 제목-only, Grill Me 실제 데이터 행, portfolio 사례·필드 검사를 공통 guard로 이동 |
+| 완료 단계 산출물 검사 | 제목-only, Grill Me 실제 데이터 행, portfolio 사례·필드 검사를 finish·verify·close·preserve의 공통 guard로 이동하고 Stop 재진입은 제거 |
 | bootstrap 자체 hash | 불변 inject bundle digest와 sync manifest 검증으로 대체 |
 
 중앙 Codex adapter의 legacy Python 파일과 기존 등록은 제거했다. 렌더 결과에는 `.agent-policy/runtime/managed_policy_guard.py`와 `.agent-policy/runtime/branch_guard.py` 한 쌍만 있고, Claude plugin과 OpenCode home도 같은 runtime bytes를 각 실행 형식에서 호출한다.
@@ -57,7 +57,7 @@ Codex에서는 같은 이벤트에 일치하는 hook이 모두 실행되며 하�
 | `lib/agent_policy/role_profiles.py` | role·host artifact root·responsibility를 공통 registry에서 읽는다. |
 | `lib/agent_policy/cli.py` | `--role`, `--task`, `--responsibility`, `--worktree`, `--branch`, `--session-dir`를 검증하고 외부 worktree 오류 시 기본 폴더로 fallback하지 않는다. |
 | `lib/agent_policy/log_mirror.py` | 8종과 handoff를 registry에서 읽고 host 미상 채널 및 각 세션의 `unknown/`을 수집한다. |
-| `policy/guards/managed_policy_guard.py` | managed 파일, artifact host·session 귀속, shell 쓰기, Stop 구조, command approval을 통합한다. 읽기는 허용하고 다른 host·session 쓰기는 거부한다. |
+| `policy/guards/managed_policy_guard.py` | managed 파일, artifact host·session 귀속, shell 쓰기, 완료 단계 검사와 변경형 command approval을 통합한다. 읽기는 허용하고 다른 host·session 쓰기는 거부한다. |
 | `policy/guards/branch_guard.py` | V3 계보·scope·Git 통합 담당자, global option parser, 사용자 전용 Git 명령과 fail-closed 분류를 담당한다. |
 | `branch_workflow.py` | snapshot runtime 우선 로드, immutable create·finish proposal, ff-only merge, 검증, close와 preserve·resume 상태 전이를 담당한다. |
 | OpenCode plugin | `chat.message`, `tool.execute.before|after`에서 session id, 사용자 승인과 도구 근거를 공통 guard에 전달하고, 없으면 선언된 `ASAN_SESSION_DIR` 계약으로 귀속한다. |

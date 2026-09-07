@@ -422,7 +422,7 @@ python3 <absolute-branch-workflow.py> resume
 
 파일 생성·수정·삭제는 경로를 명시적으로 전달하는 Edit, Write 또는 apply_patch 계열 도구를 사용한다.
 
-Bash heredoc, tee 또는 redirect로 산출물을 만들면 session assignment 귀속이 기록되지 않아 Stop hook에서 차단될 수 있다.
+Bash heredoc, tee 또는 redirect로 산출물을 만들면 session assignment 귀속이 기록되지 않아 완료·보존 workflow에서 차단될 수 있다. 일반 대화 종료와 읽기 전용 조사는 산출물 완료 검사를 실행하지 않는다.
 
 잘못된 예:
 
@@ -440,6 +440,8 @@ PY
 stderr만 터미널로 전달하는 2>&1 또는 /dev/null redirect는 파일 산출물 쓰기로 보지 않지만, managed file을 redirect 대상으로 숨길 수는 없다.
 
 ### Git 대상 명시
+
+`git status`, `git diff`, `git log`, 조회형 `git branch`와 `git worktree list`는 저장소를 바꾸지 않으므로 구현 gate나 별도 명령 승인을 요구하지 않는다. 변경형 또는 해석할 수 없는 Git 명령은 기존 승인·branch 검증을 거친다.
 
 stage는 path separator를 포함해 실행한다.
 
@@ -543,7 +545,7 @@ handoff의 next_role은 제안이지 자동 권한이 아니다.
 
 ## 12. 구현 완료와 병합
 
-구현, owner 산출물 8종, 검증과 source branch commit이 끝나면 완료 proposal을 만든다.
+구현, owner 산출물 8종, 검증과 source branch commit이 끝나면 완료 proposal을 만든다. 산출물 구조와 귀속은 이 명시적 완료 단계와 `finish`, `verify`, `close`, `preserve`에서 검증하며 Stop hook은 대화를 재개시키지 않는다.
 
 finish-proposal은 source task worktree에서 실행하고, 승인된 finish·verify·close는 workflow가 요구하는 target 상태를 매 단계 다시 확인할 수 있도록 각각 별도 호출한다.
 
@@ -669,7 +671,9 @@ bin/agent-policy collect-logs \
 | inject 재시작 후에도 소비자 .claude/hooks 경로를 사용 | 현재 inject launcher가 아닌 legacy/sync 설정으로 실행        | --print-only에서 build bundle의 절대 guard 경로 확인                                                     |
 | proposal/create가 정책 snapshot 경로 때문에 차단      | 오래된 guard가 inject snapshot workflow를 신뢰하지 못함      | 새 inject 번들로 재시작하고 system prompt가 제공한 절대 branch_workflow.py 사용                          |
 | 승인 요청 식별자 불일치                               | 축약 SHA 또는 다른 proposal 값 사용                          | 출력된 동일 파일과 64자리 SHA-256 전체값 사용                                                            |
-| Stop hook이 산출물 누락·귀속 오류 보고                | heredoc 또는 redirect로 산출물 생성                          | 현재 session directory에 구조화된 Write 도구로 작성                                                      |
+| finish·close가 산출물 누락·귀속 오류 보고             | 구조화된 Write 없이 산출물을 만들었거나 owner 문서가 미완료 | 현재 session directory에 구조화된 Write 도구로 필수 문서를 완성                                          |
+| Codex SessionStart hook JSON 오류                      | 오래된 guard가 context를 일반 텍스트로 출력                 | 새 정책으로 sync하거나 새 inject 번들로 세션 재시작                                                       |
+| 읽기 전용 Git 조회가 구현·명령 승인을 요구             | 오래된 guard가 모든 Git 호출을 변경형으로 분류              | 새 정책으로 sync하거나 inject 재시작 후 단순 조회 명령을 다시 실행                                       |
 | `git checkout -- PATH`가 branch 전환으로 판정         | checkout 명령의 의미가 모호함                                | `git restore ... -- PATH` 사용                                                                           |
 | checkout과 merge를 결합한 명령이 잘못 판정            | 전환 전 cwd·branch에서 복합 명령을 평가                      | 명령을 분리하고 V3 merge는 finish workflow 사용                                                          |
 | dirty worktree라 branch 생성 불가                     | primary에 다른 작업의 변경이 존재                            | 기존 변경을 건드리지 말고 proposal에 외부 --worktree 포함                                                |

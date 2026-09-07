@@ -7,6 +7,7 @@ import re
 import shlex
 import subprocess
 import tempfile
+import tomllib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -311,12 +312,6 @@ def render_codex_hooks(project: ProjectConfig) -> bytes:
             "hooks": [
                 {
                     "type": "command",
-                    "command": hook_command(project, "documentation-stop", "codex"),
-                    "timeout": 10,
-                    "statusMessage": "Checking role-based task artifacts",
-                },
-                {
-                    "type": "command",
                     "command": log_collection_command(project, "codex"),
                     "timeout": 30,
                     "statusMessage": "Mirroring required artifacts to central logs",
@@ -377,11 +372,6 @@ def render_claude_settings(project: ProjectConfig) -> bytes:
         "Stop": [
             {
                 "hooks": [
-                    {
-                        "type": "command",
-                        "command": hook_command(project, "documentation-stop", "claude"),
-                        "timeout": 10,
-                    },
                     {
                         "type": "command",
                         "command": log_collection_command(project, "claude"),
@@ -870,6 +860,18 @@ def audit_source_contract() -> tuple[str, ...]:
     )
     if re.search(r"^\s*codex_hooks\s*=", codex_config, re.MULTILINE):
         issues.append("deprecated Codex codex_hooks feature remains")
+    codex_agent_root = CENTRAL_ROOT / "adapters/codex/files/.codex/agents"
+    required_codex_agent_keys = {"name", "description", "developer_instructions"}
+    for path in sorted(codex_agent_root.glob("*.toml")):
+        try:
+            agent = tomllib.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, tomllib.TOMLDecodeError) as error:
+            issues.append(f"invalid Codex agent TOML {path.name}: {error}")
+            continue
+        if set(agent) != required_codex_agent_keys:
+            issues.append(
+                f"unsupported Codex agent schema {path.name}: keys={sorted(agent)}"
+            )
 
     scanned_roots = (
         CENTRAL_ROOT / "policy",
@@ -946,18 +948,25 @@ def audit_source_contract() -> tuple[str, ...]:
         claude_hooks = json.loads(rendered[".claude/settings.json"])["hooks"]
         for host, registrations in (("codex", codex_hooks), ("claude", claude_hooks)):
             for event, mode in (
+                ("SessionStart", "session-start"),
                 ("UserPromptSubmit", "user-prompt"),
                 ("PreToolUse", "pre-tool"),
                 ("PostToolUse", "post-tool"),
-                ("Stop", "documentation-stop"),
             ):
                 serialized = json.dumps(registrations.get(event, ()), ensure_ascii=False)
                 if "managed_policy_guard.py" not in serialized or f"{mode} {host}" not in serialized:
                     issues.append(f"{project_id}: {host} common guard registration missing: {event}")
+            stop_serialized = json.dumps(registrations.get("Stop", ()), ensure_ascii=False)
+            if "collect-logs" not in stop_serialized:
+                issues.append(f"{project_id}: {host} Stop log collection missing")
+            if "documentation-stop" in stop_serialized:
+                issues.append(f"{project_id}: {host} blocking documentation Stop hook remains")
         opencode_plugin = rendered[".opencode/plugins/agent-policy.js"].decode("utf-8")
         for marker in ('"chat.message"', '"tool.execute.before"', '"tool.execute.after"'):
             if marker not in opencode_plugin:
                 issues.append(f"{project_id}: OpenCode common guard event missing: {marker}")
+        if "documentation-stop" in opencode_plugin:
+            issues.append(f"{project_id}: OpenCode blocking idle documentation check remains")
         for template_name in expected_templates:
             common_path = f".agent-policy/common/templates/{template_name}"
             if common_path not in rendered:

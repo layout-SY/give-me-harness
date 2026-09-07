@@ -29,7 +29,7 @@
 2. **역할 확인**: inject role이 없으면 제안 역할, 수정 범위, 필요한 스킬과 Git 통합 담당자를 사용자에게 알리고 확인받는다. 사용자가 같은 프롬프트에서 역할과 진행을 이미 명시했다면 그 지시를 확인으로 사용할 수 있다. inject role이 있으면 해당 role 경계를 확인하고 이 단계를 반복하지 않는다.
 3. **브랜치 확인**: 현재 브랜치, 변경 상태, 부모·merge 대상 계보와 승인 scope를 확인한다.
 4. **탐색**: 대상 코드와 인접 구현을 읽고, UI가 관련되면 `src/shared/ui/`를 먼저 조사하며 필요한 스킬만 불러온다.
-5. **계획·구현 승인**: 범위, 역할 소유권, 검증 방법, 예상 diff와 대안을 보고한다. 명시적인 `진행`, `진행해줘`, `Proceed` 또는 문서화된 동등한 승인 전에는 저장소를 변경하지 않는다. 공통 guard는 사용자 prompt의 승인을 세션별로 기록하고, 관련 `SKILL.md`와 역할별 재사용 자산·인접 구현을 실제로 확인하기 전 source mutation을 차단한다.
+5. **계획·구현 승인**: 범위, 역할 소유권, 검증 방법, 예상 diff와 대안을 보고한다. 명시적인 `진행`, `진행해줘`, `전부 승인`, `모두 승인`, `Proceed` 또는 문서화된 동등한 승인 전에는 저장소를 변경하지 않는다. 공통 guard는 사용자 prompt의 승인을 세션별로 기록하고, 관련 `SKILL.md`와 역할별 재사용 자산·인접 구현을 실제로 확인하기 전 source mutation을 차단한다. 이 승인은 Codex의 정확한 shell 명령 1회 승인을 대신하지 않는다.
 6. **브랜치 승인**: 저장소 변경 작업은 구현 승인과 별도로 분기 기준, 새 브랜치, 목적, 역할, Git 통합 담당자, scope와 직접 merge 대상을 포함한 계약을 승인받는다. `branch_workflow.py proposal`이 출력한 파일과 64자리 SHA-256을 보고한 뒤 해당 계약에 대한 사용자의 독립된 승인을 받아야 한다.
 7. **구현**: 확인된 역할과 승인된 브랜치·scope 안에서 한 번에 한 논리 구간씩 작업한다.
 8. **검토**: Watcher는 현재 변경의 통과 여부를 판정하고 Evaluator는 장기 개선 사항을 별도로 기록한다.
@@ -80,6 +80,8 @@ session assignment가 `owner`인 작업자는 OpenCode에서 확립된 다음 8�
 
 session assignment가 `contributor`인 작업자는 `handoff.md`를 작성한다. handoff는 전체 완료 판정이나 8종 산출물을 대신하지 않는다. 한 작업자가 여러 역할을 모두 수행하면 역할별로 중복 문서를 만들지 않고 작업 단위 산출물 한 세트를 작성한다. 책임은 branch 전체 속성이 아니라 `start --responsibility owner|contributor`로 세션마다 정한다.
 
+일반 대화 종료, 상태 설명과 문서·코드의 읽기 전용 조사에는 필수 산출물 완료 검사를 실행하지 않는다. 산출물 구조와 귀속은 명시적인 `finish-proposal`, `finish`, `verify`, `close`, `preserve` lifecycle에서만 기계적으로 강제한다.
+
 정의되지 않은 보조 문서는 현재 세션 디렉터리의 `unknown/` 아래에 둔다. host를 식별할 수 없는 런타임은 `.agent-policy/logs/unknown/sessions/`를 사용한다. 다른 host·다른 세션의 산출물은 읽을 수 있지만 수정할 수 없다.
 
 ### 세션과 작업 귀속
@@ -94,6 +96,7 @@ session assignment가 `contributor`인 작업자는 `handoff.md`를 작성한다
 - 다른 host 또는 다른 세션의 산출물 디렉터리에 쓰지 않는다. 필요한 문서는 읽을 수 있다. 이어받을 때는 handoff와 선택된 inject role의 일치 여부를 확인하고, role이 없는 세션이면 역할을 다시 확인한 뒤 새 assignment와 승인된 디렉터리를 사용한다.
 - 산출물의 최초 쓰기는 파일 경로를 구조적으로 전달하는 호스트 쓰기 도구로 수행한다. Bash heredoc·리다이렉션은 귀속을 기록하지 못하므로 사용하지 않는다. 호스트별 구체 도구는 adapter 문서를 따른다.
 - 저장소 파일의 일반 생성·수정·삭제도 branch scope를 검증할 수 있는 구조화된 Edit/Write/apply_patch 계열 도구를 사용한다. Git과 승인된 branch workflow 외의 `rm`, `mv`, `cp`, `touch`, `sed -i` 같은 비구조적 shell 변경은 사용하지 않는다.
+- `git status`, `git diff`, `git log`, 조회형 `git branch`와 `git worktree list`는 읽기 전용 조사로 허용한다. 저장소를 변경하거나 안전하게 분류할 수 없는 Git 명령에만 구현 gate, branch 계약과 호스트별 명령 승인을 적용한다.
 
 ### handoff
 

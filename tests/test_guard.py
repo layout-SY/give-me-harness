@@ -426,8 +426,9 @@ Python unittest로 정책 계약을 검증했습니다.
                 self.assertIn("AGENTS.md", result.stderr)
 
     def test_claude_asks_for_git_build_and_dev_commands(self) -> None:
+        self.record_common_readiness("claude")
         for command, expected_category in (
-            ("git status --short", "Git"),
+            ("git fetch origin", "Git"),
             ("npm run build", "빌드"),
             ("vite build", "빌드"),
             ("npm run dev -- --host", "개발 서버"),
@@ -449,8 +450,25 @@ Python unittest로 정책 계약을 검증했습니다.
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout, "")
 
+    def test_read_only_git_queries_need_neither_implementation_nor_command_approval(self) -> None:
+        commands = (
+            "git status --short --branch",
+            "git diff --stat",
+            "git log -1 --oneline",
+            "git branch -a -vv --no-abbrev",
+            "git worktree list --porcelain",
+            "git -C . config --get user.name",
+        )
+        for host in ("codex", "claude"):
+            for command in commands:
+                with self.subTest(host=host, command=command):
+                    result = self.run_guard(host, "Bash", {"command": command})
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, "")
+
     def test_codex_approval_is_exact_and_one_shot(self) -> None:
-        command = "git status --short"
+        command = "git fetch origin"
+        self.record_common_readiness("codex")
         first = self.run_guard("codex", "Bash", {"command": command})
         self.assertEqual(
             json.loads(first.stdout)["hookSpecificOutput"]["permissionDecision"],
@@ -485,7 +503,8 @@ Python unittest로 정책 계약을 검증했습니다.
         )
 
     def test_codex_approval_is_isolated_by_session(self) -> None:
-        command = "git diff --stat"
+        command = "git fetch origin"
+        self.record_common_readiness("codex")
         first_session = self.session_id
         self.run_guard("codex", "Bash", {"command": command})
         self.run_mode("user-prompt", "codex", {"prompt": "명령 실행 승인"})
@@ -500,6 +519,53 @@ Python unittest로 정책 계약을 검증했습니다.
         self.session_id = first_session
         original_session = self.run_guard("codex", "Bash", {"command": command})
         self.assertEqual(original_session.stdout, "")
+
+    def test_all_approval_phrases_only_satisfy_implementation_approval(self) -> None:
+        for phrase in ("전부 승인", "모두 승인"):
+            with self.subTest(phrase=phrase):
+                self.session_id = str(uuid.uuid4())
+                environment = {"ASAN_AGENT_POLICY_ROLE": "logic"}
+                self.run_mode(
+                    "post-tool",
+                    "codex",
+                    {"tool_name": "Skill", "tool_input": {"skill": "policy"}},
+                    environment,
+                )
+                self.run_mode(
+                    "post-tool",
+                    "codex",
+                    {"tool_name": "Read", "tool_input": {"file_path": "src/App.tsx"}},
+                    environment,
+                )
+                self.run_mode("user-prompt", "codex", {"prompt": phrase}, environment)
+                write = self.run_mode(
+                    "pre-tool",
+                    "codex",
+                    {"tool_name": "Write", "tool_input": {"file_path": "src/feature.ts"}},
+                    environment,
+                )
+                self.assertEqual(write.returncode, 0, write.stderr)
+                self.assertEqual(write.stdout, "")
+
+                build = self.run_mode(
+                    "pre-tool",
+                    "codex",
+                    {"tool_name": "Bash", "tool_input": {"command": "npm run build"}},
+                    environment,
+                )
+                decision = json.loads(build.stdout)["hookSpecificOutput"]
+                self.assertEqual(decision["permissionDecision"], "deny")
+                self.assertIn("명령 실행 승인", decision["permissionDecisionReason"])
+
+    def test_codex_session_start_context_is_valid_json(self) -> None:
+        result = self.run_mode("session-start", "codex", {})
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        output = json.loads(result.stdout)
+        context = output["hookSpecificOutput"]
+        self.assertEqual(context["hookEventName"], "SessionStart")
+        self.assertIsInstance(context["additionalContext"], str)
+        self.assertTrue(context["additionalContext"])
 
     def test_codex_approval_phrase_must_be_standalone(self) -> None:
         command = "npm run dev"
@@ -936,6 +1002,71 @@ Python unittest로 정책 계약을 검증했습니다.
         self.assertEqual(parent_binding["task"], parent)
         self.assertEqual(parent_binding["branch"], parent)
 
+    def test_v3_codex_artifact_write_needs_no_proposal_reapproval(self) -> None:
+        subprocess.run(["git", "branch", "-M", "sy-main"], cwd=self.root, check=True)
+        subprocess.run(["git", "add", ".agent-policy/manifest.json"], cwd=self.root, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "-qm",
+                "baseline",
+            ],
+            cwd=self.root,
+            check=True,
+        )
+        runtime_guard = self.rendered_guard()
+        branch_source = (runtime_guard.parent / "branch_guard.py").read_bytes()
+        rendered_branch_guard = ModuleType("codex_artifact_branch_guard")
+        rendered_branch_guard.__file__ = str(runtime_guard.parent / "branch_guard.py")
+        exec(
+            compile(branch_source, rendered_branch_guard.__file__, "exec"),
+            rendered_branch_guard.__dict__,
+        )
+        branch = "task/meeting-reservation-logic"
+        self.configure_v3_branch(
+            self.root,
+            rendered_branch_guard,
+            branch,
+            "sy-main",
+            integrator="codex",
+        )
+        subprocess.run(["git", "switch", "-q", branch], cwd=self.root, check=True)
+        session_dir = ".codex/logs/sessions/2026-09-07-meeting-reservation-logic"
+        environment = {
+            "ASAN_AGENT_POLICY_MODE": "inject",
+            "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+            "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(runtime_guard.parents[2]),
+            "ASAN_AGENT_POLICY_ROLE": "logic",
+            "ASAN_AGENT_POLICY_TASK": branch,
+            "ASAN_ARTIFACT_RESPONSIBILITY": "owner",
+            "ASAN_SESSION_DIR": session_dir,
+        }
+
+        result = subprocess.run(
+            ["python3", "-I", str(runtime_guard), "pre-tool", "codex"],
+            input=json.dumps(
+                {
+                    "cwd": str(self.root),
+                    "session_id": self.session_id,
+                    "tool_name": "Write",
+                    "tool_input": {"file_path": f"{session_dir}/plan.md"},
+                }
+            ),
+            text=True,
+            capture_output=True,
+            cwd=self.root,
+            env={**os.environ, **environment},
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
+
     def test_proposal_posttool_binds_user_approval_to_full_sha256(self) -> None:
         bundle = self.root / "central-bundle"
         script = (
@@ -1061,7 +1192,7 @@ Python unittest로 정책 계약을 검증했습니다.
         self.assertEqual(contributor.returncode, 2)
         self.assertIn("owner assignment", contributor.stderr)
 
-    def test_bash_artifact_write_is_rejected_before_session_stop(self) -> None:
+    def test_bash_artifact_write_is_rejected_without_structured_binding(self) -> None:
         command = (
             "cat <<'EOF' > .claude/logs/sessions/2026-09-02-task/handoff.md\n"
             "handoff content\nEOF"
@@ -1353,7 +1484,7 @@ Python unittest로 정책 계약을 검증했습니다.
                 capture_output=True,
             )
 
-    def test_stop_detects_clean_committed_changes_since_the_approved_parent(self) -> None:
+    def test_legacy_documentation_stop_never_blocks_committed_changes(self) -> None:
         subprocess.run(["git", "branch", "-M", "sy-main"], cwd=self.root, check=True)
         subprocess.run(["git", "add", ".agent-policy/manifest.json"], cwd=self.root, check=True)
         subprocess.run(
@@ -1417,9 +1548,14 @@ Python unittest로 정책 계약을 검증했습니다.
             ).stdout,
             "",
         )
-        result = self.run_mode("documentation-stop", "codex", {})
-        self.assertEqual(json.loads(result.stdout)["decision"], "block")
-        self.assertIn("산출물 디렉터리", json.loads(result.stdout)["reason"])
+        for stop_hook_active in (False, True):
+            with self.subTest(stop_hook_active=stop_hook_active):
+                result = self.run_mode(
+                    "documentation-stop",
+                    "codex",
+                    {"stop_hook_active": stop_hook_active},
+                )
+                self.assertEqual(json.loads(result.stdout), {})
 
     def test_active_session_directory_cannot_change_before_close(self) -> None:
         first = ".claude/logs/sessions/2026-09-01-first/handoff.md"
@@ -1435,25 +1571,17 @@ Python unittest로 정책 계약을 검증했습니다.
         self.assertIn("CLOSED", changed.stderr)
         self.assertIn("별도 worktree와 세션", changed.stderr)
 
-    def test_claude_stop_requires_bound_handoff_for_application_changes(self) -> None:
+    def test_claude_legacy_documentation_stop_is_nonblocking(self) -> None:
         source = self.root / "src/App.tsx"
         source.parent.mkdir(parents=True)
         source.write_text("export const App = () => null\n", encoding="utf-8")
 
-        missing = self.run_mode("documentation-stop", "claude", {})
-        self.assertEqual(json.loads(missing.stdout)["decision"], "block")
+        result = self.run_mode("documentation-stop", "claude", {"stop_hook_active": True})
 
-        relative = ".claude/logs/sessions/2026-08-31-task/handoff.md"
-        binding = self.run_guard("claude", "Write", {"file_path": relative})
-        self.assertEqual(binding.returncode, 0, binding.stderr)
-        handoff = self.root / relative
-        handoff.parent.mkdir(parents=True)
-        handoff.write_text("구현 결과와 후속 연결 계약을 기록합니다.\n", encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {})
 
-        complete = self.run_mode("documentation-stop", "claude", {})
-        self.assertEqual(json.loads(complete.stdout), {})
-
-    def test_v2_full_artifact_mode_does_not_accept_handoff_only(self) -> None:
+    def test_completion_workflow_still_requires_full_owner_artifacts(self) -> None:
         branch = subprocess.run(
             ["git", "branch", "--show-current"],
             cwd=self.root,
@@ -1474,18 +1602,54 @@ Python unittest로 정책 계약을 검증했습니다.
         source = self.root / "src/App.tsx"
         source.parent.mkdir(parents=True)
         source.write_text("export const App = () => null\n", encoding="utf-8")
+        bundle = self.root / "central-bundle"
+        script = (
+            bundle
+            / "policy/.agent-policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py"
+        )
+        script.parent.mkdir(parents=True)
+        script.write_text("# trusted test fixture\n", encoding="utf-8")
+        environment = {
+            "ASAN_AGENT_POLICY_MODE": "inject",
+            "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+            "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(bundle),
+            "ASAN_ARTIFACT_RESPONSIBILITY": "owner",
+            "ASAN_SESSION_DIR": ".codex/logs/sessions/2026-09-02-full",
+        }
         relative = ".codex/logs/sessions/2026-09-02-full/handoff.md"
-        self.assertEqual(self.run_guard("codex", "Write", {"file_path": relative}).returncode, 0)
+        binding = self.run_mode(
+            "pre-tool",
+            "codex",
+            {"tool_name": "Write", "tool_input": {"file_path": relative}},
+            environment,
+        )
+        self.assertEqual(binding.returncode, 0, binding.stderr)
         session = (self.root / relative).parent
         session.mkdir(parents=True)
         (session / "handoff.md").write_text("부분 인계 내용이 충분히 있습니다.\n", encoding="utf-8")
+        finish_proposal = f"python3 {script} finish-proposal --verify-command 'npm run test'"
 
-        handoff_only = self.run_mode("documentation-stop", "codex", {})
+        handoff_only = self.run_mode(
+            "pre-tool",
+            "codex",
+            {"tool_name": "Bash", "tool_input": {"command": finish_proposal}},
+            environment,
+        )
 
-        self.assertIn("필수 산출물 8종", json.loads(handoff_only.stdout)["reason"])
+        handoff_reason = json.loads(handoff_only.stdout)["hookSpecificOutput"][
+            "permissionDecisionReason"
+        ]
+        self.assertIn("필수 산출물 8종", handoff_reason)
         self.write_complete_artifacts(session)
-        complete = self.run_mode("documentation-stop", "codex", {})
-        self.assertEqual(json.loads(complete.stdout), {})
+        self.record_common_readiness("codex")
+        complete = self.run_mode(
+            "pre-tool",
+            "codex",
+            {"tool_name": "Bash", "tool_input": {"command": finish_proposal}},
+            environment,
+        )
+        self.assertEqual(complete.returncode, 0, complete.stderr)
+        self.assertEqual(complete.stdout, "")
 
     def test_closed_merged_task_can_rebind_same_session_to_next_task(self) -> None:
         subprocess.run(["git", "checkout", "-qb", "sy-main"], cwd=self.root, check=True)

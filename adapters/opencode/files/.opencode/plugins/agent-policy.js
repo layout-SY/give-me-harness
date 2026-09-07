@@ -117,29 +117,6 @@ export const AgentPolicyPlugin = async ({ client, directory }) => {
     event: async ({ event }) => {
       if (event.type !== "session.idle") return
 
-      const documentation = evaluate(directory, "documentation-stop", {
-        session_id: sessionId(event),
-      })
-      const output = documentation.stdout?.trim()
-      if (output) {
-        try {
-          const verdict = JSON.parse(output)
-          if (verdict.decision === "block") {
-            await showNotification(client, directory, "산출물 확인 필요", verdict.reason)
-            return
-          }
-        } catch {
-          await showNotification(
-            client,
-            directory,
-            "산출물 판정 오류",
-            `산출물 판정 결과를 해석할 수 없습니다: ${output}`,
-            "error",
-          )
-          return
-        }
-      }
-
       const result = collectLogs()
       if (result.status === 0) return
       const message = result.stderr?.trim() || result.error?.message || "알 수 없는 오류"

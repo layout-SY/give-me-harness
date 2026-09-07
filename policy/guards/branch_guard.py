@@ -1132,6 +1132,179 @@ def _symbolic_ref_is_read_only(arguments: tuple[str, ...]) -> bool:
     return len(positionals) == 1
 
 
+def _branch_is_read_only(arguments: tuple[str, ...]) -> bool:
+    """branch 목록·필터 조회와 ref 변경형을 보수적으로 구분한다."""
+
+    mutating_options = (
+        "-c",
+        "-C",
+        "--copy",
+        "-d",
+        "-D",
+        "--delete",
+        "-m",
+        "-M",
+        "--move",
+        "-f",
+        "--force",
+        "-t",
+        "--track",
+        "--no-track",
+        "-u",
+        "--set-upstream-to",
+        "--unset-upstream",
+        "--edit-description",
+        "--create-reflog",
+        "--recurse-submodules",
+    )
+    if _has_option(arguments, *mutating_options) or _has_short_flag(
+        arguments,
+        frozenset({"c", "C", "d", "D", "m", "M", "f", "t", "u"}),
+    ):
+        return False
+
+    flag_options = {
+        "-a",
+        "--all",
+        "-r",
+        "--remotes",
+        "-v",
+        "-vv",
+        "--verbose",
+        "-q",
+        "--quiet",
+        "-l",
+        "--list",
+        "-i",
+        "--ignore-case",
+        "--no-abbrev",
+        "--omit-empty",
+        "--show-current",
+        "--no-color",
+        "--no-column",
+    }
+    value_options = {
+        "--abbrev",
+        "--color",
+        "--column",
+        "--contains",
+        "--no-contains",
+        "--merged",
+        "--no-merged",
+        "--points-at",
+        "--sort",
+        "--format",
+    }
+    listing_options = {
+        "-a",
+        "--all",
+        "-r",
+        "--remotes",
+        "-l",
+        "--list",
+        "--show-current",
+        "--contains",
+        "--no-contains",
+        "--merged",
+        "--no-merged",
+        "--points-at",
+    }
+    listing_mode = False
+    positionals: list[str] = []
+    index = 1
+    while index < len(arguments):
+        value = arguments[index]
+        if value == "--":
+            positionals.extend(arguments[index + 1:])
+            break
+        if value in flag_options:
+            listing_mode = listing_mode or value in listing_options
+            index += 1
+            continue
+        if value in value_options:
+            listing_mode = listing_mode or value in listing_options
+            if index + 1 < len(arguments) and not arguments[index + 1].startswith("-"):
+                index += 2
+            else:
+                index += 1
+            continue
+        if any(value.startswith(f"{option}=") for option in value_options):
+            option = value.split("=", maxsplit=1)[0]
+            listing_mode = listing_mode or option in listing_options
+            index += 1
+            continue
+        if value.startswith("-") and not value.startswith("--"):
+            flags = value[1:]
+            if not flags or any(flag not in "arvqli" for flag in flags):
+                return False
+            listing_mode = listing_mode or any(flag in "arl" for flag in flags)
+            index += 1
+            continue
+        if value.startswith("-"):
+            return False
+        positionals.append(value)
+        index += 1
+    return not positionals or listing_mode
+
+
+def _worktree_is_read_only(arguments: tuple[str, ...]) -> bool:
+    """worktree 자체 도움말과 list 조회만 읽기 전용으로 인정한다."""
+
+    if len(arguments) == 1:
+        return True
+    if arguments[1] != "list":
+        return False
+    index = 2
+    while index < len(arguments):
+        value = arguments[index]
+        if value in {"--porcelain", "-z", "-v", "--verbose"}:
+            index += 1
+            continue
+        if value == "--expire":
+            if index + 1 >= len(arguments):
+                return False
+            index += 2
+            continue
+        if value.startswith("--expire=") and value != "--expire=":
+            index += 1
+            continue
+        return False
+    return True
+
+
+def git_arguments_are_read_only(arguments: tuple[str, ...]) -> bool:
+    """global option을 제거한 한 Git 호출의 저장소 변경 여부를 판정한다."""
+
+    if not arguments:
+        return True
+    subcommand = arguments[0]
+    if subcommand in READ_ONLY_GIT_SUBCOMMANDS:
+        return True
+    if subcommand == "config":
+        return _config_is_read_only(arguments)
+    if subcommand == "remote":
+        return _remote_is_read_only(arguments)
+    if subcommand == "symbolic-ref":
+        return _symbolic_ref_is_read_only(arguments)
+    if subcommand == "branch":
+        return _branch_is_read_only(arguments)
+    if subcommand == "worktree":
+        return _worktree_is_read_only(arguments)
+    return False
+
+
+def git_command_mutates(command: str) -> bool:
+    """shell 문자열의 Git 호출 중 하나라도 변경형·미분류이면 True를 반환한다."""
+
+    for raw_arguments in _git_commands(command):
+        arguments = _strip_git_global_options(raw_arguments)
+        if arguments is None or arguments == ("<unparsed>",):
+            return True
+        if not git_arguments_are_read_only(arguments):
+            return True
+    return False
+
+
 def _fetch_denial(arguments: tuple[str, ...]) -> str | None:
     """일반 remote fetch는 허용하되 local ref 강제 갱신·삭제형은 거부한다."""
 
@@ -1480,6 +1653,8 @@ def command_denial(
                     "현재 branch 조회형만 사용할 수 있습니다."
                 )
             continue
+        if git_arguments_are_read_only(arguments):
+            continue
         if subcommand not in READ_ONLY_GIT_SUBCOMMANDS | SUPPORTED_MUTATING_GIT_SUBCOMMANDS | {
             "config",
             "remote",
@@ -1499,8 +1674,6 @@ def command_denial(
             )
         if subcommand in {"reset", "stash", "rebase", "cherry-pick", "pull", "revert", "am", "apply"}:
             return f"브랜치 계보를 임의 변경할 수 있어 git {subcommand} 명령을 차단했습니다."
-        if subcommand in READ_ONLY_GIT_SUBCOMMANDS:
-            continue
         operation_root = invocation.root
         if invocation.unsafe_repository_options:
             return (

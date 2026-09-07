@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import shlex
 import sys
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -104,8 +105,8 @@ class RenderingTests(unittest.TestCase):
         self.assertIn("managed_policy_guard.py", json.dumps(claude))
         self.assertIn("collect-logs --project user-ui --channel codex", json.dumps(codex))
         self.assertIn("collect-logs --project user-ui --channel claude", json.dumps(claude))
-        self.assertIn("documentation-stop codex", json.dumps(codex))
-        self.assertIn("documentation-stop claude", json.dumps(claude))
+        self.assertNotIn("documentation-stop", json.dumps(codex))
+        self.assertNotIn("documentation-stop", json.dumps(claude))
         central_prompt_hook = next(
             item
             for item in codex["UserPromptSubmit"]
@@ -160,9 +161,9 @@ class RenderingTests(unittest.TestCase):
         self.assertIn('"chat.message"', plugin)
         self.assertIn("output.args", plugin)
         self.assertIn("session_id: sessionId(input)", plugin)
-        self.assertIn("session_id: sessionId(event)", plugin)
         self.assertIn("session-start", plugin)
         self.assertIn('event.type !== "session.idle"', plugin)
+        self.assertNotIn("documentation-stop", plugin)
         self.assertIn('"experimental.session.compacting"', plugin)
         self.assertIn('"branch-context"', plugin)
         self.assertIn('"collect-logs"', plugin)
@@ -198,6 +199,21 @@ class RenderingTests(unittest.TestCase):
         self.assertIn("역할을 제안".encode(), planner)
         self.assertIn("모든 산출물은 한국어".encode(), rendered[".codex/agents/planner.toml"])
         self.assertIn("장기".encode(), evaluator)
+
+    def test_codex_agent_toml_uses_supported_schema(self) -> None:
+        rendered = render_project(load_project("user-ui"))
+        agent_paths = sorted(
+            path for path in rendered if path.startswith(".codex/agents/")
+        )
+        self.assertTrue(agent_paths)
+        for path in agent_paths:
+            with self.subTest(path=path):
+                agent = tomllib.loads(rendered[path].decode("utf-8"))
+                self.assertEqual(
+                    set(agent),
+                    {"name", "description", "developer_instructions"},
+                )
+                self.assertTrue(agent["developer_instructions"])
 
     def test_request_clarity_gate_is_rendered_for_every_project(self) -> None:
         for project_id in ("user-ui", "admin-ui"):

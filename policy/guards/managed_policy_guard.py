@@ -53,6 +53,8 @@ IMPLEMENTATION_APPROVAL_PHRASES: Final = frozenset(
         "좋아 진행",
         "승인",
         "승인합니다",
+        "전부 승인",
+        "모두 승인",
         "proceed",
         "approved",
         "go ahead",
@@ -872,10 +874,11 @@ def command_matches(segment: str, expected: str) -> bool:
 
 def protected_operation_categories(command: str) -> tuple[str, ...]:
     categories: set[str] = set()
+    git_commands = branch_guard._git_commands(command)
+    if git_commands and git_commands != (("<unparsed>",),) and git_command_mutates(command):
+        categories.add("Git")
     for raw_segment in shell_segments(command):
         segment = strip_shell_prefix(raw_segment)
-        if segment == "git" or segment.startswith("git "):
-            categories.add("Git")
         is_build = bool(
             command_matches(segment, BUILD_COMMAND) or PACKAGE_BUILD_PATTERN.match(segment)
         )
@@ -1964,24 +1967,7 @@ def record_user_prompt(event: dict[str, Any], root: Path, host: str) -> None:
 
 
 def git_command_mutates(command: str) -> bool:
-    raw_commands = branch_guard._git_commands(command)
-    for raw_arguments in raw_commands:
-        arguments = branch_guard._strip_git_global_options(raw_arguments)
-        if arguments is None or arguments == ("<unparsed>",):
-            return True
-        if not arguments:
-            continue
-        subcommand = arguments[0]
-        if subcommand in branch_guard.READ_ONLY_GIT_SUBCOMMANDS:
-            continue
-        if subcommand == "config" and branch_guard._config_is_read_only(arguments):
-            continue
-        if subcommand == "remote" and branch_guard._remote_is_read_only(arguments):
-            continue
-        if subcommand == "symbolic-ref" and branch_guard._symbolic_ref_is_read_only(arguments):
-            continue
-        return True
-    return False
+    return branch_guard.git_command_mutates(command)
 
 
 def implementation_gate_required(event: dict[str, Any], root: Path) -> bool:
@@ -2121,7 +2107,23 @@ def emit_denial(host: str, message: str) -> None:
     raise SystemExit(2)
 
 
-def check_session(event: dict[str, Any]) -> None:
+def emit_session_context(host: str, message: str) -> None:
+    if host == "codex":
+        json.dump(
+            {
+                "hookSpecificOutput": {
+                    "hookEventName": "SessionStart",
+                    "additionalContext": message,
+                }
+            },
+            sys.stdout,
+            ensure_ascii=False,
+        )
+        return
+    print(message)
+
+
+def check_session(event: dict[str, Any], host: str) -> None:
     root = repository_root(event)
     manifest = load_manifest(root)
     injected = inject_mode()
@@ -2135,12 +2137,13 @@ def check_session(event: dict[str, Any]) -> None:
 
     if not isinstance(project_id, str) or not cli.is_file():
         if injected:
-            print("inject 프로젝트 식별자 또는 중앙 정책 CLI를 찾을 수 없습니다.")
+            message = "inject 프로젝트 식별자 또는 중앙 정책 CLI를 찾을 수 없습니다."
         else:
-            print(
+            message = (
                 "중앙 정책 manifest 또는 CLI를 찾을 수 없습니다. "
                 f"{CENTRAL_ROOT}에서 sync한 뒤 세션을 재시작해 주세요."
             )
+        emit_session_context(host, message)
         return
 
     messages: list[str] = []
@@ -2169,7 +2172,7 @@ def check_session(event: dict[str, Any]) -> None:
     if context:
         messages.append(context)
     if messages:
-        print("\n\n".join(messages))
+        emit_session_context(host, "\n\n".join(messages))
 
 
 def check_operation(event: dict[str, Any], root: Path, host: str) -> None:
@@ -2213,7 +2216,7 @@ def main() -> None:
         ):
             if path is not None:
                 path.unlink(missing_ok=True)
-        check_session(event)
+        check_session(event, host)
         return
     if mode == "branch-context":
         context = branch_guard.branch_context(repository_root(event))
@@ -2221,7 +2224,9 @@ def main() -> None:
             print(context)
         return
     if mode == "documentation-stop":
-        emit_stop_result(documentation_denial(event, repository_root(event), host))
+        # 구버전 adapter가 이 mode를 계속 호출해도 대화 종료를 재차단하지 않는다.
+        # 산출물 계약은 명시적 finish/verify/close와 preserve PreToolUse에서 검증한다.
+        emit_stop_result(None)
         return
     if mode == "user-prompt":
         record_user_prompt(event, repository_root(event), host)

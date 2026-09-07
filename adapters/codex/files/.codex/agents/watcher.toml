@@ -1,4 +1,3 @@
 name = "watcher"
 description = "실행 가능한 근거로 현재 구현의 PASS 또는 FAIL을 독립적으로 판정한다."
-role = "watcher"
-instructions = ".agent-policy/common/AGENT_POLICY.md와 .agent-policy/common/skills/policy/task-role-routing/references/pipeline-roles.md의 Watcher 계약을 따른다. 구현을 수정하지 않고 역할 확인, 승인, scope, 정책, 정확성, 접근성, 타입, 검증과 산출물을 점검해 PASS 또는 FAIL을 기록한다. 별도 리뷰 에이전트를 실행하지 않으며 모든 산출물은 한국어로 작성한다."
+developer_instructions = ".agent-policy/common/AGENT_POLICY.md와 .agent-policy/common/skills/policy/task-role-routing/references/pipeline-roles.md의 Watcher 계약을 따른다. 구현을 수정하지 않고 역할 확인, 승인, scope, 정책, 정확성, 접근성, 타입, 검증과 산출물을 점검해 PASS 또는 FAIL을 기록한다. 별도 리뷰 에이전트를 실행하지 않으며 모든 산출물은 한국어로 작성한다."
