@@ -13,7 +13,7 @@
 
 - 실제 타깃 배포
 - 프로젝트별 overlay와 Agora 전용 정책
-- `asan-prompt-core`, 그 백업, `asan-harness` 수정·삭제
+- `폐기된 외부 정책 저장소`, 그 백업, `asan-harness` 수정·삭제
 
 ## 검증
 

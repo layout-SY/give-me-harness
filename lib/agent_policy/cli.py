@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import re
 import shlex
@@ -9,30 +8,26 @@ import subprocess
 import sys
 from dataclasses import replace
 from pathlib import Path
+from types import ModuleType
 from typing import Sequence
 
 from .core import (
     CANONICAL_ROOT,
     CENTRAL_ROOT,
     PolicyError,
-    ProjectDiff,
     ProjectConfig,
     audit_project,
     audit_source_contract,
-    central_is_clean,
-    diff_project,
-    load_manifest,
     render_project,
     select_projects,
-    start_command,
-    sync_project,
-    verify_safe_removals,
 )
 from .injection import (
     ARTIFACT_RESPONSIBILITY_ENV,
     INJECT_PROJECT_PATH_ENV,
     INJECT_TASK_ENV,
     InjectionLaunch,
+    consumer_policy_sources,
+    is_consumer_policy_path,
     prepare_injection,
 )
 from .log_mirror import collect_project_logs, selected_channels
@@ -58,30 +53,14 @@ def build_parser() -> argparse.ArgumentParser:
     audit = subparsers.add_parser("audit", help="중앙 소스와 대상 메타데이터를 검사합니다.")
     project_argument(audit)
 
-    diff = subparsers.add_parser("diff", help="소비자 프로젝트 변경 예정 목록을 출력합니다.")
-    project_argument(diff)
-    diff.add_argument("--json", action="store_true", help="기계 판독 가능한 JSON 출력")
-
-    check = subparsers.add_parser("check", help="manifest, 중앙 소스와 소비자 파일의 정합성을 검사합니다.")
-    project_argument(check)
-    check.add_argument("--quiet", action="store_true", help="정상 결과 출력을 생략합니다.")
-
-    sync = subparsers.add_parser("sync", help="승인된 중앙 정책을 소비자 프로젝트에 배포합니다.")
-    project_argument(sync)
-    sync.add_argument(
-        "--retire-legacy",
-        action="store_true",
-        help="감사 SHA-256이 일치하는 이전 중앙화 잔여 파일을 퇴역합니다.",
-    )
-
-    start = subparsers.add_parser("start", help="선택한 정책 모드와 host로 세션을 시작합니다.")
+    start = subparsers.add_parser("start", help="중앙 inject 정책으로 host 세션을 시작합니다.")
     start.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
     start.add_argument("--host", required=True, choices=("codex", "claude", "opencode"))
     start.add_argument(
         "--mode",
-        default="sync",
-        choices=("sync", "inject"),
-        help="sync는 소비자 정합성을 요구하고, inject는 중앙 번들을 직접 주입합니다. (기본: sync)",
+        default="inject",
+        choices=("inject",),
+        help="기존 명령 호환용 옵션입니다. 중앙 정책은 inject 방식만 지원합니다.",
     )
     start.add_argument("--model", help="host에 전달할 model 이름")
     start.add_argument(
@@ -126,45 +105,6 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def serialize_diff(result: ProjectDiff) -> dict[str, object]:
-    return {
-        "project": result.project.id,
-        "path": str(result.project.path),
-        "current": result.current,
-        "added": list(result.added),
-        "changed": list(result.changed),
-        "stale": list(result.stale),
-        "legacy": [
-            {
-                "path": trace.path,
-                "sha256_matches_audit": trace.matches,
-            }
-            for trace in result.legacy
-        ],
-        "manifest_issues": list(result.manifest_issues),
-    }
-
-
-def print_diff(result: ProjectDiff) -> None:
-    print(
-        f"[{result.project.id}] current={str(result.current).lower()} "
-        f"add={len(result.added)} change={len(result.changed)} "
-        f"stale={len(result.stale)} legacy={len(result.legacy)}"
-    )
-    for label, paths in (
-        ("A", result.added),
-        ("M", result.changed),
-        ("D", result.stale),
-    ):
-        for path in paths:
-            print(f"  {label} {path}")
-    for trace in result.legacy:
-        status = "sha256-ok" if trace.matches else "sha256-mismatch"
-        print(f"  L {trace.path} ({status})")
-    for issue in result.manifest_issues:
-        print(f"  ! {issue}")
-
-
 def run_audit(selector: str) -> int:
     source_issues = audit_source_contract()
     issue_count = len(source_issues)
@@ -175,66 +115,27 @@ def run_audit(selector: str) -> int:
     else:
         print("[central-contract] PASS")
     for project in select_projects(selector):
-        issues = audit_project(project)
+        issues = list(audit_project(project))
+        conflicting_sources = consumer_policy_sources(project)
+        if conflicting_sources:
+            preview = ", ".join(conflicting_sources[:10])
+            remainder = len(conflicting_sources) - 10
+            suffix = f" 외 {remainder}개" if remainder > 0 else ""
+            issues.append(
+                f"consumer policy sources remain ({len(conflicting_sources)}): "
+                f"{preview}{suffix}"
+            )
         rendered_count = len(render_project(project))
         if issues:
             issue_count += len(issues)
-            print(f"[{project.id}] FAIL ({rendered_count} managed files)")
+            print(f"[{project.id}] FAIL ({rendered_count} bundle files)")
             for issue in issues:
                 print(f"  - {issue}")
         else:
-            print(f"[{project.id}] PASS ({rendered_count} managed files)")
+            print(f"[{project.id}] PASS ({rendered_count} bundle files)")
     if CENTRAL_ROOT.resolve() != CANONICAL_ROOT.resolve():
         print(f"[info] staging root: {CENTRAL_ROOT}; canonical root: {CANONICAL_ROOT}")
     return 1 if issue_count else 0
-
-
-def run_diff(selector: str, json_output: bool) -> int:
-    results = [diff_project(project) for project in select_projects(selector)]
-    if json_output:
-        print(json.dumps([serialize_diff(result) for result in results], ensure_ascii=False, indent=2))
-    else:
-        for result in results:
-            print_diff(result)
-    return 0
-
-
-def run_check(selector: str, quiet: bool) -> int:
-    results = [diff_project(project) for project in select_projects(selector)]
-    failed = [result for result in results if not result.current]
-    if failed:
-        for result in failed:
-            if quiet:
-                print(
-                    f"{result.project.id}: 중앙 정책 또는 소비자 파일 drift가 있습니다.",
-                    file=sys.stderr,
-                )
-            else:
-                print_diff(result)
-        return 1
-    if not quiet:
-        for result in results:
-            print(f"[{result.project.id}] PASS")
-    return 0
-
-
-def run_sync(selector: str, retire_legacy: bool) -> int:
-    projects = select_projects(selector)
-    if not central_is_clean():
-        raise PolicyError("중앙 정책 소스 변경을 commit한 뒤 sync해 주세요.")
-
-    for project in projects:
-        rendered = render_project(project)
-        verify_safe_removals(
-            project,
-            rendered,
-            load_manifest(project),
-            retire_legacy,
-        )
-    for project in projects:
-        count = sync_project(project, retire_legacy=retire_legacy)
-        print(f"[{project.id}] synced {count} managed files")
-    return 0
 
 
 def display_injection_command(launch: InjectionLaunch) -> str:
@@ -296,11 +197,7 @@ def active_project(
             f"요청한 branch와 worktree의 현재 branch가 다릅니다: "
             f"요청={expected_branch}, 현재={current_branch or 'detached HEAD'}"
         )
-    return replace(
-        project,
-        path=target,
-        policy_path=project.policy_path or configured_path,
-    )
+    return replace(project, path=target)
 
 
 def normalized_session_dir(value: str | None, host: str) -> str | None:
@@ -322,12 +219,58 @@ def normalized_session_dir(value: str | None, host: str) -> str | None:
     return path.as_posix()
 
 
+def task_start_denial(project: ProjectConfig) -> str | None:
+    """host 실행 전에 선택 task의 실제 V3 계약과 dirty scope를 검증한다."""
+
+    source = render_project(project)[".agent-policy/runtime/branch_guard.py"]
+    guard = ModuleType(f"{project.id.replace('-', '_')}_start_branch_guard")
+    guard.__file__ = str(CENTRAL_ROOT / "policy/guards/branch_guard.py")
+    try:
+        exec(compile(source, guard.__file__, "exec"), guard.__dict__)
+        denial = guard.active_branch_denial(project.path)
+    except (OSError, RuntimeError, TypeError, ValueError) as error:
+        raise PolicyError(f"task branch 계약 검사기를 불러올 수 없습니다: {error}") from error
+    if denial is not None and not isinstance(denial, str):
+        raise PolicyError("task branch 계약 검사 결과가 올바르지 않습니다.")
+    return denial
+
+
+def pending_policy_retirements(project: ProjectConfig) -> tuple[str, ...]:
+    """현재 branch에 아직 통합되지 않은 tracked 소비자 정책 삭제를 찾는다."""
+
+    completed = subprocess.run(
+        ("git", "status", "--porcelain=v1", "-z", "--untracked-files=no"),
+        cwd=project.path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise PolicyError(detail or f"Git 변경 상태를 확인할 수 없습니다: {project.path}")
+    deleted: list[str] = []
+    records = completed.stdout.split("\0")
+    index = 0
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record or len(record) < 4:
+            continue
+        status = record[:2]
+        relative = record[3:]
+        if "R" in status or "C" in status:
+            index += 1
+        if "D" in status and is_consumer_policy_path(relative):
+            deleted.append(relative)
+    return tuple(dict.fromkeys(deleted))
+
+
 def run_start(
     project_id: str,
     host: str,
     model: str | None,
     print_only: bool,
-    mode: str = "sync",
+    mode: str = "inject",
     worktree: str | None = None,
     expected_branch: str | None = None,
     session_dir: str | None = None,
@@ -354,51 +297,33 @@ def run_start(
             )
     if expected_branch is not None and task is not None and expected_branch != task:
         raise PolicyError(f"--branch와 --task가 다릅니다: {expected_branch} != {task}")
-    if mode == "inject" and role is None:
-        raise PolicyError("inject 모드는 --role logic|ui|orchest|review|generate 중 하나가 필요합니다.")
-    if mode == "sync" and role is not None:
-        raise PolicyError("--role은 --mode inject에서만 사용할 수 있습니다.")
-    selected_session_dir = normalized_session_dir(session_dir, host)
-    result = diff_project(project)
-    if mode == "sync":
-        if not result.current:
-            print_diff(result)
-            raise PolicyError(
-                "세션 시작을 중단했습니다. 중앙 프로젝트에서 diff와 승인된 sync를 완료하고 다시 실행하세요."
-            )
-        command = start_command(project, host, model)
-        if print_only:
-            print(f"mode: sync")
-            print(f"responsibility: {responsibility}")
-            if task is not None:
-                print(f"task: {task}")
-            print(f"cwd: {project.path}")
-            print("command: " + " ".join(command))
-            return 0
-        environment = dict(os.environ)
-        environment[INJECT_PROJECT_PATH_ENV] = str(project.path)
-        environment[ARTIFACT_RESPONSIBILITY_ENV] = responsibility
-        if task is not None:
-            environment[INJECT_TASK_ENV] = task
-        if selected_session_dir is not None:
-            environment["ASAN_SESSION_DIR"] = selected_session_dir
-        os.chdir(project.path)
-        os.execvpe(command[0], list(command), environment)
-        return 0
-
+    conflicting_sources = consumer_policy_sources(project)
+    if conflicting_sources:
+        listed = ", ".join(conflicting_sources)
+        raise PolicyError(
+            "inject 세션은 소비자 저장소의 정책·프롬프트·훅을 함께 로드하지 않습니다. "
+            f"선택된 worktree에서 중앙 history와 대조 후 제거해야 할 경로: {listed}"
+        )
     if mode != "inject":
         raise PolicyError(f"지원하지 않는 start mode입니다: {mode}")
-    issues = audit_project(project)
+    if role is None:
+        raise PolicyError("inject 모드는 --role logic|ui|orchest|review|generate 중 하나가 필요합니다.")
+    selected_session_dir = normalized_session_dir(session_dir, host)
+    issues = tuple((*audit_source_contract(), *audit_project(project)))
     if issues:
         raise PolicyError("중앙 정책 audit 실패: " + "; ".join(issues))
-    if not result.current:
-        print(
-            f"[{project.id}] 소비자 정책 drift가 있습니다 "
-            f"(add={len(result.added)} change={len(result.changed)} "
-            f"stale={len(result.stale)} legacy={len(result.legacy)}). "
-            "inject 번들로 세션을 계속합니다.",
-            file=sys.stderr,
-        )
+    if task is not None:
+        branch_denial = task_start_denial(project)
+        retirements = pending_policy_retirements(project)
+        if branch_denial is not None and retirements and "승인된 작업 범위 밖" in branch_denial:
+            raise PolicyError(
+                "선택 task에 소비자 정책 사본 퇴역 삭제가 아직 Git에 통합되지 않았습니다. "
+                "feature scope를 확장하거나 기능 commit에 섞지 말고, 별도 승인된 V3 maintenance "
+                "branch에서 기준 branch에 통합한 뒤 현재 task를 갱신하세요. 경로: "
+                + ", ".join(retirements)
+            )
+        if branch_denial is not None:
+            raise PolicyError(f"task 세션 시작 거부: {branch_denial}")
     launch = prepare_injection(
         project,
         host,
@@ -451,12 +376,6 @@ def main(argv: Sequence[str] | None = None) -> None:
     try:
         if arguments.command == "audit":
             code = run_audit(arguments.project)
-        elif arguments.command == "diff":
-            code = run_diff(arguments.project, arguments.json)
-        elif arguments.command == "check":
-            code = run_check(arguments.project, arguments.quiet)
-        elif arguments.command == "sync":
-            code = run_sync(arguments.project, arguments.retire_legacy)
         elif arguments.command == "start":
             code = run_start(
                 arguments.project,

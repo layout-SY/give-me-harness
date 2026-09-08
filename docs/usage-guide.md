@@ -2,7 +2,7 @@
 
 이 문서는 중앙 정책으로 Codex, Claude Code, OpenCode 세션을 시작하고, 승인된 작업 branch와 worktree에서 구현한 뒤 검증·병합·종료하는 실제 사용 절차를 설명한다.
 
-정책의 설계 근거와 상세 상태 전이는 [브랜치·worktree·세션 운영 전략 V3](branch-worktree-session-strategy.md), 역할별 세부 책임은 소비자에 렌더되는 task-role-routing과 git-branch-strategy 스킬을 정본으로 삼는다.
+정책의 설계 근거와 상세 상태 전이는 [브랜치·worktree·세션 운영 전략 V3](branch-worktree-session-strategy.md), 역할별 세부 책임은 중앙 bundle에 렌더되는 task-role-routing과 git-branch-strategy 스킬을 정본으로 삼는다.
 
 ## 1. 가장 먼저 알아둘 원칙
 
@@ -13,7 +13,7 @@
 - 기준 branch가 dirty이면 기존 변경을 commit, stash, reset 또는 restore하지 않는다. 승인 계약에 격리 worktree를 포함해 별도 index와 작업 폴더를 만든다.
 - 격리 worktree를 만들었다는 이유만으로 새 세션을 열 필요는 없다. 현재 assignment 권한 계보 안의 branch라면 기존 세션이 그 worktree를 도구 workdir 또는 git -C 대상으로 사용해 계속할 수 있다.
 - 미완료 task를 PRESERVED로 남겨 놓고 계보 밖 독립 task를 병행하거나, host·role·담당자를 인계할 때는 별도 worktree와 세션을 사용한다.
-- 소비자 저장소의 관리 정책 파일은 직접 수정하지 않는다. 중앙 원본을 변경한 뒤 mode에 맞는 재적용 절차를 따른다.
+- 소비자 저장소에는 세션 로그와 허용된 개인 설정 외의 정책 파일을 두지 않는다. 중앙 원본을 변경한 뒤 중앙 launcher로 새 세션을 시작한다.
 - Git push, git reset --hard, git clean, git update-ref는 승인으로 해제되지 않는 사용자 전용 명령이다.
 
 ## 2. 저장소와 용어
@@ -34,7 +34,7 @@
 | adapters/claude/   | Claude Code 형식 adapter                |
 | adapters/opencode/ | OpenCode 형식 adapter                   |
 | projects/\*.json   | 소비자 경로, 기준 branch와 검증 명령    |
-| lib/agent_policy/  | 렌더링, inject, sync와 manifest 구현    |
+| lib/agent_policy/  | 렌더링과 inject 실행 구현               |
 | bin/agent-policy   | 중앙 운영 CLI                           |
 | build/             | source digest별 inject 번들             |
 | state/             | inject host의 지속 상태                 |
@@ -61,50 +61,22 @@
 | PRESERVED          | handoff 후 미완료 상태로 보존된 task                                        |
 | CLOSED             | merge, 사후 검증과 종료 기록이 모두 완료된 task                             |
 
-## 3. sync와 inject 중 무엇을 선택할까
+## 3. 중앙 inject 실행
 
-### sync mode
-
-sync는 중앙 렌더 결과를 소비자 저장소에 배포하고, 소비자의 manifest와 관리 파일이 중앙 결과와 정확히 일치할 때만 세션을 시작한다.
+inject는 선택한 host와 role에 필요한 정책만 중앙 build 디렉터리의 불변 digest 번들로 만들고 세션에 직접 주입한다. 소비자 정책 파일이나 배포 manifest는 만들지 않는다.
 
 적합한 경우:
 
-- 소비자에 배포된 안정 버전을 팀 공통 정책으로 사용할 때
-- 여러 번의 세션이 동일한 배포본을 사용해야 할 때
-- 중앙 변경을 검토·승인한 뒤 소비자 전체에 반영할 때
-
-주의 사항:
-
-- start의 기본 mode는 sync다.
-- 소비자 drift가 있으면 start가 중단된다.
-- 중앙 정책을 수정한 뒤에는 별도 승인을 받아 sync하고 실행 중인 소비자 세션을 재시작해야 한다.
-- 외부 worktree의 hook도 primary checkout에 배포된 runtime의 절대 경로를 사용하므로, 해당 worktree에 .agent-policy 복사본이 없어도 된다.
-
-### inject mode
-
-inject는 선택한 host와 role에 필요한 정책만 중앙 build 디렉터리의 불변 digest 번들로 만들고 세션에 직접 주입한다. 소비자 정책 파일과 manifest는 수정하지 않는다.
-
-적합한 경우:
-
-- 중앙 정책 최신본을 소비자 sync 없이 바로 시험할 때
+- 중앙 정책 최신본으로 작업할 때
 - host와 role별로 필요한 문서만 바인딩할 때
-- 소비자 정책 파일에 drift가 있어도 중앙 번들 기준으로 작업해야 할 때
+- primary checkout 또는 별도 worktree에서 동일한 중앙 계약으로 작업할 때
 
 주의 사항:
 
 - inject는 --role이 필수다.
-- 소비자 drift는 경고하지만 세션 시작을 막지 않는다.
+- 선택된 worktree에 소비자 정책·프롬프트·훅 사본이 남아 있으면 시작을 중단하고 정확한 경로를 출력한다.
 - 실행 중인 세션은 기존 번들을 계속 사용한다. 중앙 정책이 바뀌면 기존 세션을 단순 복원하지 말고 중앙 launcher를 다시 실행해야 한다.
-- inject 정책 변경에는 소비자 sync가 필요하지 않다.
-
-### 선택 요약
-
-| 상황                                 | 권장 mode | 필요한 재적용                  |
-| ------------------------------------ | --------- | ------------------------------ |
-| 배포된 공통 정책으로 일상 작업       | sync      | 중앙 변경 후 sync + 새 세션    |
-| 중앙 최신 정책 즉시 사용             | inject    | 중앙 launcher로 새 inject 세션 |
-| 소비자 drift가 있지만 중앙 정책 시험 | inject    | sync 불필요                    |
-| 팀 전체 소비자 정책 갱신             | sync      | diff 검토와 별도 sync 승인     |
+- `--mode inject`는 기존 명령 호환을 위해 허용하며 생략할 수 있다. 다른 mode는 지원하지 않는다.
 
 ## 4. role과 산출물 책임 선택
 
@@ -143,29 +115,9 @@ role과 responsibility도 서로 다른 개념이다. UI role 세션이 owner일
 cd /Users/okand/SynologyDrive/asan-agent-policy
 ~~~
 
-#### sync mode
+#### inject 세션
 
-소비자에 배포된 정책으로 user-ui를 여는 명령이다. 사용할 host 한 줄만 실행한다.
-
-~~~sh
-bin/agent-policy start --project user-ui --host codex --mode sync
-bin/agent-policy start --project user-ui --host claude --mode sync
-bin/agent-policy start --project user-ui --host opencode --mode sync
-~~~
-
-소비자에 배포된 정책으로 admin-ui를 여는 명령이다.
-
-~~~sh
-bin/agent-policy start --project admin-ui --host codex --mode sync
-bin/agent-policy start --project admin-ui --host claude --mode sync
-bin/agent-policy start --project admin-ui --host opencode --mode sync
-~~~
-
-sync mode는 소비자 manifest와 관리 파일이 중앙 렌더 결과와 일치할 때만 시작된다.
-
-#### inject mode
-
-소비자 sync 없이 중앙 최신 정책으로 작업하려면 책임에 맞는 `--role`을 지정한다. 아래 조합은 실행 형식의 예시이며 host와 role은 서로 독립적이다.
+중앙 최신 정책으로 작업하려면 책임에 맞는 `--role`을 지정한다. 아래 조합은 실행 형식의 예시이며 host와 role은 서로 독립적이다.
 
 user-ui Logic 작업을 Codex로 실행:
 
@@ -219,8 +171,6 @@ inject 출력의 hook 경로는 다음처럼 중앙 build 번들 아래의 절�
 .../build/<project>/<host>-<role>-<digest>/policy/.agent-policy/runtime/managed_policy_guard.py
 ~~~
 
-sync 출력과 실제 배포 파일의 hook 경로는 `projects/*.json`에 등록된 primary checkout의 절대 runtime 경로를 사용한다.
-
 #### 기존 task worktree에서 재시작
 
 기존 admin-ui task worktree에서 Claude Code UI owner 세션을 다시 여는 예시다. task별 경로와 이름은 실제 계약값으로 바꾼다.
@@ -249,7 +199,7 @@ launcher는 다음을 확인한다.
 
 조건이 맞으면 launcher가 직접 해당 worktree를 세션 cwd로 사용한다. 사용자가 먼저 worktree로 cd할 필요는 없다.
 
-현재 sync 운영은 primary checkout에 배포된 host 설정을 기준으로 한다. 따라서 sync 세션은 primary에서 시작한 뒤 승인된 외부 worktree를 도구 workdir 또는 git -C 대상으로 사용하는 것이 기본이다. 외부 worktree 자체에 새 host 세션을 열어야 하고 그곳에 관리 설정 파일이 없다면 inject mode를 사용한다. primary의 절대 runtime hook 수정은 이미 로드된 sync hook이 외부 worktree를 대상으로 실행될 때 runtime을 잃지 않게 하는 변경이며, 외부 폴더에 host 설정 파일을 자동 복제한다는 뜻은 아니다.
+primary checkout과 외부 worktree 모두 중앙 launcher의 `--worktree` 선택을 기준으로 한다. launcher는 실제 선택 위치를 검사하고 중앙 bundle의 절대 runtime 경로를 사용하며, 소비자 설정이나 primary checkout의 정책 파일로 fallback하지 않는다.
 
 ## 6. 새 요청을 받았을 때
 
@@ -279,7 +229,7 @@ git status --short --branch
 git worktree list
 ~~~
 
-inject 세션에서는 system prompt에 바인딩된 snapshot 내부 branch_workflow.py의 절대 경로를 사용한다. sync 세션에서는 소비자의 다음 경로를 사용한다.
+system prompt에 바인딩된 중앙 snapshot 내부 `branch_workflow.py`의 절대 경로를 사용한다.
 
 ~~~text
 .agent-policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py
@@ -318,6 +268,26 @@ python3 <absolute-branch-workflow.py> create \
 ~~~
 
 create는 proposal bytes, SHA-256, parent 전체 HEAD, branch, role, scope, integrator와 worktree 계약을 다시 검증하고 ACTIVE metadata를 기록한다.
+
+### 작업 중 scope 변경
+
+작업 중 새 경로가 필요하면 현재 scope를 raw `git config`로 수정하지 않는다. 변경 후 유지할 전체 scope를 새 canonical 계약으로 제안한다.
+
+~~~sh
+python3 <absolute-branch-workflow.py> scope-proposal \
+  --scope src/existing \
+  --scope src/new-path
+~~~
+
+출력된 proposal 파일과 64자리 SHA-256을 별도 승인받은 뒤 적용한다.
+
+~~~sh
+python3 <absolute-branch-workflow.py> update-scope \
+  --proposal-file <printed-absolute-json-path> \
+  --proposal-sha256 <printed-64-character-sha256>
+~~~
+
+`update-scope`는 scopes 이외의 기존 V3 필드가 동일한지 검증하고, 새 전체 scope가 현재 dirty 경로를 승인하지 못하면 원래 metadata로 복원한다.
 
 ## 8. dirty sy-main에서 격리 worktree 시작
 
@@ -450,6 +420,8 @@ stage는 path separator를 포함해 실행한다.
 ~~~sh
 git add -- src/path/to/file.ts
 ~~~
+
+`git commit -m <message>`의 메시지 값은 URL이나 `/`를 포함해도 pathspec으로 분류하지 않는다. 반복된 `-m`도 동일하다.
 
 파일 복원은 승인 scope의 구체 경로에 git restore를 사용한다.
 
@@ -603,42 +575,14 @@ python3 <absolute-branch-workflow.py> close \
 ~~~sh
 python3 -m unittest discover -s tests -v
 bin/agent-policy audit
-bin/agent-policy diff --project all
 ~~~
 
-- unittest: 렌더링, guard, inject, sync 회귀 테스트
+- unittest: 렌더링, guard, 세 host inject와 실제 장애 회귀 테스트
 - audit: 중앙 계약과 각 소비자 메타데이터 검사
-- diff: 소비자에 추가·변경·퇴역될 파일 제시
 
-### sync 배포
+### 정책 변경 반영
 
-sync는 소비자 파일을 변경하므로 diff를 사용자에게 제시하고 별도 승인을 받은 뒤 실행한다.
-
-~~~sh
-bin/agent-policy sync --project all
-~~~
-
-배포 후 확인:
-
-~~~sh
-bin/agent-policy check --project all
-bin/agent-policy diff --project all
-~~~
-
-기존 중앙화 잔여 파일은 기본 sync에서 삭제하지 않는다. 감사에 고정된 SHA-256과 실제 파일이 일치하고 사용자가 퇴역을 명시적으로 승인한 경우에만 다음 옵션을 사용한다.
-
-~~~sh
-bin/agent-policy sync --project all --retire-legacy
-~~~
-
-### mode별 정책 변경 반영
-
-| 실행 중인 세션 | 중앙 정책 변경 후 조치                         |
-| -------------- | ---------------------------------------------- |
-| sync           | diff 검토 → sync 승인·배포 → handoff → 새 세션 |
-| inject         | handoff → 중앙 start --mode inject 재실행      |
-
-inject에서는 sync가 필요 없다. 단순 세션 resume은 이전 digest 번들을 계속 사용할 수 있으므로 중앙 launcher를 반드시 새로 실행한다.
+소비자 배포 명령은 없다. 중앙 원본과 회귀 테스트를 수정하고 전체 검증을 통과시킨 뒤 현재 세션을 handoff하고 중앙 `start`를 다시 실행한다. 단순 세션 resume은 이전 digest 번들을 계속 사용할 수 있으므로 최신 정책 적용으로 간주하지 않는다.
 
 ## 14. 중앙 로그 수집
 
@@ -663,26 +607,25 @@ bin/agent-policy collect-logs \
 - 추가·변경 파일만 반영
 - 소비자에서 사라진 문서를 중앙에서 자동 삭제하지 않음
 - 중앙 로그를 자동 stage·commit하지 않음
-- logs/\*\* 변경만 있는 경우 정책 source 청결 판정을 방해하지 않음
+- logs/\*\*는 정책 source digest에서 제외
 
 ## 15. 자주 발생하는 문제
 
 | 증상                                                  | 원인                                                         | 조치                                                                                                     |
 | ----------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
-| 외부 worktree에서 hook 파일을 찾지 못함               | 오래된 sync hook이 현재 worktree에서 runtime을 찾음          | sync 세션은 수정 정책을 배포하고 재시작. inject 세션은 sync 없이 중앙 launcher로 새 번들을 만들어 재시작 |
-| inject 재시작 후에도 소비자 .claude/hooks 경로를 사용 | 현재 inject launcher가 아닌 legacy/sync 설정으로 실행        | --print-only에서 build bundle의 절대 guard 경로 확인                                                     |
+| 외부 worktree에서 hook 파일을 찾지 못함               | 중앙 launcher가 아닌 소비자 legacy hook으로 실행             | 소비자 정책 출처를 중앙 history와 대조해 제거하고 중앙 launcher로 새 세션 시작                           |
+| 재시작 후에도 소비자 `.claude/hooks` 경로를 사용      | 기존 세션을 resume했거나 소비자 정책 파일이 남아 있음        | 새 `start --print-only`에서 bundle 절대 guard 경로 확인; 잔존 파일이 있으면 launcher가 시작 전에 거부     |
 | proposal/create가 정책 snapshot 경로 때문에 차단      | 오래된 guard가 inject snapshot workflow를 신뢰하지 못함      | 새 inject 번들로 재시작하고 system prompt가 제공한 절대 branch_workflow.py 사용                          |
 | 승인 요청 식별자 불일치                               | 축약 SHA 또는 다른 proposal 값 사용                          | 현재 세션 산출물에 오류를 기록한 뒤 출력된 동일 파일과 64자리 SHA-256 전체값으로 계약 복구; source·Git 작업은 복구 전 중단 |
 | finish·close가 산출물 누락·귀속 오류 보고             | 구조화된 Write 없이 산출물을 만들었거나 owner 문서가 미완료 | 현재 session directory에 구조화된 Write 도구로 필수 문서를 완성                                          |
-| Codex SessionStart hook JSON 오류                      | 오래된 guard가 context를 일반 텍스트로 출력                 | 새 정책으로 sync하거나 새 inject 번들로 세션 재시작                                                       |
-| 읽기 전용 Git 조회가 구현·명령 승인을 요구             | 오래된 guard가 모든 Git 호출을 변경형으로 분류              | 새 정책으로 sync하거나 inject 재시작 후 단순 조회 명령을 다시 실행                                       |
+| Codex SessionStart hook JSON 오류                      | 오래된 guard가 context를 일반 텍스트로 출력                 | 소비자 guard를 제거하고 중앙 launcher로 새 세션 시작                                                      |
+| 읽기 전용 Git 조회가 구현·명령 승인을 요구             | 오래된 guard가 모든 Git 호출을 변경형으로 분류              | 중앙 launcher로 새 세션을 시작한 뒤 단순 조회 명령을 다시 실행                                           |
 | `git checkout -- PATH`가 branch 전환으로 판정         | checkout 명령의 의미가 모호함                                | `git restore ... -- PATH` 사용                                                                           |
 | checkout과 merge를 결합한 명령이 잘못 판정            | 전환 전 cwd·branch에서 복합 명령을 평가                      | 명령을 분리하고 V3 merge는 finish workflow 사용                                                          |
 | dirty worktree라 branch 생성 불가                     | primary에 다른 작업의 변경이 존재                            | 기존 변경을 건드리지 말고 proposal에 외부 --worktree 포함                                                |
-| primary에서 git -C task-worktree add가 차단           | 오래된 guard가 명령 cwd만 판정                               | 새 정책으로 sync하거나 inject 재시작                                                                     |
+| primary에서 git -C task-worktree add가 차단           | 오래된 guard가 명령 cwd만 판정                               | 중앙 launcher로 새 세션 시작                                                                              |
 | task worktree에서 primary sy-main add가 통과          | 오래된 guard가 -C 대상을 무시                                | 새 guard는 실제 대상 worktree를 판정해 차단                                                              |
-| sync start가 소비자 drift로 중단                      | manifest 또는 관리 파일이 중앙 결과와 다름                   | 중앙에서 diff 확인 후 별도 승인된 sync                                                                   |
-| inject에서 drift 경고 출력                            | 소비자 배포본과 중앙 bundle이 다름                           | inject는 계속 가능. 팀 배포가 필요할 때만 별도 sync                                                      |
+| start가 소비자 정책 출처를 보고하며 중단              | 선택된 worktree에 `AGENTS.md` 또는 host별 hook·skill이 남음 | 중앙 history와 SHA-256을 대조한 뒤 해당 사본만 제거하고 다시 시작                                         |
 | 다른 task로 전환할 수 없음                            | 대상이 현재 assignment root의 승인된 자손이 아닌 독립 task | 같은 계보면 `asan-parent` metadata·ACTIVE 상태를 확인하고, 독립 task면 root를 CLOSED로 만들거나 PRESERVED 후 별도 세션 사용 |
 | 다른 host의 산출물을 수정할 수 없음                   | 산출물은 host·session별 write 소유권 적용                    | 읽기만 수행하고 현재 host의 session directory 또는 handoff 사용                                          |
 | role 범위를 벗어난 요청이 차단                        | inject role은 세션 시작 시 고정                              | 올바른 --role로 새 inject 세션 시작                                                                      |
@@ -757,4 +700,4 @@ bin/agent-policy collect-logs \
 - source 변경과 산출물이 commit됐는가
 - finish proposal을 별도로 승인받았는가
 - finish, verify, close를 분리 실행했는가
-- 소비자 sync 또는 Git push처럼 별도 승인이 필요한 작업을 임의 실행하지 않았는가
+- 소비자 정책 파일을 만들거나 Git push처럼 사용자 전용 작업을 임의 실행하지 않았는가

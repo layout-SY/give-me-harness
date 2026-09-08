@@ -21,7 +21,6 @@ from .core import (
     ProjectConfig,
     atomic_write,
     central_commit,
-    central_is_clean,
     render_project,
     sha256_bytes,
     source_digest,
@@ -54,6 +53,65 @@ OPENCODE_RUNTIME_FILES: Final[frozenset[str]] = frozenset(
     }
 )
 OPENCODE_NODE_MODULES: Final = "opencode-home/node_modules"
+CONSUMER_POLICY_ENTRY_FILES: Final = (
+    "AGENTS.md",
+    "AGENTS.override.md",
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "opencode.json",
+)
+CONSUMER_POLICY_DIRECTORIES: Final = (
+    ".agent-policy",
+    ".agents",
+    ".harness",
+    ".codex",
+    ".claude",
+    ".opencode",
+)
+CONSUMER_POLICY_PRESERVED_PREFIXES: Final = (
+    ".agent-policy/logs/",
+    ".codex/logs/",
+    ".claude/logs/",
+    ".opencode/logs/",
+    ".opencode/node_modules/",
+)
+CONSUMER_POLICY_PRESERVED_FILES: Final = frozenset(
+    {
+        ".claude/settings.local.json",
+        ".opencode/.gitignore",
+        ".opencode/bun.lock",
+        ".opencode/package-lock.json",
+        ".opencode/package.json",
+    }
+)
+CONSUMER_POLICY_REFERENCE_FILES: Final = (
+    "package.json",
+    "README.md",
+)
+CONSUMER_POLICY_REFERENCE_MARKERS: Final = (
+    ".agent-policy/",
+    ".agents/",
+    ".harness/",
+    ".codex/agents/",
+    ".codex/harness/",
+    ".codex/hooks",
+    ".codex/memory/",
+    ".codex/templates/",
+    ".codex/workflows/",
+    ".claude/agents/",
+    ".claude/harness/",
+    ".claude/hooks/",
+    ".claude/memory/",
+    ".claude/skills/",
+    ".claude/templates/",
+    ".claude/workflows/",
+    ".opencode/agents/",
+    ".opencode/harness/",
+    ".opencode/plugins/",
+    ".opencode/skills/",
+    ".opencode/templates/",
+    ".opencode/workflows/",
+)
 
 
 @dataclass(frozen=True)
@@ -65,6 +123,63 @@ class InjectionLaunch:
     system_prompt: Path
     command: tuple[str, ...]
     environment: dict[str, str]
+
+
+def is_consumer_policy_path(relative: str) -> bool:
+    """consumer 안에서 중앙 정책 사본으로 금지할 경로인지 판정한다."""
+
+    normalized = relative.removeprefix("./").strip("/")
+    if normalized in CONSUMER_POLICY_ENTRY_FILES:
+        return True
+    if normalized in CONSUMER_POLICY_PRESERVED_FILES:
+        return False
+    if normalized.endswith("/.DS_Store"):
+        return False
+    if any(
+        normalized.startswith(prefix)
+        for prefix in CONSUMER_POLICY_PRESERVED_PREFIXES
+    ):
+        return False
+    return any(
+        normalized == directory or normalized.startswith(f"{directory}/")
+        for directory in CONSUMER_POLICY_DIRECTORIES
+    )
+
+
+def consumer_policy_sources(project: ProjectConfig) -> tuple[str, ...]:
+    """선택된 consumer worktree에서 중앙 inject와 충돌하는 정책 출처를 찾는다."""
+
+    root = project.path.resolve()
+    conflicts: list[str] = []
+    for relative in CONSUMER_POLICY_ENTRY_FILES:
+        target = root / relative
+        if target.is_file() or target.is_symlink():
+            conflicts.append(relative)
+    for relative in CONSUMER_POLICY_REFERENCE_FILES:
+        target = root / relative
+        if not (target.is_file() or target.is_symlink()):
+            continue
+        try:
+            content = target.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            conflicts.append(relative)
+            continue
+        if any(marker in content for marker in CONSUMER_POLICY_REFERENCE_MARKERS):
+            conflicts.append(relative)
+    for directory in CONSUMER_POLICY_DIRECTORIES:
+        source_root = root / directory
+        if source_root.is_symlink():
+            conflicts.append(directory)
+            continue
+        if not source_root.is_dir():
+            continue
+        for target in sorted(source_root.rglob("*")):
+            if not (target.is_file() or target.is_symlink()):
+                continue
+            relative = target.relative_to(root).as_posix()
+            if is_consumer_policy_path(relative):
+                conflicts.append(relative)
+    return tuple(dict.fromkeys(conflicts))
 
 
 def _json_bytes(value: object) -> bytes:
@@ -374,7 +489,6 @@ def _manifest_payload(
         "role": role,
         "central_root": str(CENTRAL_ROOT),
         "central_commit": central_commit(),
-        "central_clean": central_is_clean(),
         "source_digest": source_digest(project),
         "bundle_digest": digest,
         "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -478,7 +592,7 @@ def _safe_state_target(root: Path, relative: str) -> Path:
     return target
 
 
-def _sync_state_files(root: Path, files: Mapping[str, bytes]) -> None:
+def _install_state_files(root: Path, files: Mapping[str, bytes]) -> None:
     root.mkdir(parents=True, exist_ok=True)
     previous = _read_state_manifest(root)
     for relative, expected_digest in previous.items():
@@ -619,49 +733,6 @@ def _skill_config_override(
     return f"skills.config={_toml_value(entries)}" if entries else None
 
 
-def _codex_hook_event_key(event_name: str) -> str:
-    """Codex hook state에서 사용하는 snake_case 이벤트 키를 만든다."""
-
-    words = re.sub(r"(.)([A-Z][a-z]+)", r"\1_\2", event_name)
-    return re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", words).casefold()
-
-
-def _consumer_hook_disable_overrides(project: ProjectConfig) -> tuple[str, ...]:
-    """inject 세션에서 소비자 project hooks.json handler만 비활성화한다."""
-
-    hooks_path = project.path / ".codex/hooks.json"
-    if not hooks_path.is_file():
-        return ()
-    try:
-        raw = json.loads(hooks_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return ()
-    registrations = raw.get("hooks") if isinstance(raw, dict) else None
-    if not isinstance(registrations, dict):
-        return ()
-
-    overrides: list[str] = []
-    source = str(hooks_path)
-    for event_name, groups in registrations.items():
-        if not isinstance(event_name, str) or not isinstance(groups, list):
-            continue
-        event_key = _codex_hook_event_key(event_name)
-        for group_index, group in enumerate(groups):
-            handlers = group.get("hooks") if isinstance(group, dict) else None
-            if not isinstance(handlers, list):
-                continue
-            for handler_index, handler in enumerate(handlers):
-                if not isinstance(handler, dict):
-                    continue
-                state_key = (
-                    f"{source}:{event_key}:{group_index}:{handler_index}"
-                )
-                overrides.append(
-                    f"hooks.state.{json.dumps(state_key, ensure_ascii=False)}.enabled=false"
-                )
-    return tuple(overrides)
-
-
 def _prepare_codex_home(
     project: ProjectConfig,
     rendered: Mapping[str, bytes],
@@ -702,14 +773,13 @@ def _prepare_codex_home(
         source_codex_home / "auth.json",
         codex_home / "auth.json",
     )
-    _sync_state_files(codex_home, files)
+    _install_state_files(codex_home, files)
     _link_codex_user_file(source_codex_home / "config.toml", codex_home / "config.toml")
     _link_codex_user_file(source_codex_home / "auth.json", codex_home / "auth.json")
     policy_config = tomllib.loads(rendered[".codex/config.toml"].decode("utf-8"))
     overrides = list(_flatten_toml(policy_config))
     project_key = json.dumps(str(project.path), ensure_ascii=False)
     overrides.append(f"projects.{project_key}.trust_level=\"untrusted\"")
-    overrides.extend(_consumer_hook_disable_overrides(project))
     skill_override = _skill_config_override(user_config, project)
     if skill_override is not None:
         overrides.append(skill_override)

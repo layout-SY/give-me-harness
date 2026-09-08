@@ -16,7 +16,7 @@
 
 - 사용자 제안: user-ui를 기준으로 새 중앙 프로젝트를 만들고 소비자에서는 수정하지 않으며 세션을 재시작한다.
 - 에이전트 제안: Git HEAD 고정, 공통 정책/host adapter 분리, source digest와 manifest, 별도 배포 승인 게이트를 사용한다.
-- 검토한 대안: 기존 `asan-prompt-core` 또는 `asan-harness` 재사용, 변경 log를 각 세션이 판단, symlink, 프로젝트별 복제 유지.
+- 검토한 대안: 기존 `폐기된 외부 정책 저장소` 또는 `asan-harness` 재사용, 변경 log를 각 세션이 판단, symlink, 프로젝트별 복제 유지.
 - 최종 선택: 독립 `asan-agent-policy`와 결정적 sync CLI.
 - 선택 이유와 제외한 방식의 이유: 사용자가 기존 시스템을 이해·유지하기 어렵다고 했고, 세션별 log 해석은 결정성과 enforcement가 약하다. symlink는 host trust와 설정 형식 차이를 해결하지 못한다.
 

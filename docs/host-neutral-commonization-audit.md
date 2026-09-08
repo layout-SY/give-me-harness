@@ -44,7 +44,7 @@ Codex에서는 같은 이벤트에 일치하는 hook이 모두 실행되며 하�
 | 세션 귀속 상태 | host·session·task·responsibility binding으로 확대 |
 | source 변경 감지 | working tree뿐 아니라 승인 parent HEAD 이후 committed diff까지 검사 |
 | 완료 단계 산출물 검사 | 제목-only, Grill Me 실제 데이터 행, portfolio 사례·필드 검사를 finish·verify·close·preserve의 공통 guard로 이동하고 Stop 재진입은 제거 |
-| bootstrap 자체 hash | 불변 inject bundle digest와 sync manifest 검증으로 대체 |
+| bootstrap 자체 hash | 불변 inject bundle digest 검증으로 대체 |
 
 중앙 Codex adapter의 legacy Python 파일과 기존 등록은 제거했다. 렌더 결과에는 `.agent-policy/runtime/managed_policy_guard.py`와 `.agent-policy/runtime/branch_guard.py` 한 쌍만 있고, Claude plugin과 OpenCode home도 같은 runtime bytes를 각 실행 형식에서 호출한다.
 

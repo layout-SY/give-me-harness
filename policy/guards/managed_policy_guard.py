@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""소비자 프로젝트의 중앙 관리 파일, drift와 보호 명령을 검사한다."""
+"""중앙 inject 정책, 승인 범위와 보호 명령을 검사한다."""
 
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ branch_guard = load_branch_guard()
 CENTRAL_ROOT: Final = Path("{{CENTRAL_ROOT}}")
 DEV_COMMAND: Final = "{{DEV_COMMAND}}"
 BUILD_COMMAND: Final = "{{BUILD_COMMAND}}"
-MANIFEST_PATH: Final = ".agent-policy/manifest.json"
 COMMAND_APPROVAL_PHRASE: Final = "명령 실행 승인"
 APPROVAL_MAX_AGE_SECONDS: Final = 30 * 60
 IMPLEMENTATION_APPROVAL_PHRASES: Final = frozenset(
@@ -60,6 +59,9 @@ IMPLEMENTATION_APPROVAL_PHRASES: Final = frozenset(
         "go ahead",
     }
 )
+EMBEDDED_IMPLEMENTATION_APPROVAL_PHRASES: Final = frozenset(
+    IMPLEMENTATION_APPROVAL_PHRASES - {"진행", "승인", "approved"}
+)
 APPROVAL_WORD_PATTERN: Final = re.compile(r"(?:승인|진행|proceed|approved|go\s+ahead)", re.I)
 DENIAL_WORD_PATTERN: Final = re.compile(r"(?:취소|거부|보류|중단|하지\s*마|don't|do\s+not|cancel)", re.I)
 CONTRACT_SHA256_PATTERN: Final = re.compile(r"(?<![0-9a-f])[0-9a-f]{64}(?![0-9a-f])", re.I)
@@ -78,9 +80,10 @@ INJECT_ROLE_ENV: Final = "ASAN_AGENT_POLICY_ROLE"
 REQUIRED_ARTIFACTS: Final = branch_guard.REQUIRED_ARTIFACTS
 HANDOFF_ARTIFACT: Final = branch_guard.HANDOFF_ARTIFACT
 UNKNOWN_ARTIFACT_DIRECTORY: Final = branch_guard.UNKNOWN_ARTIFACT_DIRECTORY
-FALLBACK_MANAGED_ROOTS: Final = (
+MANAGED_POLICY_ROOTS: Final = (
     "AGENTS.md",
     "CLAUDE.md",
+    ".agent-policy/manifest.json",
     ".agent-policy/common/",
     ".agent-policy/runtime/",
     ".agents/skills/",
@@ -183,10 +186,6 @@ def normalized_tool_name(event: dict[str, Any]) -> str:
 def repository_root(event: dict[str, Any]) -> Path:
     cwd_value = event.get("cwd")
     cwd = Path(cwd_value) if isinstance(cwd_value, str) and cwd_value else Path.cwd()
-    for candidate in (cwd, *cwd.parents):
-        if (candidate / MANIFEST_PATH).is_file():
-            return candidate.resolve()
-
     completed = subprocess.run(
         ["git", "rev-parse", "--show-toplevel"],
         cwd=cwd,
@@ -200,35 +199,12 @@ def repository_root(event: dict[str, Any]) -> Path:
 
 
 def runtime_policy_root() -> Path:
-    """현재 guard가 로드된 불변 bundle 또는 sync 기본 checkout을 반환한다."""
+    """현재 guard가 로드된 중앙 inject bundle을 반환한다."""
 
-    if inject_mode():
-        bundle = os.environ.get(INJECT_BUNDLE_ROOT_ENV, "").strip()
-        if bundle:
-            return Path(bundle).resolve()
+    bundle = os.environ.get(INJECT_BUNDLE_ROOT_ENV, "").strip()
+    if bundle:
+        return Path(bundle).resolve()
     return Path(__file__).resolve().parents[2]
-
-
-def load_manifest(root: Path) -> dict[str, Any]:
-    candidates = (root / MANIFEST_PATH, runtime_policy_root() / MANIFEST_PATH)
-    for candidate in dict.fromkeys(path.resolve() for path in candidates):
-        try:
-            value = json.loads(candidate.read_text(encoding="utf-8"))
-        except (FileNotFoundError, json.JSONDecodeError, OSError):
-            continue
-        if isinstance(value, dict):
-            return value
-    return {}
-
-
-def managed_contract(manifest: dict[str, Any]) -> tuple[set[str], tuple[str, ...]]:
-    managed = manifest.get("managed_files")
-    files = set(managed) if isinstance(managed, dict) else set()
-    files.add(MANIFEST_PATH)
-
-    roots_value = manifest.get("managed_roots")
-    roots = tuple(item for item in roots_value if isinstance(item, str)) if isinstance(roots_value, list) else ()
-    return files, roots or FALLBACK_MANAGED_ROOTS
 
 
 def repository_relative(root: Path, raw_path: str) -> str | None:
@@ -562,6 +538,8 @@ def trusted_branch_workflow_invocation(command: str, root: Path | None = None) -
     if tokens[index + 1] not in {
         "proposal",
         "create",
+        "scope-proposal",
+        "update-scope",
         "finish-proposal",
         "finish",
         "verify",
@@ -682,6 +660,10 @@ def branch_workflow_integrator_denial(
         contract = branch_workflow_contract(event, root, arguments)
         source_value = contract.get("source")
         source = source_value if isinstance(source_value, str) else ""
+    elif action == "update-scope":
+        contract = branch_workflow_contract(event, root, arguments)
+        source_value = contract.get("branch")
+        source = source_value if isinstance(source_value, str) else ""
     elif action in {"preserve", "resume"}:
         source = branch_guard.current_branch(root)
     else:
@@ -707,8 +689,9 @@ def shell_mentions_managed(command: str, files: set[str], roots: tuple[str, ...]
     return [candidate for candidate in candidates if candidate and candidate in command]
 
 
-def denied_targets(event: dict[str, Any], root: Path, manifest: dict[str, Any]) -> list[str]:
-    files, roots = managed_contract(manifest)
+def denied_targets(event: dict[str, Any], root: Path) -> list[str]:
+    files: set[str] = set()
+    roots = MANAGED_POLICY_ROOTS
     tool_name = normalized_tool_name(event)
     raw_input = event.get("tool_input")
     tool_input = raw_input if isinstance(raw_input, dict) else {}
@@ -836,6 +819,13 @@ def branch_denial(event: dict[str, Any], root: Path, host: str) -> str | None:
             expected_branch,
             actual_branch,
         ):
+            contract_denial = branch_guard.active_branch_denial(
+                target_root,
+                tuple(dict.fromkeys(relatives)),
+                host=host,
+            )
+            if contract_denial is not None:
+                return contract_denial
             return (
                 "현재 세션의 assignment 권한 계보와 구조화된 변경 대상 branch가 다릅니다.\n"
                 f"  권한 root: {expected_branch}\n"
@@ -857,9 +847,8 @@ def denial_message(targets: list[str]) -> str:
         "중앙 시스템 프롬프트는 소비자 프로젝트에서 수정할 수 없습니다.\n"
         f"대상: {rendered_targets}\n"
         f"중앙 프로젝트: {CENTRAL_ROOT}\n"
-        "중앙 프로젝트에서 원본을 수정한 뒤 `bin/agent-policy diff --project all`을 확인하고 "
-        "승인된 `bin/agent-policy sync --project all`을 실행하세요. "
-        "그 다음 현재 작업을 handoff하고 세션을 재시작해 주세요."
+        "중앙 프로젝트에서 원본과 회귀 테스트를 수정한 뒤 audit을 통과시키고, "
+        "현재 작업을 handoff한 다음 중앙 launcher로 새 inject 세션을 시작해 주세요."
     )
 
 
@@ -1156,7 +1145,7 @@ def bind_artifact_session(event: dict[str, Any], root: Path, host: str) -> str |
     in_assignment = bool(
         assignment_root
         and branch
-        and branch_guard.assignment_allows_branch_mutation(
+        and branch_guard.assignment_includes_branch(
             requested_root,
             assignment_root,
             branch,
@@ -1200,7 +1189,7 @@ def bind_artifact_session(event: dict[str, Any], root: Path, host: str) -> str |
     declared_includes_branch = bool(
         declared_task
         and branch
-        and branch_guard.assignment_allows_branch_mutation(
+        and branch_guard.assignment_includes_branch(
             requested_root,
             declared_task,
             branch,
@@ -1758,7 +1747,13 @@ def prompt_contract_sha256(text: str) -> str:
 
 
 def is_implementation_approval(text: str) -> bool:
-    return normalize_prompt(text) in IMPLEMENTATION_APPROVAL_PHRASES
+    normalized = normalize_prompt(text)
+    if DENIAL_WORD_PATTERN.search(normalized):
+        return False
+    if normalized in IMPLEMENTATION_APPROVAL_PHRASES:
+        return True
+    padded = f" {normalized} "
+    return any(f" {phrase} " in padded for phrase in EMBEDDED_IMPLEMENTATION_APPROVAL_PHRASES)
 
 
 def event_output_text(event: dict[str, Any]) -> str:
@@ -1890,7 +1885,11 @@ def record_post_tool(event: dict[str, Any], root: Path, host: str) -> None:
     tool_input = raw_input if isinstance(raw_input, dict) else {}
     command_value = tool_input.get("command")
     command = command_value if isinstance(command_value, str) else ""
-    if trusted_branch_workflow_action(command, root) in {"proposal", "finish-proposal"}:
+    if trusted_branch_workflow_action(command, root) in {
+        "proposal",
+        "scope-proposal",
+        "finish-proposal",
+    }:
         digests = tuple(
             dict.fromkeys(
                 match.casefold()
@@ -2002,7 +2001,15 @@ def implementation_gate_required(event: dict[str, Any], root: Path) -> bool:
         return False
     action = trusted_branch_workflow_action(command, root)
     if action:
-        return action in {"create", "finish", "verify", "close", "preserve", "resume"}
+        return action in {
+            "create",
+            "update-scope",
+            "finish",
+            "verify",
+            "close",
+            "preserve",
+            "resume",
+        }
     if git_command_mutates(command) or has_non_redirect_shell_mutation(command):
         return True
     for raw_target in shell_redirect_targets(command):
@@ -2044,7 +2051,7 @@ def implementation_gate_denial(
     command_value = tool_input.get("command")
     command = command_value if isinstance(command_value, str) else ""
     action = trusted_branch_workflow_action(command, root)
-    if action in {"create", "finish", "verify", "close"}:
+    if action in {"create", "update-scope", "finish", "verify", "close"}:
         arguments = trusted_branch_workflow_arguments(command, root)
         proposed_digest = branch_workflow_option(arguments, "--proposal-sha256").casefold()
         approved_digest = str(state.get("approved_contract_sha256") or "").casefold()
@@ -2133,48 +2140,14 @@ def emit_session_context(host: str, message: str) -> None:
 
 def check_session(event: dict[str, Any], host: str) -> None:
     root = repository_root(event)
-    manifest = load_manifest(root)
-    injected = inject_mode()
-    injected_project = os.environ.get(INJECT_PROJECT_ENV)
-    project_id = injected_project if injected and injected_project else manifest.get("project_id")
-    central_value = manifest.get("central_root")
-    central = CENTRAL_ROOT if injected else (
-        Path(central_value) if isinstance(central_value, str) else CENTRAL_ROOT
-    )
-    cli = central / "bin/agent-policy"
-
-    if not isinstance(project_id, str) or not cli.is_file():
-        if injected:
-            message = "inject 프로젝트 식별자 또는 중앙 정책 CLI를 찾을 수 없습니다."
-        else:
-            message = (
-                "중앙 정책 manifest 또는 CLI를 찾을 수 없습니다. "
-                f"{CENTRAL_ROOT}에서 sync한 뒤 세션을 재시작해 주세요."
-            )
-        emit_session_context(host, message)
-        return
-
     messages: list[str] = []
-    completed = subprocess.run(
-        [sys.executable, str(cli), "check", "--project", project_id, "--quiet"],
-        cwd=central,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        detail = completed.stderr.strip() or completed.stdout.strip()
-        if injected:
-            warning = (
-                "소비자 동기화 파일에 drift가 있지만 현재 세션은 중앙 inject 번들을 사용합니다. "
-                f"필요하면 {central}에서 diff를 검토하고 별도 승인 후 sync하세요."
-            )
-        else:
-            warning = (
-                "중앙 시스템 프롬프트가 변경되었거나 소비자 파일에 drift가 있습니다. "
-                f"{central}에서 diff와 sync를 확인하고 현재 작업을 handoff한 뒤 세션을 재시작해 주세요."
-            )
-        messages.append(f"{warning}\n{detail}" if detail else warning)
+    project_id = os.environ.get(INJECT_PROJECT_ENV, "").strip()
+    bundle_root = os.environ.get(INJECT_BUNDLE_ROOT_ENV, "").strip()
+    if not inject_mode() or not project_id or not bundle_root:
+        messages.append(
+            "중앙 inject 실행 컨텍스트가 완전하지 않습니다. "
+            "중앙 launcher로 새 세션을 시작해 주세요."
+        )
 
     context = branch_guard.branch_context(root)
     if context:
@@ -2246,8 +2219,7 @@ def main() -> None:
         raise SystemExit("지원하지 않는 guard mode입니다.")
 
     root = repository_root(event)
-    manifest = {} if inject_mode() else load_manifest(root)
-    targets = denied_targets(event, root, manifest)
+    targets = denied_targets(event, root)
     if targets:
         emit_denial(host, denial_message(targets))
         return

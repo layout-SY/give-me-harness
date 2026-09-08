@@ -9,35 +9,12 @@ import subprocess
 import tempfile
 import tomllib
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Final, Iterable
+from typing import Any, Final
 
 CENTRAL_ROOT: Final = Path(__file__).resolve().parents[2]
 CANONICAL_ROOT: Final = Path("/Users/okand/SynologyDrive/asan-agent-policy")
 PROJECTS_ROOT: Final = CENTRAL_ROOT / "projects"
-MANIFEST_RELATIVE: Final = Path(".agent-policy/manifest.json")
-MANAGED_ROOTS: Final = (
-    "AGENTS.md",
-    "CLAUDE.md",
-    ".agent-policy/common/",
-    ".agent-policy/runtime/",
-    ".agents/skills/",
-    ".claude/agents/",
-    ".claude/hooks/",
-    ".claude/settings.json",
-    ".claude/skills/",
-    ".claude/templates/",
-    ".codex/agents/",
-    ".codex/config.toml",
-    ".codex/hooks.json",
-    ".codex/hooks/",
-    ".codex/templates/",
-    ".opencode/agent/",
-    ".opencode/plugins/",
-    ".opencode/templates/",
-    "opencode.json",
-)
 HOST_COMMANDS: Final = {
     "codex": ["codex"],
     "claude": ["claude"],
@@ -66,56 +43,10 @@ class ProjectConfig:
     path: Path
     commands: dict[str, str]
     base_branch: str = "sy-main"
-    policy_path: Path | None = None
-
-    @property
-    def policy_root(self) -> Path:
-        """sync 정책 파일이 배포된 소비자 기본 checkout을 반환한다."""
-
-        return (self.policy_path or self.path).resolve()
-
-
-@dataclass(frozen=True)
-class LegacyTrace:
-    path: str
-    expected_sha256: str
-    actual_sha256: str
-
-    @property
-    def matches(self) -> bool:
-        return self.expected_sha256 == self.actual_sha256
-
-
-@dataclass(frozen=True)
-class ProjectDiff:
-    project: ProjectConfig
-    added: tuple[str, ...]
-    changed: tuple[str, ...]
-    stale: tuple[str, ...]
-    legacy: tuple[LegacyTrace, ...]
-    manifest_issues: tuple[str, ...]
-
-    @property
-    def current(self) -> bool:
-        return not (
-            self.added
-            or self.changed
-            or self.stale
-            or self.legacy
-            or self.manifest_issues
-        )
 
 
 def sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
-
-
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -146,7 +77,6 @@ def load_project(project_id: str) -> ProjectConfig:
             path=Path(str(raw["path"])).resolve(),
             commands=dict(commands),
             base_branch=str(raw["base_branch"]),
-            policy_path=Path(str(raw["path"])).resolve(),
         )
     except KeyError as error:
         raise PolicyError(f"프로젝트 필드가 누락되었습니다: {project_id}: {error}") from error
@@ -222,9 +152,9 @@ def project_overlay_root(project: ProjectConfig) -> Path:
 
 
 def hook_command(project: ProjectConfig, mode: str, host: str) -> str:
-    """cwd와 무관한 sync runtime 절대 경로로 hook 명령을 렌더한다."""
+    """렌더 단계의 guard 명령을 만든다. inject 번들 설치 시 경로를 치환한다."""
 
-    guard = project.policy_root / ".agent-policy/runtime/managed_policy_guard.py"
+    guard = project.path / ".agent-policy/runtime/managed_policy_guard.py"
     return shlex.join(("python3", "-I", str(guard), mode, host))
 
 
@@ -262,7 +192,7 @@ def render_codex_hooks(project: ProjectConfig) -> bytes:
                     "type": "command",
                     "command": hook_command(project, "session-start", "codex"),
                     "timeout": 15,
-                    "statusMessage": "Checking central agent policy drift",
+                    "statusMessage": "Checking central agent policy context",
                     "additionalContextLimit": 1200,
                 }
             ],
@@ -484,144 +414,6 @@ def central_commit() -> str:
     return completed.stdout.strip() if completed.returncode == 0 else "uncommitted"
 
 
-def central_is_clean() -> bool:
-    completed = subprocess.run(
-        ["git", "status", "--porcelain"],
-        cwd=CENTRAL_ROOT,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        return False
-    entries = tuple(line for line in completed.stdout.splitlines() if line.strip())
-    return all(central_status_entry_is_log_only(entry) for entry in entries)
-
-
-def central_status_entry_is_log_only(entry: str) -> bool:
-    if len(entry) < 4:
-        return False
-    paths = tuple(path.strip() for path in entry[3:].split(" -> "))
-    return bool(paths) and all(path == "logs" or path.startswith("logs/") for path in paths)
-
-
-def load_manifest(project: ProjectConfig) -> dict[str, Any]:
-    path = project.path / MANIFEST_RELATIVE
-    if not path.is_file():
-        return {}
-    try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {"_invalid": True}
-    return value if isinstance(value, dict) else {"_invalid": True}
-
-
-def manifest_payload(project: ProjectConfig, rendered: dict[str, bytes]) -> dict[str, Any]:
-    return {
-        "version": 1,
-        "project_id": project.id,
-        "project_name": project.name,
-        "central_root": str(CANONICAL_ROOT),
-        "central_commit": central_commit(),
-        "source_digest": source_digest(project),
-        "managed_roots": list(MANAGED_ROOTS),
-        "managed_files": {
-            path: sha256_bytes(content) for path, content in sorted(rendered.items())
-        },
-        "synced_at": datetime.now(timezone.utc).isoformat(),
-    }
-
-
-def legacy_entries(project: ProjectConfig) -> tuple[dict[str, str], ...]:
-    path = PROJECTS_ROOT / "legacy" / f"{project.id}.json"
-    if not path.is_file():
-        return ()
-    raw_entries = read_json(path).get("entries", [])
-    if not isinstance(raw_entries, list):
-        raise PolicyError(f"legacy entries가 list가 아닙니다: {path}")
-    entries: list[dict[str, str]] = []
-    for entry in raw_entries:
-        if not isinstance(entry, dict):
-            raise PolicyError(f"legacy entry가 object가 아닙니다: {path}")
-        relative = entry.get("path")
-        digest = entry.get("sha256")
-        if not isinstance(relative, str) or not isinstance(digest, str):
-            raise PolicyError(f"legacy entry 필드가 잘못되었습니다: {path}")
-        entries.append({"path": relative, "sha256": digest})
-    return tuple(entries)
-
-
-def existing_legacy(project: ProjectConfig, expected: Iterable[str]) -> tuple[LegacyTrace, ...]:
-    expected_set = set(expected)
-    traces: list[LegacyTrace] = []
-    for entry in legacy_entries(project):
-        relative = entry["path"]
-        if relative in expected_set:
-            continue
-        target = safe_target(project.path, relative)
-        if target.is_file():
-            traces.append(
-                LegacyTrace(
-                    path=relative,
-                    expected_sha256=entry["sha256"],
-                    actual_sha256=sha256_file(target),
-                )
-            )
-    return tuple(sorted(traces, key=lambda trace: trace.path))
-
-
-def safe_target(root: Path, relative: str) -> Path:
-    candidate = root / relative
-    try:
-        candidate.resolve().relative_to(root.resolve())
-    except (OSError, ValueError) as error:
-        raise PolicyError(f"프로젝트 밖의 경로는 사용할 수 없습니다: {relative}") from error
-    if Path(relative).is_absolute() or ".." in Path(relative).parts:
-        raise PolicyError(f"안전하지 않은 상대 경로입니다: {relative}")
-    return candidate
-
-
-def diff_project(project: ProjectConfig) -> ProjectDiff:
-    rendered = render_project(project)
-    manifest = load_manifest(project)
-    managed_value = manifest.get("managed_files")
-    prior_managed = set(managed_value) if isinstance(managed_value, dict) else set()
-    added: list[str] = []
-    changed: list[str] = []
-    for relative, content in rendered.items():
-        target = safe_target(project.path, relative)
-        if not target.is_file():
-            added.append(relative)
-        elif target.read_bytes() != content:
-            changed.append(relative)
-    stale = sorted(prior_managed - set(rendered))
-
-    issues: list[str] = []
-    if not manifest:
-        issues.append("manifest missing")
-    elif manifest.get("_invalid"):
-        issues.append("manifest invalid")
-    else:
-        if manifest.get("project_id") != project.id:
-            issues.append("manifest project_id mismatch")
-        if manifest.get("central_root") != str(CANONICAL_ROOT):
-            issues.append("manifest central_root mismatch")
-        if manifest.get("source_digest") != source_digest(project):
-            issues.append("central source digest changed")
-        expected_hashes = {path: sha256_bytes(content) for path, content in rendered.items()}
-        if managed_value != expected_hashes:
-            issues.append("manifest managed_files mismatch")
-
-    return ProjectDiff(
-        project=project,
-        added=tuple(sorted(added)),
-        changed=tuple(sorted(changed)),
-        stale=tuple(stale),
-        legacy=existing_legacy(project, rendered),
-        manifest_issues=tuple(issues),
-    )
-
-
 def atomic_write(path: Path, content: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     file_descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
@@ -637,59 +429,6 @@ def atomic_write(path: Path, content: bytes) -> None:
             temporary.unlink()
 
 
-def verify_safe_removals(
-    project: ProjectConfig,
-    rendered: dict[str, bytes],
-    manifest: dict[str, Any],
-    retire_legacy: bool,
-) -> tuple[Path, ...]:
-    removals: list[Path] = []
-    managed_value = manifest.get("managed_files")
-    if isinstance(managed_value, dict):
-        for relative, expected_hash in managed_value.items():
-            if relative in rendered:
-                continue
-            target = safe_target(project.path, relative)
-            if not target.exists():
-                continue
-            if not target.is_file() or sha256_file(target) != expected_hash:
-                raise PolicyError(f"수정된 이전 managed 파일은 삭제하지 않습니다: {project.id}:{relative}")
-            removals.append(target)
-
-    legacy = existing_legacy(project, rendered)
-    if legacy and not retire_legacy:
-        raise PolicyError(
-            f"{project.id}에 legacy 파일 {len(legacy)}개가 남아 있습니다. "
-            "diff를 검토하고 승인 후 --retire-legacy를 명시하세요."
-        )
-    for trace in legacy:
-        if not trace.matches:
-            raise PolicyError(f"감사 후 변경된 legacy 파일은 삭제하지 않습니다: {project.id}:{trace.path}")
-        removals.append(safe_target(project.path, trace.path))
-    return tuple(sorted(set(removals)))
-
-
-def sync_project(project: ProjectConfig, retire_legacy: bool = False) -> int:
-    if not central_is_clean():
-        raise PolicyError("중앙 정책 소스에 commit되지 않은 변경이 있어 sync를 거부합니다.")
-    if not project.path.is_dir():
-        raise PolicyError(f"대상 프로젝트를 찾을 수 없습니다: {project.path}")
-
-    rendered = render_project(project)
-    manifest = load_manifest(project)
-    removals = verify_safe_removals(project, rendered, manifest, retire_legacy)
-    for relative, content in rendered.items():
-        atomic_write(safe_target(project.path, relative), content)
-    for target in removals:
-        target.unlink()
-    payload = manifest_payload(project, rendered)
-    atomic_write(
-        project.path / MANIFEST_RELATIVE,
-        (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode(),
-    )
-    return len(rendered)
-
-
 def audit_project(project: ProjectConfig) -> tuple[str, ...]:
     issues: list[str] = []
     if not project.path.is_dir():
@@ -701,8 +440,12 @@ def audit_project(project: ProjectConfig) -> tuple[str, ...]:
             text = content.decode("utf-8")
         except UnicodeDecodeError:
             continue
-        if "asan-prompt-core" in text:
-            issues.append(f"forbidden legacy reference: {relative}")
+        legacy_distribution_markers = (
+            "bin/sync.py deploy --target",
+            "이 프로젝트에서 직접 수정하지 마세요.\n     원본: source/hosts/",
+        )
+        if any(marker in text for marker in legacy_distribution_markers):
+            issues.append(f"forbidden legacy distribution header: {relative}")
         unresolved = (
             "{{PROJECT_",
             "{{CENTRAL_ROOT}}",
@@ -722,6 +465,37 @@ def audit_source_contract() -> tuple[str, ...]:
     """공통 정본·adapter·runtime이 하나의 호스트 중립 계약인지 검사한다."""
 
     issues: list[str] = []
+    inject_only_markers = {
+        CENTRAL_ROOT / "lib/agent_policy/cli.py": (
+            'add_parser("sync"',
+            'add_parser("diff"',
+            'add_parser("check"',
+            "def run_sync(",
+            "--retire-legacy",
+        ),
+        CENTRAL_ROOT / "lib/agent_policy/core.py": (
+            "def " + "sync_project(",
+            "def " + "diff_project(",
+            "class " + "ProjectDiff",
+            "class " + "LegacyTrace",
+        ),
+        CENTRAL_ROOT / "policy/guards/managed_policy_guard.py": (
+            "def load_manifest(",
+            '"check", "--project"',
+            "sync한 뒤",
+        ),
+    }
+    for path, markers in inject_only_markers.items():
+        text = path.read_text(encoding="utf-8")
+        for marker in markers:
+            if marker in text:
+                issues.append(
+                    f"consumer deployment entry point remains: {path.relative_to(CENTRAL_ROOT)}: {marker}"
+                )
+    legacy_registry = CENTRAL_ROOT / "projects/legacy"
+    if legacy_registry.is_dir() and any(legacy_registry.glob("*.json")):
+        issues.append("consumer deployment legacy registry remains")
+
     contract_path = CENTRAL_ROOT / "policy/common/contracts/runtime-policy.json"
     try:
         contract = read_json(contract_path)
@@ -995,12 +769,3 @@ def audit_source_contract() -> tuple[str, ...]:
                 elif normalized not in common_paths:
                     issues.append(f"{project_id}: unresolved common reference {relative} -> {reference}")
     return tuple(dict.fromkeys(issues))
-
-
-def start_command(project: ProjectConfig, host: str, model: str | None) -> list[str]:
-    if host not in HOST_COMMANDS:
-        raise PolicyError(f"지원하지 않는 host입니다: {host}")
-    command = list(HOST_COMMANDS[host])
-    if model:
-        command.extend(["--model", model])
-    return command

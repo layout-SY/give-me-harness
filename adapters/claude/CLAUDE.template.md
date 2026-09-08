@@ -27,9 +27,9 @@ inject system prompt에 `--role`이 있으면 해당 값은 이번 세션에서 
 
 ## 4. 관리 정책 파일
 
-`CLAUDE.md`, `.agent-policy/**`, manifest가 관리하는 `.claude/**`, 하네스·스킬·hook과 runtime 정책은 소비자 프로젝트에서 직접 수정하지 않는다.
+`CLAUDE.md`, `.agent-policy/**`, `.claude/**`의 하네스·스킬·hook과 runtime 정책은 소비자 프로젝트에서 직접 만들거나 수정하지 않는다. 세션 로그와 허용된 개인 설정만 소비자에 둔다.
 
-정책 변경이 필요하면 중앙 원본 경로, 이유, 예상 diff와 sync·세션 재시작 필요 여부를 사용자에게 보고한다. 별도 sync 승인 전에는 소비자 사본을 우회 수정하지 않는다.
+정책 변경이 필요하면 중앙 원본 경로, 이유, 예상 diff와 세션 재시작 필요 여부를 사용자에게 보고한다. 중앙 원본과 회귀 테스트를 수정한 뒤 audit을 통과시키고, 현재 작업을 handoff한 다음 중앙 launcher로 새 inject 세션을 시작한다.
 
 ## 5. Claude 산출물과 handoff
 

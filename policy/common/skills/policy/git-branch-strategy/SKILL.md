@@ -13,6 +13,7 @@ description: 저장소 변경 작업의 V3 task 계약, 격리 worktree, session
 - **session assignment**: 현재 host·세션이 맡은 role, 산출물 디렉터리와 `owner|contributor` 책임을 정한다.
 - 역할이나 산출물 책임은 host 이름에 내장하지 않는다. 같은 branch에서 다른 host·역할이 순차적으로 각자 assignment를 받을 수 있다.
 - 한 세션에는 assignment 권한 root 하나와 현재 작업 branch 초점 하나만 둔다. root 또는 그 ACTIVE V3 자손에서 승인 생성한 child는 `asan-parent` 계보를 따라 같은 권한에 전이적으로 포함된다.
+- V1, V2 또는 버전이 없는 branch metadata는 이력 조회에만 사용하며 변경 권한으로 인정하지 않는다. 계속 작업할 branch는 canonical V3 proposal과 승인을 새로 받아야 한다.
 - parent-root assignment는 root와 승인된 자손 사이에서 초점을 바꿀 수 있다. child-root assignment에는 ancestor·형제 권한이 없고, 이름 유사성은 권한 근거가 아니다. 계보 밖 독립 task는 기존 root가 `CLOSED`된 뒤 같은 세션에서 시작하거나, `PRESERVED` 후 별도 worktree·세션에서 병행한다.
 
 ## 분기 판단
@@ -26,7 +27,7 @@ description: 저장소 변경 작업의 V3 task 계약, 격리 worktree, session
 
 ## 생성 계약
 
-inject 세션에서는 system prompt가 바인딩한 정책 snapshot 안의 스크립트 절대 경로를 사용한다. sync 세션은 배포된 다음 경로를 사용한다.
+system prompt가 바인딩한 중앙 inject snapshot 안의 스크립트 절대 경로를 사용한다. 소비자 저장소의 같은 이름 파일로 fallback하지 않는다.
 
 ```text
 .agent-policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py
@@ -57,6 +58,26 @@ python3 <absolute-branch-workflow.py> create \
 ```
 
 create는 파일 경로, canonical bytes, SHA-256, parent HEAD, parent의 `ACTIVE` 상태, branch 존재 여부와 worktree 상태를 재검증한다. 값 하나라도 달라지면 새 proposal과 승인이 필요하다. V3 metadata는 task id, purpose, parent/full SHA, merge target, roles, scopes, reason, integrator, contract SHA와 `ACTIVE` 상태를 기록한다.
+
+## scope 변경 계약
+
+작업 중 승인 범위가 부족하다고 확인되면 raw `git config`로 metadata를 고치거나 새 branch를 만들지 않는다. 현재 V3 task worktree에서 변경 후 전체 scope를 proposal로 출력한다.
+
+```sh
+python3 <absolute-branch-workflow.py> scope-proposal \
+  --scope <기존에 유지할 경로> \
+  --scope <새로 승인받을 경로>
+```
+
+`--scope`는 추가분만이 아니라 변경 후 전체 목록이다. 출력된 canonical proposal 파일과 64자리 SHA-256을 사용자에게 별도 승인받은 뒤 적용한다.
+
+```sh
+python3 <absolute-branch-workflow.py> update-scope \
+  --proposal-file <printed-absolute-json-path> \
+  --proposal-sha256 <printed-64-character-sha256>
+```
+
+`update-scope`는 현재 ACTIVE V3 계약에서 scopes 외 필드가 바뀌지 않았는지 확인한다. 새 scope가 현재 dirty 경로를 모두 포함하지 못하면 기존 metadata로 되돌리고 실패한다. 따라서 사용자의 일반적인 “범위 추가 승인” 문장을 raw metadata 변경 권한으로 해석하지 않는다.
 
 ## session과 worktree 선택
 
@@ -107,7 +128,7 @@ V3 계약의 승인 worktree에서 Git 통합 담당자 한 명만 branch 전환
 
 에이전트는 명령을 실행하거나 재시도하지 않고 필요 이유, 정확한 대상과 영향을 사용자에게 양도한다. 파일 복원은 통합 담당자가 승인 scope의 구체 경로를 적은 `git restore ... -- <path>`만 사용한다. `git checkout -- <path>`는 사용하지 않는다. branch 전환과 다른 Git 변경을 `&&`나 `;`로 결합하지 않는다. `cd`, `env -C`, `GIT_DIR` 또는 `GIT_WORK_TREE`로 대상 저장소를 숨기지 않는다.
 
-`git symbolic-ref`는 현재 branch 조회형만 허용한다. raw branch 생성·tracking·force·orphan 옵션과 local ref를 직접 갱신하는 fetch refspec은 workflow 우회로 차단한다. stage path는 `git add ... -- <path>`로 명시하고, `git commit -a|--only|<path>`처럼 unstaged 파일을 암시적으로 포함하지 않는다.
+`git symbolic-ref`는 현재 branch 조회형만 허용한다. raw branch 생성·tracking·force·orphan 옵션과 local ref를 직접 갱신하는 fetch refspec은 workflow 우회로 차단한다. stage path는 `git add ... -- <path>`로 명시하고, `git commit -a|--only|<path>`처럼 unstaged 파일을 암시적으로 포함하지 않는다. `git commit -m <message>`와 반복된 `-m`의 값은 URL이나 `/`를 포함해도 pathspec으로 해석하지 않는다.
 
 ## 완료 workflow
 

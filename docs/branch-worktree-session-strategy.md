@@ -4,7 +4,7 @@
 
 - 기준일: 2026-09-03
 - 대상: `user-ui`, `admin-ui`와 중앙 `asan-agent-policy`
-- 상태: 중앙 원본 구현. 소비자 반영은 별도 승인된 sync와 새 세션 시작 뒤 유효
+- 상태: 중앙 원본 구현. 중앙 launcher로 시작한 새 inject 세션부터 유효
 - 역할 원칙: host와 role은 독립이다. 특정 host를 UI·Logic·오케스트레이션 전담으로 고정하지 않는다.
 
 ## 1. 기존 상황
@@ -172,7 +172,7 @@ Codex legacy hook의 기능을 공통 guard와 비교했다.
 | source mutation marker | parent HEAD부터 current branch까지 committed diff와 dirty diff를 함께 검사 |
 | session artifact 귀속 | host+session binding과 구조화된 Write 경로로 공통 처리 |
 | 완료 단계 8종 내용 검사 | 제목-only, Grill Me 데이터 행, portfolio 사례 구조 검사를 명시적인 finish·verify·close 단계의 공통 guard로 이동 |
-| Codex bootstrap hash | 단일 managed runtime bundle digest와 manifest 검증으로 통합 |
+| Codex bootstrap hash | 단일 중앙 runtime bundle digest 검증으로 통합 |
 
 Codex는 matching hook을 모두 실행하므로 legacy를 남겨 두고 공통 hook을 앞에 배치해도 중복이 사라지지 않는다. 따라서 adapter의 legacy Python hook과 등록은 제거하고 `managed_policy_guard.py` 하나로 통일한다. 공통 guard는 SessionStart, UserPrompt, PreTool과 PostTool mode로 승인·탐색·변경·산출물 보호를 포함하며 Claude Code와 OpenCode도 같은 상태 계약을 사용한다. Stop은 로그 수집만 수행하고, 호환용 `documentation-stop` mode는 항상 비차단이다.
 
@@ -193,7 +193,9 @@ parser는 `git -C <path>`, `git -c key=value`, `--git-dir` 같은 global option 
 
 `git pull`, reset, stash, rebase와 cherry-pick도 자동 계보 변경 때문에 차단한다. 파일 복원은 구체 pathspec의 `git restore ... -- <path>`를 사용한다. branch 전환과 merge는 별도 명령이어야 한다.
 
-조회와 변경 형태를 함께 가진 `git symbolic-ref`는 현재 branch를 읽는 단일 인자 형태만 허용한다. raw `git branch --track/-f`, `checkout|switch --orphan`, local ref 목적지가 있는 fetch refspec도 branch workflow 우회이므로 차단한다. stage는 `git add ... -- <path>`처럼 path를 구조적으로 드러내야 하며, commit은 `-a`, `--only` 또는 pathspec으로 unstaged 파일을 암시적으로 포함하지 않는다.
+조회와 변경 형태를 함께 가진 `git symbolic-ref`는 현재 branch를 읽는 단일 인자 형태만 허용한다. raw `git branch --track/-f`, `checkout|switch --orphan`, local ref 목적지가 있는 fetch refspec도 branch workflow 우회이므로 차단한다. stage는 `git add ... -- <path>`처럼 path를 구조적으로 드러내야 하며, commit은 `-a`, `--only` 또는 pathspec으로 unstaged 파일을 암시적으로 포함하지 않는다. `git commit -m`의 메시지 값은 URL과 `/`를 포함해도 경로로 분류하지 않는다.
+
+작업 도중 scope 변경이 필요하면 `scope-proposal`이 변경 후 전체 scope를 canonical JSON과 SHA-256으로 제시하고, 별도 승인 뒤 `update-scope`가 scopes 외 계약 불변성과 현재 dirty 경로 포함 여부를 검증한다. 검증 실패 시 기존 metadata를 복원한다.
 
 ## 9. 완료 상태와 immutable finish proposal
 
@@ -254,11 +256,11 @@ dirty 기준 폴더 때문에 격리 worktree를 새로 만든 경우에도 그 
 
 - Git status, path parse, contract file 또는 runtime contract를 읽지 못하면 허용하지 않는다.
 - inject는 snapshot의 `.agent-policy/runtime/branch_guard.py`만 사용하고 stale consumer host hook으로 fallback하지 않는다.
-- sync hook은 현재 cwd에서 runtime을 찾지 않고 `projects/*.json`의 소비자 기본 checkout에 배포된 guard 절대 경로를 사용한다. 그래서 `.agent-policy/`가 ignore된 격리 worktree에서도 같은 정책 원본을 실행한다.
+- launcher는 선택한 실제 worktree에 중앙 bundle의 guard 절대 경로를 주입한다. 소비자 host 설정이나 같은 이름의 runtime으로 fallback하지 않는다.
 - `git -C`, 도구 `workdir`, `--git-dir/--work-tree`는 실제 target worktree와 Git directory가 일치하는지 재평가한다. `cd`, `env -C`, `GIT_DIR/GIT_WORK_TREE`, Git directory/worktree 불일치는 해석 가능한 형태로 단순화하기 전까지 차단한다.
 - launcher가 지정 worktree를 같은 Git 저장소로 검증하지 못하면 기본 프로젝트 폴더로 fallback하지 않는다.
 - merge·검증·cleanup 실패는 source와 worktree를 보존한 채 사용자에게 정확한 상태를 보고한다.
-- 소비자 sync와 로그 Git commit은 이 작업의 자동 후속 동작이 아니며 별도 승인을 받는다.
+- 소비자 정책 배포 기능은 사용하지 않는다. 로그 Git commit은 자동 후속 동작이 아니며 별도 승인을 받는다.
 
 ## 12. 구현 구성
 
@@ -271,7 +273,7 @@ dirty 기준 폴더 때문에 격리 worktree를 새로 만든 경우에도 그 
 | branch 규범·CLI | `policy/common/skills/policy/git-branch-strategy/` |
 | 계보·scope·Git parser | `policy/guards/branch_guard.py` |
 | managed path·session·완료 단계 guard | `policy/guards/managed_policy_guard.py` |
-| sync renderer | `lib/agent_policy/core.py` |
+| 중앙 bundle renderer | `lib/agent_policy/core.py` |
 | inject bundle | `lib/agent_policy/injection.py` |
 | worktree/session launcher | `lib/agent_policy/cli.py` |
 | host·unknown log mirror | `lib/agent_policy/log_mirror.py` |

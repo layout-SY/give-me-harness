@@ -6,8 +6,8 @@
 
 ## 대상 관련 사실
 
-- 사용자 요청의 `~/asan-prompt-core` 경로는 존재하지 않는다.
-- 프로젝트 `AGENTS.md`와 중앙 저장소 루트 `AGENTS.md`는 실제 중앙 원본을 `~/SynologyDrive/asan-prompt-core`로 지정한다.
+- 사용자 요청의 `~/폐기된 외부 정책 저장소` 경로는 존재하지 않는다.
+- 프로젝트 `AGENTS.md`와 중앙 저장소 루트 `AGENTS.md`는 실제 중앙 원본을 `~/SynologyDrive/폐기된 외부 정책 저장소`로 지정한다.
 - `source/common/AGENTS.md`에는 Claude Code production UI 작업의 `handoff.md` 예외와 기능 이식 인계 절차가 있으나, 모든 작업자·호스트·세션 전환에 적용되는 일반 인계 계약은 없다.
 - 중앙 저장소 루트 `AGENTS.md`는 정책 배포 뒤 실행 중인 대상 프로젝트 세션을 handoff하고 새 세션을 시작하도록 요구한다.
 - Codex용 `.codex/templates/handoff.template.md`에는 목표 및 현재 상태, 완료·대기 작업, 결정·제약, 관련 경로, 명령어 및 결과, 다음 조치 항목이 있다.

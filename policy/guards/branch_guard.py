@@ -20,17 +20,17 @@ INTEGRATOR_PATTERN = re.compile(r"^(?:codex|claude|opencode|user)$")
 
 def _runtime_contract_path() -> Path:
     bundle_root = os.environ.get("ASAN_AGENT_POLICY_BUNDLE_ROOT", "").strip()
-    candidates = []
-    if bundle_root:
-        candidates.append(Path(bundle_root) / ".agent-policy/common/contracts/runtime-policy.json")
     source = Path(__file__).resolve()
-    candidates.extend(
-        (
-            source.parents[1] / "common/contracts/runtime-policy.json",
-            Path.cwd() / ".agent-policy/common/contracts/runtime-policy.json",
-            Path.cwd() / "policy/common/contracts/runtime-policy.json",
-        )
-    )
+    candidates = [
+        source.parents[1] / "common/contracts/runtime-policy.json",
+        *(
+            (Path(bundle_root) / ".agent-policy/common/contracts/runtime-policy.json",)
+            if bundle_root
+            else ()
+        ),
+        Path.cwd() / ".agent-policy/common/contracts/runtime-policy.json",
+        Path.cwd() / "policy/common/contracts/runtime-policy.json",
+    ]
     for candidate in candidates:
         if candidate.is_file():
             return candidate
@@ -102,11 +102,9 @@ ALLOWED_VALIDATION_COMMANDS: tuple[tuple[str, ...], ...] = tuple(
 )
 MAX_LINEAGE_DEPTH = 32
 CONTRACT_VERSION = "3"
-LEGACY_CONTRACT_VERSION = "2"
 ALLOWED_ROLES: tuple[str, ...] = tuple(
     dict.fromkeys((*ROLE_ALIASES, *ROLE_ALIASES.values(), "documentation"))
 )
-ARTIFACT_MODES: tuple[str, ...] = ("full", "handoff")
 
 REQUIRED_METADATA: tuple[str, ...] = (
     "purpose",
@@ -269,24 +267,25 @@ def task_state(root: Path, branch: str) -> str:
 
 
 def _missing_metadata(values: dict[str, object]) -> tuple[str, ...]:
-    version = str(values.get("contract-version") or "")
-    required = V3_REQUIRED_METADATA if version == CONTRACT_VERSION else REQUIRED_METADATA
-    missing = [field for field in required if not values.get(field)]
+    missing = [field for field in V3_REQUIRED_METADATA if not values.get(field)]
     scope = values.get("scope")
     if not isinstance(scope, tuple) or not scope:
         missing.append("scope")
-    if version:
-        roles = values.get("roles")
-        if not isinstance(roles, tuple) or not roles:
-            missing.append("role")
-        required_fields = ("git-integrator",) if version == CONTRACT_VERSION else (
-            "git-integrator",
-            "artifact-mode",
-        )
-        for field in required_fields:
-            if not values.get(field):
-                missing.append(field)
+    roles = values.get("roles")
+    if not isinstance(roles, tuple) or not roles:
+        missing.append("role")
     return tuple(missing)
+
+
+def _v3_contract_denial(branch: str, values: dict[str, object]) -> str | None:
+    version = str(values.get("contract-version") or "")
+    if version == CONTRACT_VERSION:
+        return None
+    legacy = f"V{version}" if version else "V1(무버전)"
+    return (
+        f"{branch}의 {legacy} branch 계약은 변경 권한을 부여하지 않습니다. "
+        "branch_workflow.py proposal → create 절차로 V3 계약을 다시 승인받으세요."
+    )
 
 
 def canonical_contract(
@@ -441,9 +440,8 @@ def _lineage_denial(
     seen: set[str] = set()
     cursor = branch
     ancestor_found = not required_ancestor
-    descendant_contracts_are_v3 = True
     for _ in range(MAX_LINEAGE_DEPTH):
-        if cursor == required_ancestor and descendant_contracts_are_v3:
+        if cursor == required_ancestor:
             ancestor_found = True
         if cursor == base_branch:
             return (
@@ -455,6 +453,9 @@ def _lineage_denial(
             return f"브랜치 계보가 순환합니다: {cursor}"
         seen.add(cursor)
         values = metadata(root, cursor)
+        version_problem = _v3_contract_denial(cursor, values)
+        if version_problem is not None:
+            return version_problem
         missing = _missing_metadata(values)
         if missing:
             return f"{cursor} 브랜치 메타데이터가 없습니다: {', '.join(missing)}"
@@ -463,64 +464,43 @@ def _lineage_denial(
         parent_head = str(values["parent-head"])
         proposal = str(values["proposal"])
         worktree = str(values.get("worktree") or "")
-        contract_version = str(values.get("contract-version") or "")
-        if required_ancestor and not ancestor_found and contract_version != CONTRACT_VERSION:
-            descendant_contracts_are_v3 = False
         if parent != merge_target:
             return f"{cursor}의 분기 기준({parent})과 직접 merge 대상({merge_target})이 다릅니다."
         if FULL_SHA_PATTERN.fullmatch(parent_head) is None:
             return f"{cursor}의 부모 HEAD는 40자리 전체 SHA여야 합니다: {parent_head or '없음'}"
-        if contract_version and contract_version not in {CONTRACT_VERSION, LEGACY_CONTRACT_VERSION}:
-            return f"{cursor}의 지원하지 않는 branch 계약 버전입니다: {contract_version}"
         roles = values.get("roles")
         git_integrator = str(values.get("git-integrator") or "")
-        artifact_mode = str(values.get("artifact-mode") or "")
-        if contract_version:
-            assert isinstance(roles, tuple)
-            invalid_roles = tuple(role for role in roles if role not in ALLOWED_ROLES)
-            if invalid_roles:
-                return f"{cursor}의 역할 metadata가 올바르지 않습니다: {', '.join(invalid_roles)}"
-            if INTEGRATOR_PATTERN.fullmatch(git_integrator) is None:
-                return f"{cursor}의 Git 통합 담당자가 올바르지 않습니다: {git_integrator or '없음'}"
-            if contract_version == LEGACY_CONTRACT_VERSION and artifact_mode not in ARTIFACT_MODES:
-                return f"{cursor}의 산출물 모드가 올바르지 않습니다: {artifact_mode or '없음'}"
-        if contract_version == CONTRACT_VERSION:
-            scopes = values.get("scope")
-            assert isinstance(scopes, tuple)
-            reason = str(values.get("reason") or "")
-            purpose = str(values.get("purpose") or "")
-            expected_proposal = proposal_id(
-                cursor,
-                parent,
-                parent_head,
-                merge_target,
-                worktree,
-                roles if isinstance(roles, tuple) else (),
-                git_integrator,
-                "",
-                purpose,
-                scopes,
-                reason,
-            )
-            expected_sha = expected_proposal.removeprefix("asan-v3:")
-            if values.get("contract-sha256") != expected_sha:
-                return f"{cursor}의 branch 계약 SHA-256이 승인된 canonical 계약과 일치하지 않습니다."
-            if values.get("task-id") != cursor.removeprefix("task/"):
-                return f"{cursor}의 task id가 branch 이름과 일치하지 않습니다."
-            state = str(values.get("state") or "ACTIVE")
-            if state not in TASK_STATES:
-                return f"{cursor}의 작업 상태가 올바르지 않습니다: {state}"
-        else:
-            expected_proposal = proposal_id(
-                cursor,
-                parent,
-                parent_head,
-                merge_target,
-                worktree,
-                roles if contract_version and isinstance(roles, tuple) else (),
-                git_integrator if contract_version else "",
-                artifact_mode if contract_version else "",
-            )
+        assert isinstance(roles, tuple)
+        invalid_roles = tuple(role for role in roles if role not in ALLOWED_ROLES)
+        if invalid_roles:
+            return f"{cursor}의 역할 metadata가 올바르지 않습니다: {', '.join(invalid_roles)}"
+        if INTEGRATOR_PATTERN.fullmatch(git_integrator) is None:
+            return f"{cursor}의 Git 통합 담당자가 올바르지 않습니다: {git_integrator or '없음'}"
+        scopes = values.get("scope")
+        assert isinstance(scopes, tuple)
+        reason = str(values.get("reason") or "")
+        purpose = str(values.get("purpose") or "")
+        expected_proposal = proposal_id(
+            cursor,
+            parent,
+            parent_head,
+            merge_target,
+            worktree,
+            roles,
+            git_integrator,
+            "",
+            purpose,
+            scopes,
+            reason,
+        )
+        expected_sha = expected_proposal.removeprefix("asan-v3:")
+        if values.get("contract-sha256") != expected_sha:
+            return f"{cursor}의 branch 계약 SHA-256이 승인된 canonical 계약과 일치하지 않습니다."
+        if values.get("task-id") != cursor.removeprefix("task/"):
+            return f"{cursor}의 task id가 branch 이름과 일치하지 않습니다."
+        state = str(values.get("state") or "")
+        if state not in TASK_STATES:
+            return f"{cursor}의 작업 상태가 올바르지 않습니다: {state or '없음'}"
         if proposal != expected_proposal:
             return f"{cursor}의 승인 요청 식별자가 분기 계약과 일치하지 않습니다."
         if not branch_exists(root, parent):
@@ -547,7 +527,7 @@ def assignment_includes_branch(
     branch: str,
     base_branch: str = BASE_BRANCH,
 ) -> bool:
-    """assignment root와 승인된 V3 자손 branch만 같은 작업 권한으로 인정한다."""
+    """동일 assignment root 또는 승인된 V3 자손인지 식별한다."""
 
     if assignment_root and assignment_root == branch:
         return True
@@ -573,9 +553,19 @@ def assignment_allows_branch_mutation(
     branch: str,
     base_branch: str = BASE_BRANCH,
 ) -> bool:
-    """권한 root가 ACTIVE인 동안에만 그 V3 자손 변경 권한을 활성화한다."""
+    """유효한 V3 계보에서만 source·Git 변경 권한을 활성화한다."""
 
+    if not enabled(base_branch):
+        return bool(assignment_root and assignment_root == branch)
     if not assignment_includes_branch(root, assignment_root, branch, base_branch):
+        return False
+    if _lineage_denial(
+        root,
+        branch,
+        base_branch,
+        allow_merged=True,
+        required_ancestor=assignment_root,
+    ) is not None:
         return False
     return branch == assignment_root or task_state(root, assignment_root) == "ACTIVE"
 
@@ -610,26 +600,25 @@ def active_branch_denial(
     if lineage_problem is not None:
         return lineage_problem
     values = metadata(root, branch)
-    if values.get("contract-version") == CONTRACT_VERSION:
-        state = str(values.get("state") or "")
-        if state != "ACTIVE":
+    state = str(values.get("state") or "")
+    if state != "ACTIVE":
+        return (
+            f"V3 task {branch}는 ACTIVE 상태에서만 수정할 수 있습니다. 현재 상태: "
+            f"{state or '없음'}"
+        )
+    approved_worktree = str(values.get("worktree") or "")
+    if approved_worktree:
+        try:
+            actual_root = root.resolve()
+            expected_root = Path(approved_worktree).expanduser().resolve()
+        except (OSError, RuntimeError):
+            return f"V3 task {branch}의 승인 worktree 경로를 확인할 수 없습니다."
+        if actual_root != expected_root:
             return (
-                f"V3 task {branch}는 ACTIVE 상태에서만 수정할 수 있습니다. 현재 상태: "
-                f"{state or '없음'}"
+                f"V3 task {branch}의 변경 대상 worktree가 승인 계약과 다릅니다.\n"
+                f"  승인: {expected_root}\n"
+                f"  실제: {actual_root}"
             )
-        approved_worktree = str(values.get("worktree") or "")
-        if approved_worktree:
-            try:
-                actual_root = root.resolve()
-                expected_root = Path(approved_worktree).expanduser().resolve()
-            except (OSError, RuntimeError):
-                return f"V3 task {branch}의 승인 worktree 경로를 확인할 수 없습니다."
-            if actual_root != expected_root:
-                return (
-                    f"V3 task {branch}의 변경 대상 worktree가 승인 계약과 다릅니다.\n"
-                    f"  승인: {expected_root}\n"
-                    f"  실제: {actual_root}"
-                )
     scopes = values.get("scope")
     assert isinstance(scopes, tuple)
     changed = changed_paths(root)
@@ -653,13 +642,16 @@ def active_branch_denial(
 
 
 def git_integrator_denial(root: Path, branch: str, host: str) -> str | None:
-    """V2/V3 계약에서 AI 호스트의 Git 통합 담당자 일치를 확인한다."""
+    """V3 계약에서 AI 호스트의 Git 통합 담당자 일치를 확인한다."""
 
+    if not enabled():
+        return None
     if not branch or not host:
         return None
     values = metadata(root, branch)
-    if values.get("contract-version") not in {CONTRACT_VERSION, LEGACY_CONTRACT_VERSION}:
-        return None
+    version_problem = _v3_contract_denial(branch, values)
+    if version_problem is not None:
+        return version_problem
     integrator = str(values.get("git-integrator") or "")
     if integrator == host:
         return None
@@ -1516,16 +1508,15 @@ def branch_selection_denial(
     if lineage_problem is not None:
         return lineage_problem
     values = metadata(root, branch)
-    if values.get("contract-version") == CONTRACT_VERSION:
-        state = str(values.get("state") or "")
-        if state != "ACTIVE":
-            return f"V3 task {branch}는 ACTIVE 상태에서만 전환할 수 있습니다. 현재 상태: {state or '없음'}"
-        approved_worktree = str(values.get("worktree") or "")
-        if approved_worktree and Path(approved_worktree).expanduser().resolve() != root.resolve():
-            return (
-                f"V3 task {branch}는 승인된 격리 worktree에서만 사용할 수 있습니다: "
-                f"{Path(approved_worktree).expanduser().resolve()}"
-            )
+    state = str(values.get("state") or "")
+    if state != "ACTIVE":
+        return f"V3 task {branch}는 ACTIVE 상태에서만 전환할 수 있습니다. 현재 상태: {state or '없음'}"
+    approved_worktree = str(values.get("worktree") or "")
+    if approved_worktree and Path(approved_worktree).expanduser().resolve() != root.resolve():
+        return (
+            f"V3 task {branch}는 승인된 격리 worktree에서만 사용할 수 있습니다: "
+            f"{Path(approved_worktree).expanduser().resolve()}"
+        )
     return None
 
 
@@ -1546,27 +1537,16 @@ def _merge_denial(root: Path, arguments: tuple[str, ...], base_branch: str) -> s
     if not source or not branch_exists(root, source):
         return "merge할 source 작업 브랜치를 확인할 수 없습니다."
     values = metadata(root, source)
+    version_problem = _v3_contract_denial(source, values)
+    if version_problem is not None:
+        return version_problem
     missing = _missing_metadata(values)
     if missing:
         return f"merge source {source}의 승인 메타데이터가 없습니다: {', '.join(missing)}"
-    if values.get("contract-version") == CONTRACT_VERSION:
-        return (
-            "V3 task branch는 raw git merge로 통합할 수 없습니다. "
-            "승인된 branch_workflow.py finish → verify → close 절차를 사용하세요."
-        )
-    target = str(values["merge-target"])
-    current = current_branch(root)
-    if current != target:
-        return f"{source}는 {target}에서만 merge할 수 있습니다. 현재 브랜치: {current or 'detached HEAD'}"
-    if changed_paths(root):
-        return "dirty worktree에서는 merge할 수 없습니다. 승인된 작업의 commit 상태를 먼저 확인하세요."
-    lineage_problem = _lineage_denial(root, source, base_branch)
-    if lineage_problem is not None:
-        return lineage_problem
-    children = unmerged_children(root, source)
-    if children:
-        return f"미병합 자식 브랜치를 먼저 처리해야 합니다: {', '.join(children)}"
-    return None
+    return (
+        "V3 task branch는 raw git merge로 통합할 수 없습니다. "
+        "승인된 branch_workflow.py finish → verify → close 절차를 사용하세요."
+    )
 
 
 def _deletion_denial(root: Path, arguments: tuple[str, ...]) -> str | None:
@@ -1581,18 +1561,10 @@ def _deletion_denial(root: Path, arguments: tuple[str, ...]) -> str | None:
     candidates = tuple(value for value in arguments[start:] if not value.startswith("-"))
     for branch in candidates:
         values = metadata(root, branch)
-        if values.get("contract-version") == CONTRACT_VERSION:
-            return "V3 task branch 정리는 승인된 branch_workflow.py close에서만 수행합니다."
-        target = str(values.get("merge-target", ""))
-        if not target or not branch_exists(root, target):
-            return f"{branch}의 직접 merge 대상을 확인할 수 없어 삭제할 수 없습니다."
-        if current_branch(root) == branch:
-            return f"현재 체크아웃한 브랜치는 삭제할 수 없습니다: {branch}"
-        if not is_ancestor(root, branch, target):
-            return f"{branch}가 {target}에 완전히 merge되지 않아 삭제할 수 없습니다."
-        children = unmerged_children(root, branch)
-        if children:
-            return f"{branch}에 미병합 자식 브랜치가 있습니다: {', '.join(children)}"
+        version_problem = _v3_contract_denial(branch, values)
+        if version_problem is not None:
+            return version_problem
+        return "V3 task branch 정리는 승인된 branch_workflow.py close에서만 수행합니다."
     return None
 
 
@@ -1694,6 +1666,15 @@ def command_denial(
                 actual_branch,
                 base_branch,
             ):
+                lineage_problem = _lineage_denial(
+                    operation_root,
+                    actual_branch,
+                    base_branch,
+                    allow_merged=True,
+                    required_ancestor=expected_branch,
+                )
+                if lineage_problem is not None:
+                    return lineage_problem
                 return (
                     "현재 세션의 assignment 권한 계보와 Git 변경 대상 branch가 다릅니다.\n"
                     f"  권한 root: {expected_branch}\n"
@@ -1985,15 +1966,18 @@ def branch_context(root: Path, base_branch: str = BASE_BRANCH) -> str:
     values = metadata(root, branch)
     scopes = values.get("scope")
     roles = values.get("roles")
+    contract_version = str(values.get("contract-version") or "")
+    contract_label = f"V{contract_version}" if contract_version else "V1(무버전)"
     lines.extend(
         (
             f"- 작업 목적: {values.get('purpose') or '메타데이터 없음'}",
-            f"- 확인된 역할: {', '.join(roles) if isinstance(roles, tuple) and roles else 'legacy 계약(기록 없음)'}",
-            f"- Git 통합 담당자: {values.get('git-integrator') or 'legacy 계약(기록 없음)'}",
+            f"- branch 계약: {contract_label}",
+            f"- 확인된 역할: {', '.join(roles) if isinstance(roles, tuple) and roles else '기록 없음'}",
+            f"- Git 통합 담당자: {values.get('git-integrator') or '기록 없음'}",
             (
                 f"- task 상태: {values.get('state') or '메타데이터 없음'}"
-                if values.get("contract-version") == CONTRACT_VERSION
-                else f"- 산출물 모드: {values.get('artifact-mode') or 'legacy 계약(Stop 시 handoff 또는 8종)'}"
+                if contract_version == CONTRACT_VERSION
+                else "- 변경 권한: 없음 (V3 계약 재승인 필요)"
             ),
             f"- 분기 기준: {values.get('parent') or '메타데이터 없음'}",
             f"- 승인 시점 부모 HEAD: {str(values.get('parent-head') or '없음')[:12]}",

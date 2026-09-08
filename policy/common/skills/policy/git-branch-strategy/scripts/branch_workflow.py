@@ -19,7 +19,6 @@ INJECT_MODE_ENV = "ASAN_AGENT_POLICY_MODE"
 REQUIRED_GUARD_ATTRIBUTES = (
     "ALLOWED_VALIDATION_COMMANDS",
     "ALLOWED_ROLES",
-    "ARTIFACT_MODES",
     "BASE_BRANCH",
     "CONTRACT_VERSION",
     "INTEGRATOR_PATTERN",
@@ -30,6 +29,7 @@ REQUIRED_GUARD_ATTRIBUTES = (
 )
 REQUIRED_GUARD_CALLABLES = (
     "active_branch_denial",
+    "assignment_allows_branch_mutation",
     "branch_context",
     "branch_exists",
     "changed_paths",
@@ -60,27 +60,14 @@ def repository_root() -> Path:
 
 
 def snapshot_guard_candidates() -> tuple[Path, ...]:
-    """실행 중인 deploy·inject 스냅샷과 함께 렌더링된 guard 경로를 찾는다."""
+    """현재 세션에 주입된 중앙 정책 번들의 guard 경로만 반환한다."""
 
-    script = Path(__file__).resolve()
-    candidates: list[Path] = []
+    if os.environ.get(INJECT_MODE_ENV) != "inject":
+        return ()
     bundle_root = os.environ.get("ASAN_AGENT_POLICY_BUNDLE_ROOT", "").strip()
-    if bundle_root:
-        candidates.append(Path(bundle_root).resolve() / ".agent-policy/runtime/branch_guard.py")
-    for ancestor in script.parents:
-        if ancestor.name == "common" and ancestor.parent.name == ".agent-policy":
-            candidates.append(ancestor.parent / "runtime/branch_guard.py")
-            break
-        if ancestor.name == ".agents":
-            candidates.append(ancestor.parent / ".agent-policy/runtime/branch_guard.py")
-            break
-        if ancestor.name == "plugin":
-            candidates.append(ancestor / "runtime/branch_guard.py")
-            break
-        if ancestor.name == "opencode-home":
-            candidates.append(ancestor / "runtime/branch_guard.py")
-            break
-    return tuple(candidates)
+    if not bundle_root:
+        return ()
+    return (Path(bundle_root).resolve() / ".agent-policy/runtime/branch_guard.py",)
 
 
 def guard_contract_issues(module: ModuleType) -> tuple[str, ...]:
@@ -112,13 +99,10 @@ def import_guard(source: Path) -> ModuleType:
 
 
 def load_guard(root: Path) -> ModuleType:
+    del root
     snapshot_candidates = snapshot_guard_candidates()
-    inject = os.environ.get(INJECT_MODE_ENV) == "inject"
-    fallback_candidates = (root / ".agent-policy/runtime/branch_guard.py",)
-    candidates = snapshot_candidates if inject else snapshot_candidates + fallback_candidates
-    authoritative = set(snapshot_candidates) | {fallback_candidates[0]}
     diagnostics: list[str] = []
-    for source in dict.fromkeys(candidates):
+    for source in snapshot_candidates:
         if not source.is_file():
             diagnostics.append(f"- 없음: {source}")
             continue
@@ -126,22 +110,18 @@ def load_guard(root: Path) -> ModuleType:
             module = import_guard(source)
         except Exception as error:  # pragma: no cover - 구체 오류는 실행 환경에 따라 다름
             diagnostics.append(f"- 로드 실패: {source} ({type(error).__name__}: {error})")
-            if source in authoritative:
-                break
-            continue
+            break
         issues = guard_contract_issues(module)
         if not issues:
             return module
         diagnostics.append(f"- 호환되지 않음: {source} (계약 오류: {', '.join(issues)})")
-        if source in authoritative:
-            break
+        break
 
-    location = "정책 스냅샷" if inject else "현재 정책 배치"
-    detail = "\n".join(diagnostics) if diagnostics else "- 검사할 guard 후보 경로가 없습니다."
+    detail = "\n".join(diagnostics) if diagnostics else "- 중앙 inject 번들 환경이 없습니다."
     raise SystemExit(
-        f"{location}에서 호환되는 branch_guard.py를 찾을 수 없습니다.\n"
+        "중앙 inject 정책 스냅샷에서 호환되는 branch_guard.py를 찾을 수 없습니다.\n"
         f"{detail}\n"
-        "정책 diff를 확인하고 별도 승인 후 동기화한 다음 새 세션을 시작하세요."
+        "중앙 agent-policy start로 새 inject 세션을 시작하세요. 소비자 정책 파일로 fallback하지 않습니다."
     )
 
 
@@ -603,6 +583,153 @@ def create(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
     return 0
 
 
+def _active_branch_contract(
+    guard: ModuleType,
+    root: Path,
+) -> tuple[str, dict[str, object], dict[str, object]]:
+    branch = guard.current_branch(root)
+    if not branch or guard.TASK_BRANCH_PATTERN.fullmatch(branch) is None:
+        raise SystemExit("scope 변경은 현재 V3 task branch에서 실행해야 합니다.")
+    values = guard.metadata(root, branch)
+    if values.get("contract-version") != str(guard.CONTRACT_VERSION):
+        raise SystemExit("scope 변경은 V3 task branch에서만 사용할 수 있습니다.")
+    if values.get("state") != "ACTIVE":
+        raise SystemExit(
+            f"ACTIVE task의 scope만 변경할 수 있습니다: {values.get('state') or '없음'}"
+        )
+    roles_value = values.get("roles")
+    scopes_value = values.get("scope")
+    if not isinstance(roles_value, tuple) or not roles_value:
+        raise SystemExit("현재 branch의 승인 역할을 확인할 수 없습니다.")
+    if not isinstance(scopes_value, tuple) or not scopes_value:
+        raise SystemExit("현재 branch의 승인 scope를 확인할 수 없습니다.")
+    if not guard.assignment_allows_branch_mutation(root, branch, branch, str(guard.BASE_BRANCH)):
+        raise SystemExit("현재 branch의 V3 계보 계약이 유효하지 않습니다.")
+    approved_worktree = str(values.get("worktree") or "")
+    if approved_worktree and Path(approved_worktree).expanduser().resolve() != root.resolve():
+        raise SystemExit(f"scope 변경은 승인된 worktree에서 실행해야 합니다: {approved_worktree}")
+
+    contract = guard.canonical_contract(
+        branch,
+        str(values.get("purpose") or ""),
+        str(values.get("parent") or ""),
+        str(values.get("parent-head") or ""),
+        str(values.get("merge-target") or ""),
+        scopes_value,
+        str(values.get("reason") or ""),
+        approved_worktree,
+        roles_value,
+        str(values.get("git-integrator") or ""),
+    )
+    digest = guard.contract_sha256(contract)
+    if values.get("contract-sha256") != digest or values.get("proposal") != f"asan-v3:{digest}":
+        raise SystemExit("현재 branch metadata가 승인된 canonical V3 계약과 일치하지 않습니다.")
+    return branch, values, contract
+
+
+def scope_proposal(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
+    if any(not scope.strip() for scope in arguments.scope):
+        raise SystemExit("--scope에는 공백이 아닌 상대 경로를 지정해야 합니다.")
+    branch, _, current = _active_branch_contract(guard, root)
+    proposed = guard.canonical_contract(
+        branch,
+        str(current["purpose"]),
+        str(current["parent"]),
+        str(current["parent_head"]),
+        str(current["merge_target"]),
+        tuple(arguments.scope),
+        str(current["reason"]),
+        str(current.get("worktree") or ""),
+        tuple(str(role) for role in current["roles"]),
+        str(current["git_integrator"]),
+    )
+    if proposed["scopes"] == current["scopes"]:
+        raise SystemExit("요청 scope가 현재 승인 scope와 같습니다.")
+    proposal_path, digest = write_immutable_proposal(root, proposed, guard)
+    current_lines = "\n".join(f"  - {scope}" for scope in current["scopes"])
+    proposed_lines = "\n".join(f"  - {scope}" for scope in proposed["scopes"])
+    print(
+        "\n".join(
+            (
+                "[브랜치 scope 변경 승인 요청]",
+                f"- 브랜치: {branch}",
+                "- 현재 승인 scope:",
+                current_lines,
+                "- 변경할 승인 scope:",
+                proposed_lines,
+                f"- 승인 요청 식별자: asan-v3:{digest}",
+                f"- canonical proposal 파일: {proposal_path}",
+                f"- canonical proposal SHA-256: {digest}",
+                "",
+                "이 scope 계약 변경을 적용해도 될까요?",
+            )
+        )
+    )
+    return 0
+
+
+def _replace_config_values(root: Path, key: str, values: tuple[str, ...]) -> None:
+    completed = subprocess.run(
+        ("git", "config", "--unset-all", key),
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if completed.returncode not in {0, 5}:
+        detail = completed.stderr.strip() or completed.stdout.strip()
+        raise SystemExit(detail or f"Git config를 초기화할 수 없습니다: {key}")
+    for value in values:
+        _ = git(root, "config", "--add", key, value)
+
+
+def update_scope(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
+    proposed = load_approved_proposal(
+        root,
+        arguments.proposal_file,
+        arguments.proposal_sha256,
+        guard,
+    )
+    branch, values, current = _active_branch_contract(guard, root)
+    if proposed.get("branch") != branch:
+        raise SystemExit(
+            f"scope proposal branch와 현재 branch가 다릅니다: {proposed.get('branch')} != {branch}"
+        )
+    for key, value in current.items():
+        if key != "scopes" and proposed.get(key) != value:
+            raise SystemExit(f"scope 변경 proposal이 기존 branch 계약의 {key} 필드를 변경합니다.")
+    if set(proposed) != set(current):
+        raise SystemExit("scope 변경 proposal의 canonical 필드 구성이 기존 branch 계약과 다릅니다.")
+    proposed_scopes_value = proposed.get("scopes")
+    if not isinstance(proposed_scopes_value, list) or not all(
+        isinstance(scope, str) and scope for scope in proposed_scopes_value
+    ):
+        raise SystemExit("scope 변경 proposal의 scopes가 올바르지 않습니다.")
+    proposed_scopes = tuple(proposed_scopes_value)
+    old_scopes = tuple(str(scope) for scope in current["scopes"])
+    if proposed_scopes == old_scopes:
+        raise SystemExit("scope 변경 proposal이 현재 계약과 같습니다.")
+
+    scope_key = f"branch.{branch}.asan-scope"
+    old_proposal = str(values.get("proposal") or "")
+    old_digest = str(values.get("contract-sha256") or "")
+    try:
+        _replace_config_values(root, scope_key, proposed_scopes)
+        _ = git(root, "config", f"branch.{branch}.asan-proposal", f"asan-v3:{arguments.proposal_sha256}")
+        _ = git(root, "config", f"branch.{branch}.asan-contract-sha256", arguments.proposal_sha256)
+        denial = guard.active_branch_denial(root, (), str(guard.BASE_BRANCH))
+        if denial is not None:
+            raise SystemExit(f"변경할 scope가 현재 branch 상태를 승인하지 못합니다:\n{denial}")
+    except BaseException:
+        _replace_config_values(root, scope_key, old_scopes)
+        _ = git(root, "config", f"branch.{branch}.asan-proposal", old_proposal)
+        _ = git(root, "config", f"branch.{branch}.asan-contract-sha256", old_digest)
+        raise
+
+    print(f"{branch}의 승인 scope를 갱신했습니다: {', '.join(proposed_scopes)}")
+    return 0
+
+
 def _clean_worktree(guard: ModuleType, root: Path) -> None:
     changed = guard.changed_paths(root)
     unavailable = getattr(guard, "GIT_STATUS_UNAVAILABLE", "")
@@ -889,6 +1016,19 @@ def build_parser() -> argparse.ArgumentParser:
     _ = create_parser.add_argument("--proposal-file", required=True)
     _ = create_parser.add_argument("--proposal-sha256", required=True)
 
+    scope_proposal_parser = subparsers.add_parser(
+        "scope-proposal",
+        help="현재 V3 branch의 새 전체 scope 계약을 승인 요청",
+    )
+    _ = scope_proposal_parser.add_argument("--scope", action="append", required=True)
+
+    update_scope_parser = subparsers.add_parser(
+        "update-scope",
+        help="승인된 전체 SHA-256 계약으로 현재 V3 branch scope를 변경",
+    )
+    _ = update_scope_parser.add_argument("--proposal-file", required=True)
+    _ = update_scope_parser.add_argument("--proposal-sha256", required=True)
+
     finish_proposal_parser = subparsers.add_parser(
         "finish-proposal",
         help="commit된 source를 merge·검증·close할 immutable 계약 출력",
@@ -923,11 +1063,15 @@ def main() -> int:
     root = repository_root()
     guard = load_guard(root)
     if not guard.enabled(str(guard.BASE_BRANCH)):
-        raise SystemExit("기준 브랜치 토큰이 렌더링되지 않았습니다. 중앙 정책을 다시 동기화하세요.")
+        raise SystemExit("기준 브랜치 토큰이 렌더링되지 않았습니다. 중앙 agent-policy start로 새 inject 세션을 시작하세요.")
     if arguments.command == "proposal":
         return proposal(arguments, guard, root)
     if arguments.command == "create":
         return create(arguments, guard, root)
+    if arguments.command == "scope-proposal":
+        return scope_proposal(arguments, guard, root)
+    if arguments.command == "update-scope":
+        return update_scope(arguments, guard, root)
     if arguments.command == "finish-proposal":
         return finish_proposal(arguments, guard, root)
     if arguments.command == "finish":

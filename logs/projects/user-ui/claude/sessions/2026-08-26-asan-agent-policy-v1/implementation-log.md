@@ -18,7 +18,7 @@
 
 ## 결정 사항
 
-- `asan-prompt-core` 및 `asan-harness` 소스를 재사용하지 않고 user-ui commit `9edd378560c3c3b7f258984698202498f5c31831`을 기준으로 삼았다.
+- `폐기된 외부 정책 저장소` 및 `asan-harness` 소스를 재사용하지 않고 user-ui commit `9edd378560c3c3b7f258984698202498f5c31831`을 기준으로 삼았다.
 - 공통화 근거가 없는 실제 컴포넌트·custom hook 목록은 중앙 출력에서 제외하고 대상 검색 규칙으로 바꿨다.
 - Claude UI 전담 역할은 baseline대로 유지하되 산출물 경로 모순만 해결했다.
 - manifest는 파일별 SHA-256과 source digest를 기록한다. 이전 manifest 또는 감사 hash와 일치하지 않는 파일은 삭제하지 않는다.

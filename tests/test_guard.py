@@ -680,6 +680,45 @@ Python unittest로 정책 계약을 검증했습니다.
             "deny",
         )
 
+    def test_conditional_implementation_approval_is_accepted_without_weakening_denial(self) -> None:
+        environment = {"ASAN_AGENT_POLICY_ROLE": "logic"}
+        for host in ("codex", "claude", "opencode"):
+            for prompt, expected_allowed in (
+                ("좋아. 회귀 테스트를 먼저 추가하는 조건으로 이 계획대로 진행해.", True),
+                ("회귀 테스트는 추가하되 구현은 진행하지 마.", False),
+            ):
+                with self.subTest(host=host, prompt=prompt):
+                    self.session_id = str(uuid.uuid4())
+                    self.run_mode(
+                        "post-tool",
+                        host,
+                        {"tool_name": "Skill", "tool_input": {"skill": "policy"}},
+                        environment,
+                    )
+                    self.run_mode(
+                        "post-tool",
+                        host,
+                        {"tool_name": "Read", "tool_input": {"file_path": "src/App.tsx"}},
+                        environment,
+                    )
+                    self.run_mode("user-prompt", host, {"prompt": prompt}, environment)
+                    write = self.run_mode(
+                        "pre-tool",
+                        host,
+                        {"tool_name": "Write", "tool_input": {"file_path": "src/feature.ts"}},
+                        environment,
+                    )
+                    if expected_allowed:
+                        self.assertEqual(write.returncode, 0, write.stderr)
+                        self.assertEqual(write.stdout, "")
+                    elif host == "codex":
+                        decision = json.loads(write.stdout)["hookSpecificOutput"]
+                        self.assertEqual(decision["permissionDecision"], "deny")
+                        self.assertIn("사용자 구현 승인", decision["permissionDecisionReason"])
+                    else:
+                        self.assertEqual(write.returncode, 2)
+                        self.assertIn("사용자 구현 승인", write.stderr)
+
     def test_never_agent_git_commands_cannot_be_unlocked_by_codex_approval(self) -> None:
         guard = self.rendered_guard()
 
@@ -832,20 +871,22 @@ Python unittest로 정책 계약을 검증했습니다.
                 f"python3 {script} proposal --branch task/icon-policy --purpose icon "
                 "--parent sy-main --scope src --reason 'git restore . 오판 회귀'"
             ),
+            f"python3 {script} scope-proposal --scope src --scope docs",
             (
                 f"python3 {script} context 2>/dev/null"
             ),
         )
-        for command in commands:
-            with self.subTest(command=command):
-                result = self.run_mode(
-                    "pre-tool",
-                    "claude",
-                    {"tool_name": "Bash", "tool_input": {"command": command}},
-                    environment,
-                )
-                self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertEqual(result.stdout, "")
+        for host in ("codex", "claude", "opencode"):
+            for command in commands:
+                with self.subTest(host=host, command=command):
+                    result = self.run_mode(
+                        "pre-tool",
+                        host,
+                        {"tool_name": "Bash", "tool_input": {"command": command}},
+                        environment,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(result.stdout, "")
 
         chained = self.run_mode(
             "pre-tool",

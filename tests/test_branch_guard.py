@@ -46,24 +46,54 @@ class BranchGuardTests(unittest.TestCase):
         self.temporary_directory.cleanup()
 
     def configure_task_branch(self) -> str:
-        parent_head = self.guard.head(self.root, "sy-main")
         branch = "task/render-policy"
-        subprocess.run(["git", "switch", "-qc", branch], cwd=self.root, check=True)
+        self.configure_v3_task(branch, "sy-main", ("src/shared/ui",))
+        subprocess.run(["git", "switch", "-q", branch], cwd=self.root, check=True)
+        return branch
+
+    def configure_legacy_task(self, branch: str, version: str = "") -> str:
+        parent_head = self.guard.head(self.root, "sy-main")
+        roles = ("logic",)
+        proposal = self.guard.proposal_id(
+            branch,
+            "sy-main",
+            parent_head,
+            "sy-main",
+            "",
+            roles if version else (),
+            "codex" if version else "",
+            "full" if version else "",
+        )
+        subprocess.run(["git", "branch", branch, parent_head], cwd=self.root, check=True)
         values = {
-            "purpose": "중앙 정책 렌더링 검증",
+            "purpose": "퇴역 계약 변경 차단 검증",
             "parent": "sy-main",
             "parent-head": parent_head,
             "merge-target": "sy-main",
-            "proposal": self.guard.proposal_id(branch, "sy-main", parent_head, "sy-main"),
+            "proposal": proposal,
         }
+        if version:
+            values.update(
+                {
+                    "contract-version": version,
+                    "git-integrator": "codex",
+                    "artifact-mode": "full",
+                }
+            )
         for field, value in values.items():
             subprocess.run(
                 ["git", "config", f"branch.{branch}.asan-{field}", value],
                 cwd=self.root,
                 check=True,
             )
+        if version:
+            subprocess.run(
+                ["git", "config", "--add", f"branch.{branch}.asan-role", "logic"],
+                cwd=self.root,
+                check=True,
+            )
         subprocess.run(
-            ["git", "config", "--add", f"branch.{branch}.asan-scope", "src/shared/ui"],
+            ["git", "config", "--add", f"branch.{branch}.asan-scope", "src"],
             cwd=self.root,
             check=True,
         )
@@ -442,16 +472,6 @@ class BranchGuardTests(unittest.TestCase):
             cwd=self.root,
             check=True,
         )
-        subprocess.run(
-            [
-                "git",
-                "config",
-                f"branch.{branch}.asan-proposal",
-                self.guard.proposal_id(branch, "sy-main", short_head, "sy-main"),
-            ],
-            cwd=self.root,
-            check=True,
-        )
 
         denial = self.guard.active_branch_denial(
             self.root,
@@ -468,56 +488,31 @@ class BranchGuardTests(unittest.TestCase):
 
         self.assertIn("- merge 상태: 미병합", context)
 
-    def test_v2_contract_records_roles_and_limits_git_integrator(self) -> None:
-        parent_head = self.guard.head(self.root, "sy-main")
-        branch = "task/role-contract"
-        roles = ("documentation", "logic")
-        proposal = self.guard.proposal_id(
-            branch,
-            "sy-main",
-            parent_head,
-            "sy-main",
-            "",
-            roles,
-            "codex",
-            "full",
-        )
-        subprocess.run(["git", "switch", "-qc", branch], cwd=self.root, check=True)
-        for field, value in {
-            "contract-version": "2",
-            "purpose": "역할 계약 검증",
-            "parent": "sy-main",
-            "parent-head": parent_head,
-            "merge-target": "sy-main",
-            "proposal": proposal,
-            "git-integrator": "codex",
-            "artifact-mode": "full",
-        }.items():
-            subprocess.run(
-                ["git", "config", f"branch.{branch}.asan-{field}", value],
-                cwd=self.root,
-                check=True,
-            )
-        for role in roles:
-            subprocess.run(
-                ["git", "config", "--add", f"branch.{branch}.asan-role", role],
-                cwd=self.root,
-                check=True,
-            )
-        subprocess.run(
-            ["git", "config", "--add", f"branch.{branch}.asan-scope", "src"],
-            cwd=self.root,
-            check=True,
+    def test_v1_and_v2_contracts_cannot_grant_mutation_authority(self) -> None:
+        branches = (
+            self.configure_legacy_task("task/legacy-v1"),
+            self.configure_legacy_task("task/legacy-v2", "2"),
         )
 
-        denied = self.guard.command_denial(self.root, "git add -- src", host="claude")
-        allowed = self.guard.command_denial(self.root, "git add -- src", host="codex")
-        context = self.guard.branch_context(self.root)
+        for branch in branches:
+            with self.subTest(branch=branch):
+                subprocess.run(["git", "switch", "-q", branch], cwd=self.root, check=True)
+                denial = self.guard.active_branch_denial(self.root, ("src/feature.ts",))
+                command_denial = self.guard.command_denial(
+                    self.root,
+                    "git add -- src/feature.ts",
+                    host="codex",
+                    expected_branch=branch,
+                )
 
-        self.assertIn("Git 통합 담당자는 codex", denied)
-        self.assertIsNone(allowed)
-        self.assertIn("확인된 역할: documentation, logic", context)
-        self.assertIn("산출물 모드: full", context)
+                self.assertIsNotNone(denial)
+                self.assertIn("V3", denial)
+                self.assertIn("다시 승인", denial)
+                self.assertIsNotNone(command_denial)
+                self.assertIn("V3", command_denial)
+                self.assertFalse(
+                    self.guard.assignment_allows_branch_mutation(self.root, branch, branch)
+                )
 
     def test_checkout_path_restore_and_compound_merge_are_classified(self) -> None:
         self.configure_task_branch()
@@ -543,6 +538,26 @@ class BranchGuardTests(unittest.TestCase):
         self.assertIsNone(restore_denial)
         self.assertIsNotNone(compound_denial)
         self.assertIn("별도 명령", compound_denial)
+
+    def test_commit_message_url_is_not_treated_as_a_pathspec(self) -> None:
+        branch = self.configure_task_branch()
+        source = self.root / "src/shared/ui/button/Button.tsx"
+        source.parent.mkdir(parents=True)
+        source.write_text("export const Button = () => null\n", encoding="utf-8")
+        subprocess.run(
+            ["git", "add", "--", "src/shared/ui/button/Button.tsx"],
+            cwd=self.root,
+            check=True,
+        )
+
+        denial = self.guard.command_denial(
+            self.root,
+            "git commit -m 'feat: 버튼 추가' -m 'Claude-Session: https://example.com/session/123'",
+            host="codex",
+            expected_branch=branch,
+        )
+
+        self.assertIsNone(denial)
 
     def test_git_c_targets_the_actual_approved_worktree_independent_of_session_cwd(self) -> None:
         branch, worktree = self.configure_v3_isolated_task()
@@ -653,12 +668,8 @@ class BranchGuardTests(unittest.TestCase):
         self.assertIn("복합 명령", compound)
 
     def test_git_control_files_are_never_in_branch_scope(self) -> None:
-        branch = self.configure_task_branch()
-        subprocess.run(
-            ["git", "config", "--add", f"branch.{branch}.asan-scope", "."],
-            cwd=self.root,
-            check=True,
-        )
+        branch = self.configure_v3_task("task/all-scope", "sy-main", (".",))
+        subprocess.run(["git", "switch", "-q", branch], cwd=self.root, check=True)
 
         denial = self.guard.active_branch_denial(self.root, (".git/config",))
 
@@ -666,9 +677,15 @@ class BranchGuardTests(unittest.TestCase):
         self.assertIn("Git 제어 경로", denial)
 
     def test_dirty_repository_can_create_an_approved_isolated_worktree(self) -> None:
-        workflow = self.install_workflow()
+        workflow = self.install_inject_workflow()
         worktree = Path(self.temporary_directory.name) / "isolated-worktree"
         (self.root / "existing-session.txt").write_text("dirty\n", encoding="utf-8")
+        environment = {
+            **os.environ,
+            "ASAN_AGENT_POLICY_MODE": "inject",
+            "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(workflow.parents[6]),
+            "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+        }
         proposal = subprocess.run(
             [
                 "python3",
@@ -694,6 +711,7 @@ class BranchGuardTests(unittest.TestCase):
             cwd=self.root,
             capture_output=True,
             text=True,
+            env=environment,
             check=False,
         )
         self.assertEqual(proposal.returncode, 0, proposal.stderr)
@@ -721,6 +739,7 @@ class BranchGuardTests(unittest.TestCase):
             cwd=self.root,
             capture_output=True,
             text=True,
+            env=environment,
             check=False,
         )
 
@@ -731,6 +750,95 @@ class BranchGuardTests(unittest.TestCase):
         self.assertRegex(contract["parent_head"], r"^[0-9a-f]{40}$")
         self.assertEqual(contract["worktree"], str(worktree.resolve()))
         self.assertRegex(proposal_sha256, r"^[0-9a-f]{64}$")
+
+    def test_approved_scope_update_unblocks_existing_out_of_scope_change(self) -> None:
+        workflow = self.install_inject_workflow()
+        environment = {
+            **os.environ,
+            "ASAN_AGENT_POLICY_MODE": "inject",
+            "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(workflow.parents[6]),
+            "ASAN_AGENT_POLICY_PROJECT": "user-ui",
+        }
+        branch = self.configure_v3_task("task/scope-update", "sy-main", ("src",))
+        subprocess.run(["git", "switch", "-q", branch], cwd=self.root, check=True)
+        documentation = self.root / "docs/approved.md"
+        documentation.parent.mkdir()
+        documentation.write_text("approved scope\n", encoding="utf-8")
+
+        before = self.guard.active_branch_denial(self.root)
+        self.assertIsNotNone(before)
+        self.assertIn("승인된 작업 범위 밖", before)
+
+        proposal = subprocess.run(
+            [
+                "python3",
+                str(workflow),
+                "scope-proposal",
+                "--scope",
+                "src",
+                "--scope",
+                "docs",
+            ],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            env=environment,
+            check=False,
+        )
+        self.assertEqual(proposal.returncode, 0, proposal.stderr)
+        proposal_path = next(
+            line.removeprefix("- canonical proposal 파일: ")
+            for line in proposal.stdout.splitlines()
+            if line.startswith("- canonical proposal 파일: ")
+        )
+        proposal_sha256 = next(
+            line.removeprefix("- canonical proposal SHA-256: ")
+            for line in proposal.stdout.splitlines()
+            if line.startswith("- canonical proposal SHA-256: ")
+        )
+
+        mismatched = subprocess.run(
+            [
+                "python3",
+                str(workflow),
+                "update-scope",
+                "--proposal-file",
+                proposal_path,
+                "--proposal-sha256",
+                "0" * 64,
+            ],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            env=environment,
+            check=False,
+        )
+        self.assertNotEqual(mismatched.returncode, 0)
+        self.assertEqual(self.guard.metadata(self.root, branch)["scope"], ("src",))
+
+        updated = subprocess.run(
+            [
+                "python3",
+                str(workflow),
+                "update-scope",
+                "--proposal-file",
+                proposal_path,
+                "--proposal-sha256",
+                proposal_sha256,
+            ],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            env=environment,
+            check=False,
+        )
+
+        self.assertEqual(updated.returncode, 0, updated.stderr)
+        values = self.guard.metadata(self.root, branch)
+        self.assertEqual(values["scope"], ("docs", "src"))
+        self.assertEqual(values["proposal"], f"asan-v3:{proposal_sha256}")
+        self.assertEqual(values["contract-sha256"], proposal_sha256)
+        self.assertIsNone(self.guard.active_branch_denial(self.root))
 
     def test_inject_snapshot_uses_runtime_guard_instead_of_stale_consumer(self) -> None:
         _ = self.install_workflow()
@@ -809,6 +917,22 @@ class BranchGuardTests(unittest.TestCase):
         self.assertIn("정책 스냅샷", context.stderr)
         self.assertIn("FULL_SHA_PATTERN", context.stderr)
         self.assertNotIn("AttributeError", context.stderr)
+
+    def test_branch_workflow_never_runs_from_a_consumer_policy_copy(self) -> None:
+        workflow = self.install_workflow()
+
+        context = subprocess.run(
+            ["python3", str(workflow), "context"],
+            cwd=self.root,
+            capture_output=True,
+            text=True,
+            env={key: value for key, value in os.environ.items() if not key.startswith("ASAN_AGENT_POLICY_")},
+            check=False,
+        )
+
+        self.assertNotEqual(context.returncode, 0)
+        self.assertIn("중앙 inject 정책 스냅샷", context.stderr)
+        self.assertIn("fallback하지 않습니다", context.stderr)
 
     def test_dirty_direct_branch_creation_points_to_isolated_worktree(self) -> None:
         (self.root / "existing-session.txt").write_text("dirty\n", encoding="utf-8")

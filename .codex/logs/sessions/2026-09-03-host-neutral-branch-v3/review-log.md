@@ -190,7 +190,7 @@ PASS
 - push, reset hard, clean, update-ref를 실행하지 않았다.
 - 기존 중앙 수집 로그의 내용을 수정하지 않았다.
 - 사용자 소유의 다른 작업 파일을 restore/stash하지 않았다.
-- `asan-prompt-core`, 백업 또는 `asan-harness`를 참조하지 않았다.
+- 폐기된 외부 정책 저장소, 백업 또는 `asan-harness`를 참조하지 않았다.
 
 ## 9. 반복 문제와 escalation
 

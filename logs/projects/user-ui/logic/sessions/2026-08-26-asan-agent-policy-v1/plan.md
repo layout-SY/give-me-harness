@@ -15,14 +15,14 @@ user-ui의 Git HEAD에 추적된 AI 정책을 기준으로 독립 중앙 프로�
 
 ## 제외 사항
 
-- `asan-prompt-core`, 백업 또는 `asan-harness`의 수정·삭제·재사용
+- `폐기된 외부 정책 저장소`, 백업 또는 `asan-harness`의 수정·삭제·재사용
 - user-ui/admin-ui 대상 파일의 실제 배포
 - 프로젝트별 overlay와 Agora 전용 정책
 - 애플리케이션 소스와 UI 변경
 
 ## 제약 조건
 
-- 현재 작업 트리에 있는 `asan-prompt-core` 배포 흔적은 기준에서 제외한다.
+- 현재 작업 트리에 있는 `폐기된 외부 정책 저장소` 배포 흔적은 기준에서 제외한다.
 - 실제 타깃 배포는 dry-run 검토 뒤 별도 승인을 받는다.
 - 기존 세션과 다른 세션의 변경을 되돌리지 않는다.
 
@@ -40,7 +40,7 @@ user-ui의 Git HEAD에 추적된 AI 정책을 기준으로 독립 중앙 프로�
 - Python 표준 라이브러리 단위 테스트
 - 중앙 소스 변경 및 소비자 drift 탐지 테스트
 - managed 파일 차단과 애플리케이션 파일 허용 테스트
-- user-ui/admin-ui dry-run 및 `asan-prompt-core` 문자열 부재 확인
+- user-ui/admin-ui dry-run 및 `폐기된 외부 정책 저장소` 문자열 부재 확인
 
 ## 위험 요소 및 결정 사항
 

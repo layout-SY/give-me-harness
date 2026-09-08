@@ -2,12 +2,12 @@
 
 ## 요청
 
-`asan-prompt-core`가 아닌 새 중앙 정책 프로젝트를 만들고 user-ui를 기준으로 Codex·Claude Code·OpenCode 세션 정책을 동기화한다.
+`폐기된 외부 정책 저장소`가 아닌 새 중앙 정책 프로젝트를 만들고 user-ui를 기준으로 Codex·Claude Code·OpenCode 세션 정책을 동기화한다.
 
 ## 대상 관련 사실
 
 - user-ui Git HEAD에는 `AGENTS.md`, `CLAUDE.md`, `.agents/`, `.codex/`, `.claude/`, `.harness/`가 추적되어 있다.
-- user-ui 현재 작업 트리의 다수 AI 파일에는 `asan-prompt-core` 배포 주석이 존재한다.
+- user-ui 현재 작업 트리의 다수 AI 파일에는 `폐기된 외부 정책 저장소` 배포 주석이 존재한다.
 - admin-ui Git HEAD에는 해당 AI 정책 경로가 추적되어 있지 않다.
 - Codex 공식 문서는 `AGENTS.md`를 세션 시작 시 한 번 구성하고, 신뢰된 프로젝트의 `.codex/hooks.json`에서 `PreToolUse` 차단을 지원한다고 설명한다.
 

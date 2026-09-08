@@ -2,7 +2,7 @@
 
 ## 목표
 
-중앙 정책 원본 `~/SynologyDrive/asan-prompt-core/source/common/AGENTS.md`에 작업자·호스트·세션 전환 시 적용할 일반 `handoff` 규칙을 정의한다.
+중앙 정책 원본 `~/SynologyDrive/폐기된 외부 정책 저장소/source/common/AGENTS.md`에 작업자·호스트·세션 전환 시 적용할 일반 `handoff` 규칙을 정의한다.
 
 ## 범위
 
@@ -45,7 +45,7 @@
 - 일반 `handoff.md`가 완료 산출물처럼 오해될 위험이 있어 8종 산출물을 대체하지 않는다고 명시한다.
 - 기존 Claude Code production UI 예외는 유지하고 일반 규칙에서 명시적으로 참조한다.
 - 인계 문서가 오래된 상태를 고정할 위험이 있어 수신자가 현재 파일과 검증 결과를 다시 확인하도록 규정한다.
-- 요청한 `~/asan-prompt-core`는 존재하지 않아 프로젝트 지침이 지정한 `~/SynologyDrive/asan-prompt-core`를 실제 대상으로 확정했다.
+- 요청한 `~/폐기된 외부 정책 저장소`는 존재하지 않아 프로젝트 지침이 지정한 `~/SynologyDrive/폐기된 외부 정책 저장소`를 실제 대상으로 확정했다.
 
 ## 승인
 

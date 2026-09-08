@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import shlex
 import sys
 import tomllib
 import unittest
@@ -33,7 +32,12 @@ class RenderingTests(unittest.TestCase):
         for project_id in ("user-ui", "admin-ui"):
             with self.subTest(project=project_id):
                 for path, content in render_project(load_project(project_id)).items():
-                    self.assertNotIn(b"asan-prompt-core", content, path)
+                    self.assertNotIn(b"bin/sync.py deploy --target", content, path)
+                    self.assertNotIn(
+                        "이 프로젝트에서 직접 수정하지 마세요.\n     원본: source/hosts/".encode(),
+                        content,
+                        path,
+                    )
                     self.assertNotIn(b"{{PROJECT_NAME}}", content, path)
                     self.assertNotIn(b"{{CENTRAL_ROOT}}", content, path)
                     self.assertNotIn(b"{{BASE_BRANCH}}", content, path)
@@ -114,29 +118,9 @@ class RenderingTests(unittest.TestCase):
         )
         self.assertEqual(central_prompt_hook["hooks"][0]["timeout"], 10)
 
-    def test_sync_hooks_use_the_configured_primary_runtime_absolute_path(self) -> None:
+    def test_render_is_deterministic(self) -> None:
         project = load_project("user-ui")
-        rendered = render_project(project)
-        expected_guard = project.path / ".agent-policy/runtime/managed_policy_guard.py"
-        registrations = (
-            json.loads(rendered[".codex/hooks.json"])["hooks"],
-            json.loads(rendered[".claude/settings.json"])["hooks"],
-        )
-        commands = [
-            hook["command"]
-            for hooks in registrations
-            for entries in hooks.values()
-            for entry in entries
-            for hook in entry["hooks"]
-            if "managed_policy_guard.py" in hook["command"]
-        ]
-
-        self.assertTrue(commands)
-        for command in commands:
-            with self.subTest(command=command):
-                self.assertEqual(Path(shlex.split(command)[2]), expected_guard)
-                self.assertNotIn("git rev-parse", command)
-                self.assertNotIn("$(", command)
+        self.assertEqual(render_project(project), render_project(project))
 
     def test_codex_legacy_hooks_are_removed_in_favor_of_common_guard(self) -> None:
         rendered = render_project(load_project("user-ui"))

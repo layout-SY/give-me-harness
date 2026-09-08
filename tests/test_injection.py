@@ -9,13 +9,18 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from io import StringIO
 from pathlib import Path
+from types import ModuleType
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
 from agent_policy.cli import active_project, build_parser, normalized_session_dir, run_start
-from agent_policy.core import PolicyError, ProjectConfig, ProjectDiff, render_project
-from agent_policy.injection import InjectionLaunch, prepare_injection
+from agent_policy.core import CENTRAL_ROOT, PolicyError, ProjectConfig, render_project
+from agent_policy.injection import (
+    InjectionLaunch,
+    consumer_policy_sources,
+    prepare_injection,
+)
 
 
 class InjectionTests(unittest.TestCase):
@@ -147,6 +152,33 @@ class InjectionTests(unittest.TestCase):
                     self.assertFalse((policy / foreign).exists())
         self.assertEqual(self.consumer_snapshot(), before)
 
+    def test_all_host_system_prompts_require_incident_regression_tests(self) -> None:
+        required_contract = (
+            "사용자 보고 또는 실행 로그로 확인된 정책·훅·세션 실행 결함을 수정할 때는 "
+            "그 실패 상황을 재현하는 자동 회귀 테스트를 함께 작성한다."
+        )
+        runtime_contract = (
+            "명령 문자열이나 생성 파일의 존재만 확인하지 않고 실제로 적용되는 "
+            "프롬프트·설정·훅 출처를 검증한다."
+        )
+        no_weakening_contract = (
+            "기존 회귀 테스트를 삭제하거나 검증을 약화해 통과시켜서는 안 된다."
+        )
+        loop_contract = "동일 원인의 훅 차단을 무한히 재시도하지 않는다."
+        v3_contract = (
+            "V1·V2·무버전 branch metadata는 읽기 전용 history로만 취급하며 "
+            "source·Git 변경 권한을 부여하지 않는다."
+        )
+
+        for host in ("codex", "claude", "opencode"):
+            with self.subTest(host=host):
+                prompt = self.prepare(host).system_prompt.read_text(encoding="utf-8")
+                self.assertIn(required_contract, prompt)
+                self.assertIn(runtime_contract, prompt)
+                self.assertIn(no_weakening_contract, prompt)
+                self.assertIn(loop_contract, prompt)
+                self.assertIn(v3_contract, prompt)
+
     def test_opencode_uses_isolated_config_prompt_skills_and_absolute_guard(self) -> None:
         launch = self.prepare("opencode", "provider/model")
         home = launch.bundle_root / "opencode-home"
@@ -262,62 +294,203 @@ class InjectionTests(unittest.TestCase):
         self.assertEqual(executed.returncode, 0, executed.stderr)
         self.assertEqual(executed.stdout, "")
 
-    def test_codex_disables_consumer_hooks_but_keeps_central_guard(self) -> None:
-        hooks_path = self.project_root / ".codex/hooks.json"
-        hooks_path.parent.mkdir(parents=True)
-        hooks_path.write_text(
-            json.dumps(
-                {
-                    "hooks": {
-                        "SessionStart": [
-                            {"hooks": [{"type": "command", "command": "legacy start"}]}
-                        ],
-                        "PreToolUse": [
-                            {
-                                "hooks": [
-                                    {"type": "command", "command": "legacy first"},
-                                    {"type": "command", "command": "legacy second"},
-                                ]
-                            }
-                        ],
-                        "Stop": [
-                            {"hooks": [{"type": "command", "command": "legacy stop"}]}
-                        ],
-                    }
-                }
-            ),
+    def test_consumer_policy_inventory_detects_all_host_sources_but_not_logs(self) -> None:
+        root = self.root / "policy-inventory"
+        root.mkdir()
+        project = ProjectConfig(
+            id="user-ui",
+            name="temporary-user-ui",
+            path=root,
+            commands=self.project.commands,
+        )
+        policy_files = (
+            "AGENTS.md",
+            "AGENTS.override.md",
+            "CLAUDE.md",
+            "CLAUDE.local.md",
+            "opencode.json",
+            "package.json",
+            "README.md",
+            ".agent-policy/manifest.json",
+            ".agents/skills/policy/SKILL.md",
+            ".harness/roles/ui.md",
+            ".codex/hooks/__pycache__/branch_guard.cpython-314.pyc",
+            ".codex/hooks.json",
+            ".claude/hooks/harness_hook.py",
+            ".opencode/plugins/branch_guard.py",
+        )
+        for relative in policy_files:
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("legacy policy\n", encoding="utf-8")
+        (root / "package.json").write_text(
+            '{"scripts":{"test":"python3 -I .codex/hooks/test_governance_hooks.py"}}\n',
             encoding="utf-8",
         )
+        (root / "README.md").write_text(
+            "정책 훅은 `.codex/hooks/`에서 실행한다.\n",
+            encoding="utf-8",
+        )
+        preserved = (
+            ".codex/logs/sessions/task/plan.md",
+            ".claude/logs/sessions/task/handoff.md",
+            ".opencode/logs/sessions/task/final-summary.md",
+            ".agent-policy/logs/unknown/sessions/task/note.md",
+            ".claude/settings.local.json",
+            ".opencode/node_modules/example/index.js",
+            ".opencode/package.json",
+        )
+        for relative in preserved:
+            target = root / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("{}\n", encoding="utf-8")
 
+        self.assertEqual(consumer_policy_sources(project), policy_files)
+
+    def test_start_rejects_stale_consumer_policy_for_every_host(self) -> None:
+        stale_by_host = {
+            "codex": ".codex/hooks/branch_guard.py",
+            "claude": ".claude/hooks/harness_hook.py",
+            "opencode": ".opencode/plugins/branch_guard.py",
+        }
+        root = self.root / "selected-worktree"
+        root.mkdir()
+        project = ProjectConfig(
+            id="user-ui",
+            name="temporary-user-ui",
+            path=root,
+            commands=self.project.commands,
+        )
+
+        for host, relative in stale_by_host.items():
+            with self.subTest(host=host):
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("legacy guard\n", encoding="utf-8")
+                with (
+                    patch("agent_policy.cli.select_projects", return_value=(project,)),
+                    self.assertRaisesRegex(PolicyError, relative),
+                ):
+                    run_start("user-ui", host, None, True, role="logic")
+                target.unlink()
+
+    def test_selected_external_worktree_is_checked_for_consumer_policy(self) -> None:
+        repository = self.root / "policy-source-repository"
+        repository.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "sy-main"], cwd=repository, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "baseline",
+            ],
+            cwd=repository,
+            check=True,
+        )
+        worktree = self.root / "policy-source-worktree"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "-b", "task/external", str(worktree)],
+            cwd=repository,
+            check=True,
+        )
+        stale = worktree / ".codex/hooks/branch_guard.py"
+        stale.parent.mkdir(parents=True)
+        stale.write_text("legacy guard\n", encoding="utf-8")
+        project = ProjectConfig(
+            id="user-ui",
+            name="temporary-user-ui",
+            path=repository,
+            commands=self.project.commands,
+        )
+
+        selected = active_project(project, str(worktree), "task/external")
+
+        self.assertEqual(
+            consumer_policy_sources(selected),
+            (".codex/hooks/branch_guard.py",),
+        )
+
+    def test_inject_only_sources_have_no_consumer_deployment_entry_points(self) -> None:
+        cli = (CENTRAL_ROOT / "lib/agent_policy/cli.py").read_text(encoding="utf-8")
+        core = (CENTRAL_ROOT / "lib/agent_policy/core.py").read_text(encoding="utf-8")
+        guard = (CENTRAL_ROOT / "policy/guards/managed_policy_guard.py").read_text(
+            encoding="utf-8"
+        )
+        for marker in (
+            'add_parser("sync"',
+            'add_parser("diff"',
+            'add_parser("check"',
+            "def run_sync(",
+            "--retire-legacy",
+        ):
+            self.assertNotIn(marker, cli)
+        for marker in (
+            "def sync_project(",
+            "def diff_project(",
+            "class ProjectDiff",
+            "class LegacyTrace",
+        ):
+            self.assertNotIn(marker, core)
+        for marker in (
+            "def load_manifest(",
+            '"check", "--project"',
+            "sync한 뒤",
+        ):
+            self.assertNotIn(marker, guard)
+        self.assertFalse(any((CENTRAL_ROOT / "projects/legacy").glob("*.json")))
+
+    def test_all_host_stop_paths_are_nonblocking_log_collection_only(self) -> None:
+        codex = self.prepare("codex")
+        codex_hooks = json.loads(
+            (Path(codex.environment["CODEX_HOME"]) / "hooks.json").read_text(
+                encoding="utf-8"
+            )
+        )["hooks"]
+        codex_stop = [
+            handler["command"]
+            for group in codex_hooks["Stop"]
+            for handler in group["hooks"]
+        ]
+        self.assertTrue(codex_stop)
+        self.assertTrue(all("collect-logs" in command for command in codex_stop))
+
+        claude = self.prepare("claude")
+        claude_hooks = json.loads(
+            (claude.bundle_root / "plugin/hooks/hooks.json").read_text(encoding="utf-8")
+        )["hooks"]
+        claude_stop = [
+            handler["command"]
+            for group in claude_hooks["Stop"]
+            for handler in group["hooks"]
+        ]
+        self.assertTrue(claude_stop)
+        self.assertTrue(all("collect-logs" in command for command in claude_stop))
+
+        opencode = self.prepare("opencode")
+        plugin = (opencode.bundle_root / "opencode-home/plugins/agent-policy.js").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('event.type !== "session.idle"', plugin)
+        self.assertIn('"collect-logs"', plugin)
+        self.assertNotIn("documentation-stop", plugin)
+
+    def test_codex_command_has_no_consumer_hook_disable_workaround(self) -> None:
         launch = self.prepare("codex")
         command = list(launch.command)
-        source = str(hooks_path)
-
-        for event, group, handler in (
-            ("session_start", 0, 0),
-            ("pre_tool_use", 0, 0),
-            ("pre_tool_use", 0, 1),
-            ("stop", 0, 0),
-        ):
-            state_key = f"{source}:{event}:{group}:{handler}"
-            self.assertIn(
-                f"hooks.state.{json.dumps(state_key)}.enabled=false",
-                command,
-            )
+        self.assertFalse(any(value.startswith("hooks.state.") for value in command))
 
         central_hooks = Path(launch.environment["CODEX_HOME"]) / "hooks.json"
-        self.assertTrue(central_hooks.is_file())
         central_commands = self.command_strings(
             json.loads(central_hooks.read_text(encoding="utf-8"))
         )
         self.assertTrue(
             any("managed_policy_guard.py" in value for value in central_commands)
-        )
-        self.assertFalse(
-            any(
-                str(central_hooks) in value and "enabled=false" in value
-                for value in command
-            )
         )
 
     def test_bundle_reuse_repairs_invalid_snapshot_and_keeps_consumer_unchanged(self) -> None:
@@ -413,9 +586,17 @@ class InjectionTests(unittest.TestCase):
         with self.assertRaises(PolicyError):
             self.prepare("claude", task="invalid-task")
 
-    def test_start_parser_defaults_to_sync_and_accepts_inject(self) -> None:
+    def test_start_parser_is_inject_only_and_sync_commands_are_absent(self) -> None:
         default = build_parser().parse_args(
-            ["start", "--project", "user-ui", "--host", "codex"]
+            [
+                "start",
+                "--project",
+                "user-ui",
+                "--host",
+                "codex",
+                "--role",
+                "logic",
+            ]
         )
         injected = build_parser().parse_args(
             [
@@ -430,15 +611,35 @@ class InjectionTests(unittest.TestCase):
                 "logic",
             ]
         )
-        self.assertEqual(default.mode, "sync")
+        self.assertEqual(default.mode, "inject")
         self.assertEqual(injected.mode, "inject")
         self.assertEqual(injected.role, "logic")
-        self.assertIsNone(default.role)
+        self.assertEqual(default.role, "logic")
         self.assertIsNone(default.worktree)
         self.assertIsNone(default.branch)
         self.assertIsNone(default.session_dir)
         self.assertIsNone(default.task)
         self.assertEqual(default.responsibility, "owner")
+
+        for removed in ("sync", "diff", "check"):
+            with self.subTest(command=removed), redirect_stderr(StringIO()):
+                with self.assertRaises(SystemExit):
+                    build_parser().parse_args([removed, "--project", "user-ui"])
+        with redirect_stderr(StringIO()):
+            with self.assertRaises(SystemExit):
+                build_parser().parse_args(
+                    [
+                        "start",
+                        "--project",
+                        "user-ui",
+                        "--host",
+                        "codex",
+                        "--mode",
+                        "sync",
+                        "--role",
+                        "logic",
+                    ]
+                )
 
     def test_start_worktree_must_match_repository_and_branch(self) -> None:
         repository = self.root / "repository"
@@ -475,7 +676,6 @@ class InjectionTests(unittest.TestCase):
         selected = active_project(project, str(worktree), "task/isolated")
 
         self.assertEqual(selected.path, worktree.resolve())
-        self.assertEqual(selected.policy_root, repository.resolve())
         launch = prepare_injection(
             selected,
             "codex",
@@ -495,17 +695,17 @@ class InjectionTests(unittest.TestCase):
         with self.assertRaises(PolicyError):
             active_project(project, str(worktree), "task/other")
 
-    def test_inject_drift_warns_but_sync_drift_still_blocks(self) -> None:
-        difference = ProjectDiff(
-            project=self.project,
-            added=("CLAUDE.md",),
-            changed=("AGENTS.md",),
-            stale=(),
-            legacy=(),
-            manifest_issues=("manifest missing",),
+    def test_start_uses_only_central_audit_and_injection(self) -> None:
+        root = self.root / "clean-consumer"
+        root.mkdir()
+        project = ProjectConfig(
+            id="user-ui",
+            name="temporary-user-ui",
+            path=root,
+            commands=self.project.commands,
         )
         launch = InjectionLaunch(
-            project=self.project,
+            project=project,
             host="codex",
             role="logic",
             bundle_root=self.build_root,
@@ -514,8 +714,7 @@ class InjectionTests(unittest.TestCase):
             environment={"CODEX_HOME": str(self.state_root)},
         )
         with (
-            patch("agent_policy.cli.select_projects", return_value=(self.project,)),
-            patch("agent_policy.cli.diff_project", return_value=difference),
+            patch("agent_policy.cli.select_projects", return_value=(project,)),
             patch("agent_policy.cli.audit_project", return_value=()),
             patch("agent_policy.cli.prepare_injection", return_value=launch),
         ):
@@ -527,20 +726,206 @@ class InjectionTests(unittest.TestCase):
                     "codex",
                     None,
                     True,
-                    "inject",
                     role="logic",
                 )
             self.assertEqual(code, 0)
-            self.assertIn("inject 번들로 세션을 계속", stderr.getvalue())
+            self.assertEqual(stderr.getvalue(), "")
             self.assertIn("mode: inject", stdout.getvalue())
 
+    def test_task_start_rejects_legacy_branch_before_host_launch(self) -> None:
+        repository = self.root / "legacy-task-repository"
+        repository.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "sy-main"], cwd=repository, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "--allow-empty",
+                "-qm",
+                "baseline",
+            ],
+            cwd=repository,
+            check=True,
+        )
+        branch = "task/legacy-start"
+        subprocess.run(["git", "switch", "-qc", branch], cwd=repository, check=True)
+        parent_head = subprocess.run(
+            ["git", "rev-parse", "sy-main"],
+            cwd=repository,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        for field, value in {
+            "purpose": "구형 task 시작 차단",
+            "parent": "sy-main",
+            "parent-head": parent_head,
+            "merge-target": "sy-main",
+            "proposal": f"branch:{branch}|parent:sy-main@{parent_head}|merge:sy-main",
+        }.items():
+            subprocess.run(
+                ["git", "config", f"branch.{branch}.asan-{field}", value],
+                cwd=repository,
+                check=True,
+            )
+        subprocess.run(
+            ["git", "config", "--add", f"branch.{branch}.asan-scope", "src"],
+            cwd=repository,
+            check=True,
+        )
+        project = ProjectConfig(
+            id="user-ui",
+            name="temporary-user-ui",
+            path=repository,
+            commands=self.project.commands,
+        )
+
         with (
-            patch("agent_policy.cli.select_projects", return_value=(self.project,)),
-            patch("agent_policy.cli.diff_project", return_value=difference),
-            self.assertRaises(PolicyError),
+            patch("agent_policy.cli.select_projects", return_value=(project,)),
+            patch("agent_policy.cli.audit_project", return_value=()),
+            patch("agent_policy.cli.prepare_injection") as prepare,
+            self.assertRaisesRegex(PolicyError, "V3 계약을 다시 승인"),
         ):
-            with redirect_stdout(StringIO()):
-                run_start("user-ui", "codex", None, True, "sync")
+            run_start("user-ui", "codex", None, True, role="logic", task=branch)
+        prepare.assert_not_called()
+
+    def test_task_start_rejects_pending_policy_retirement_outside_scope(self) -> None:
+        repository = self.root / "retirement-task-repository"
+        repository.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "sy-main"], cwd=repository, check=True)
+        retired_prompt = repository / "AGENTS.md"
+        retired_prompt.write_text("retired consumer prompt\n", encoding="utf-8")
+        subprocess.run(["git", "add", "AGENTS.md"], cwd=repository, check=True)
+        subprocess.run(
+            [
+                "git",
+                "-c",
+                "user.name=Policy Test",
+                "-c",
+                "user.email=policy@example.com",
+                "commit",
+                "-qm",
+                "baseline",
+            ],
+            cwd=repository,
+            check=True,
+        )
+        branch = "task/pending-retirement"
+        subprocess.run(["git", "switch", "-qc", branch], cwd=repository, check=True)
+        project = ProjectConfig(
+            id="user-ui",
+            name="temporary-user-ui",
+            path=repository,
+            commands=self.project.commands,
+        )
+        source = render_project(project)[".agent-policy/runtime/branch_guard.py"]
+        guard = ModuleType("retirement_branch_guard")
+        guard.__file__ = str(CENTRAL_ROOT / "policy/guards/branch_guard.py")
+        exec(compile(source, guard.__file__, "exec"), guard.__dict__)
+        parent_head = guard.head(repository, "sy-main")
+        roles = ("logic",)
+        scopes = ("src",)
+        purpose = "소비자 정책 퇴역 완료 검증"
+        reason = "정책 사본 삭제를 기능 작업과 분리"
+        contract = guard.canonical_contract(
+            branch,
+            purpose,
+            "sy-main",
+            parent_head,
+            "sy-main",
+            scopes,
+            reason,
+            "",
+            roles,
+            "codex",
+        )
+        digest = guard.contract_sha256(contract)
+        for field, value in {
+            "contract-version": "3",
+            "task-id": branch.removeprefix("task/"),
+            "purpose": purpose,
+            "parent": "sy-main",
+            "parent-head": parent_head,
+            "merge-target": "sy-main",
+            "proposal": f"asan-v3:{digest}",
+            "contract-sha256": digest,
+            "reason": reason,
+            "git-integrator": "codex",
+            "state": "ACTIVE",
+        }.items():
+            subprocess.run(
+                ["git", "config", f"branch.{branch}.asan-{field}", value],
+                cwd=repository,
+                check=True,
+            )
+        subprocess.run(
+            ["git", "config", "--add", f"branch.{branch}.asan-role", "logic"],
+            cwd=repository,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "--add", f"branch.{branch}.asan-scope", "src"],
+            cwd=repository,
+            check=True,
+        )
+        retired_prompt.unlink()
+
+        with (
+            patch("agent_policy.cli.select_projects", return_value=(project,)),
+            patch("agent_policy.cli.audit_project", return_value=()),
+            patch("agent_policy.cli.prepare_injection") as prepare,
+            self.assertRaisesRegex(PolicyError, "정책 사본 퇴역 삭제가 아직 Git에 통합되지 않았습니다"),
+        ):
+            run_start("user-ui", "codex", None, True, role="logic", task=branch)
+        prepare.assert_not_called()
+
+        maintenance_scopes = ("AGENTS.md",)
+        maintenance_contract = guard.canonical_contract(
+            branch,
+            purpose,
+            "sy-main",
+            parent_head,
+            "sy-main",
+            maintenance_scopes,
+            reason,
+            "",
+            roles,
+            "codex",
+        )
+        maintenance_digest = guard.contract_sha256(maintenance_contract)
+        subprocess.run(
+            ["git", "config", "--unset-all", f"branch.{branch}.asan-scope"],
+            cwd=repository,
+            check=True,
+        )
+        subprocess.run(
+            ["git", "config", "--add", f"branch.{branch}.asan-scope", "AGENTS.md"],
+            cwd=repository,
+            check=True,
+        )
+        for field, value in {
+            "proposal": f"asan-v3:{maintenance_digest}",
+            "contract-sha256": maintenance_digest,
+        }.items():
+            subprocess.run(
+                ["git", "config", f"branch.{branch}.asan-{field}", value],
+                cwd=repository,
+                check=True,
+            )
+
+        with (
+            patch("agent_policy.cli.select_projects", return_value=(project,)),
+            patch("agent_policy.cli.audit_project", return_value=()),
+            patch("agent_policy.cli.prepare_injection") as prepare,
+            redirect_stdout(StringIO()),
+        ):
+            result = run_start("user-ui", "codex", None, True, role="logic", task=branch)
+        self.assertEqual(result, 0)
+        prepare.assert_called_once()
 
 
 if __name__ == "__main__":

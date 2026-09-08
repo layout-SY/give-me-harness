@@ -110,7 +110,7 @@
 - 실행 중인 소비자 세션 재시작
 - 원격 `git push`
 - `git reset --hard`, `git clean`, `git update-ref`
-- `asan-prompt-core`, 그 백업 또는 `asan-harness`를 원본으로 읽거나 복사하는 행위
+- 폐기된 외부 정책 저장소, 그 백업 또는 `asan-harness`를 원본으로 읽거나 복사하는 행위
 - role 침범을 기계적으로 차단하는 새 hook 추가: 사용자가 이번에는 system prompt 명시만 요청함
 
 ## 6. 단계별 실행 계획
