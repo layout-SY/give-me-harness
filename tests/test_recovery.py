@@ -125,11 +125,41 @@ class WorkflowRecoveryTests(WorkflowFixture):
             workflow.verify(argv, self.guard.branch_guard, self.root)
         self.assertEqual(self.git("config", "branch.task/recovery.asan-state"), "READY_TO_MERGE")
         self.assertEqual(json.loads(receipt.read_text())["state"], "merged")
+        verification = json.loads(receipt.read_text())["verification"]
+        self.assertEqual(verification["status"], "failed")
+        self.assertEqual(verification["exit_code"], 1)
+        self.assertEqual(verification["head"], self.git("rev-parse", "HEAD"))
         self.assertTrue(any((self.root / ".git/asan-agent-policy/integration-targets").glob("*.json")))
+
+    def test_failed_reverification_revokes_previous_success(self):
+        _, args, _, receipt = self.prepared_finish()
+        for action in ("finish", "verify"):
+            result = self.workflow(action, *args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        workflow = self.module(self.snapshot / ".agent-policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py")
+        argv = workflow.build_parser().parse_args(["verify", *args])
+        original = subprocess.run
+
+        def fail_validation(command, **kwargs):
+            if kwargs.get("timeout") == 600:
+                return subprocess.CompletedProcess(command, 1)
+            return original(command, **kwargs)
+
+        with patch("subprocess.run", side_effect=fail_validation), self.assertRaises(SystemExit):
+            workflow.verify(argv, self.guard.branch_guard, self.root)
+        result = self.workflow("close", *args)
+        self.assertNotEqual(result.returncode, 0, "재검증 실패 후 과거 성공 기록으로 close하면 안 됩니다.")
+        self.assertEqual(json.loads(receipt.read_text())["state"], "merged")
+        self.assertEqual(self.git("config", "branch.task/recovery.asan-state"), "READY_TO_MERGE")
 
 
 class InputRecoveryTests(WorkflowFixture):
     def test_child_scope_expansion_needs_implementation_approval(self):
+        launch = prepare_injection(self.project, "claude", "logic", build_root=self.directory / "build", state_root=self.directory / "state")
+        self.env.update(launch.environment)
+        self.snapshot = launch.bundle_root / "policy"
+        self.runtime = self.snapshot / ".agent-policy/runtime"
+        self.guard = self.module(self.runtime / "managed_policy_guard.py")
         self.create_task("scope-root")
         self.hook("post-tool", tool_name="Skill", tool_input={"skill": "policy"}, tool_response={"success": True})
         self.hook("post-tool", tool_name="Read", tool_input={"file_path": "src/App.tsx"}, tool_response={"success": True})

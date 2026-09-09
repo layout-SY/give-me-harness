@@ -331,3 +331,163 @@ def recover_close(project: ProjectConfig, finish_file: Path, finish_sha256: str,
         reservation_path.unlink()
         state.write(journal_path, {"state": "complete", "finish_sha256": finish_sha256})
         return destination, approved_sha256
+
+
+def preserve_integration(project: ProjectConfig, finish_file: Path, finish_sha256: str, reason: str,
+                         related_tasks: tuple[str, ...] = (), approved_sha256: str | None = None,
+                         state_root: Path | None = None, cancel_calls: tuple[str, ...] = ()) -> tuple[Path, str]:
+    """검증 미완료 통합과 후속 수동 병합을 검토한 뒤 보존하고 단일 worktree 예약을 해제한다."""
+    if not reason.strip() or any(re.fullmatch(r"[a-f0-9]{64}", value) is None
+                                 for value in (finish_sha256, approved_sha256) if value is not None):
+        raise PolicyError("보존 사유와 전체 계약 SHA-256이 필요합니다.")
+    common = common_directory(project.path)
+    workflow = common / "asan-agent-policy"
+    expected = workflow / "finish-proposals" / f"{finish_sha256}.json"
+    state = load_runtime("runtime_state")
+    contract = state.read(expected)
+    encoded = json.dumps(contract, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    if (finish_file.is_symlink() or finish_file.resolve() != expected.resolve()
+            or hashlib.sha256(encoded).hexdigest() != finish_sha256
+            or contract.get("kind") != "finish" or contract.get("version") != 3 or contract.get("finish_schema") != 1):
+        raise PolicyError("원본 V3 finish 계약과 SHA가 일치하지 않습니다.")
+    source, target = str(contract.get("source", "")), str(contract.get("target", ""))
+    tasks = tuple(sorted(set((source, *related_tasks))))
+    if any(re.fullmatch(r"task/[a-z0-9]+(?:-[a-z0-9]+)*", task) is None for task in tasks):
+        raise PolicyError("보존할 task 이름이 올바르지 않습니다.")
+    root = Path(str(contract.get("integration_worktree") or project.path)).resolve()
+    if (common_directory(root) != common or Path(git(root, "rev-parse", "--show-toplevel")).resolve() != root
+            or Path(str(contract.get("source_worktree") or root)).resolve() != root):
+        raise PolicyError("이 복구는 같은 저장소의 단일 source/통합 worktree에서만 지원합니다.")
+    repository = repository_state(project, state_root)
+    target_hash = hashlib.sha256(json.dumps({"target": target}, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    reservation_path = workflow / "integration-targets" / f"{target_hash}.json"
+    receipt_path = workflow / "integrations" / f"{finish_sha256}.json"
+    claim_path = repository / "claims" / f"{state.digest('git:' + str(root))}.json"
+    with state.locked(workflow / "locks" / f"{state.digest(str(root))}.lock"), state.locked(repository / "events.lock"):
+        receipt, reservation, claim = state.read(receipt_path), state.read(reservation_path), state.read(claim_path)
+        destination = repository / "recoveries" / f"{approved_sha256}.json" if approved_sha256 else None
+        journal_path = destination.with_suffix(".transaction.json") if destination else None
+        journal = state.read(journal_path)
+        plan = state.read(destination) if journal else None
+        if plan is not None:
+            payload = (json.dumps(plan, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode()
+            if (hashlib.sha256(payload).hexdigest() != approved_sha256 or plan.get("kind") != "integration-preserve"
+                    or plan.get("finish_sha256") != finish_sha256 or plan.get("repository") != str(common)
+                    or plan.get("project") != project.id or plan.get("reason") != reason.strip()
+                    or set(plan.get("tasks", {})) != set(tasks) or journal.get("finish_sha256") != finish_sha256
+                    or plan.get("cancel_calls") != sorted(set(cancel_calls))
+                    or journal.get("state") not in {"applying", "complete"}):
+                raise PolicyError("보존 journal과 승인 계약이 다릅니다.")
+            final_receipt = {**plan["receipt"], "state": "preserved", "preservation_sha256": approved_sha256,
+                             "preserved_target_head": plan["current"]["head"], "preserve_reason": reason.strip()}
+            if receipt == final_receipt and (journal["state"] == "complete" or
+                                             (reservation != plan["reservation"] and claim != plan["claim"])):
+                state.write(journal_path, {"state": "complete", "finish_sha256": finish_sha256})
+                return destination, approved_sha256
+            if journal["state"] == "complete":
+                raise PolicyError("완료한 보존 기록이 변경되었습니다.")
+        snapshot = worktree_snapshot(root)
+        if snapshot["branch"] != target or snapshot["status"]:
+            raise PolicyError("보존할 target worktree가 clean한 target checkout 상태가 아닙니다.")
+        for operation in ("MERGE_HEAD", "CHERRY_PICK_HEAD", "REVERT_HEAD", "rebase-merge", "rebase-apply"):
+            path = Path(git(root, "rev-parse", "--git-path", operation))
+            if (path if path.is_absolute() else root / path).exists():
+                raise PolicyError("진행 중인 Git 작업을 먼저 처리해야 합니다.")
+        owner = receipt.get("owner", "")
+        if re.fullmatch(r"[a-f0-9]{32}", str(owner)) is None:
+            raise PolicyError("통합 assignment 소유자를 확인할 수 없습니다.")
+        assignment_root = repository / "assignments" / owner
+        assignment = state.read(assignment_root / "assignment.json")
+        pending = {}
+        for pending_path in (assignment_root / "pending-binding.json", *assignment_root.glob("pending-bindings/*.json")):
+            value = state.read(pending_path)
+            if value:
+                pending[pending_path.relative_to(assignment_root).as_posix()] = value
+        reviewed_pending = plan["pending"] if plan is not None else pending
+        if set(cancel_calls) != {value.get("call") for value in reviewed_pending.values()}:
+            raise PolicyError("결과 미확인 도구가 있습니다. 실패 근거를 확인한 call만 --cancel-call로 보존 계약에 명시하세요.")
+        for value in pending.values():
+            binding = value.get("binding", {})
+            if (value.get("new_claim") or binding.get("worktree") != str(root) or binding.get("task") != source
+                    or binding.get("_action")):
+                raise PolicyError("새 소유권 또는 workflow 예약은 assignment-recover로 먼저 처리하세요.")
+        if (assignment.get("project") != project.id or assignment.get("repository") != str(common)
+                or assignment.get("handed_off_to")):
+            raise PolicyError("통합 소유권이 변경되었습니다.")
+        metadata = {}
+        participants = {}
+        for participant_path in (repository / "assignments").glob("*/assignment.json"):
+            participant = state.read(participant_path)
+            binding = state.read(participant_path.with_name("session-binding.json"))
+            if participant.get("handed_off_to") or (participant_path.parent.name != owner and
+                                                    (binding.get("task") or participant.get("task")) not in tasks):
+                continue
+            if (participant.get("repository") != str(common) or participant.get("project") != project.id
+                    or (participant_path.parent.name != owner and
+                        (state.read(participant_path.with_name("pending-binding.json"))
+                         or any(participant_path.parent.glob("pending-bindings/*.json"))))):
+                raise PolicyError("함께 보존할 task의 소유권 또는 미확인 도구 결과를 먼저 확인하세요.")
+            participants[participant_path.parent.name] = {
+                "host": participant.get("host"), "role": participant.get("role"),
+                "native_session": participant.get("native_session"), "binding": binding}
+        worktrees = git(root, "worktree", "list", "--porcelain").splitlines()
+        for task in tasks:
+            if f"branch refs/heads/{task}" in worktrees:
+                raise PolicyError("보존할 task를 사용하는 worktree가 있습니다.")
+            values = {key: git(root, "config", "--get", f"branch.{task}.asan-{key}")
+                      for key in ("state", "contract-version", "contract-sha256", "merge-target")}
+            head = git(root, "rev-parse", f"refs/heads/{task}")
+            if values["contract-version"] != "3" or values["merge-target"] != target:
+                raise PolicyError("같은 target의 V3 task만 함께 보존할 수 있습니다.")
+            git(root, "merge-base", "--is-ancestor", head, snapshot["head"])
+            metadata[task] = {**values, "head": head}
+        if (metadata[source]["head"] != contract["source_head"]
+                or metadata[source]["contract-sha256"] != contract["branch_contract_sha256"]
+                or receipt.get("finish_sha256") != finish_sha256 or receipt.get("source_head") != contract["source_head"]
+                or receipt.get("target_head") != contract["target_head"] or receipt.get("worktree") != str(root)):
+            raise PolicyError("source branch·병합 결과와 원래 계약이 일치하지 않습니다.")
+        result_head = str(receipt.get("integration_head") or "")
+        if re.fullmatch(r"[a-f0-9]{40}", result_head) is None:
+            raise PolicyError("기록된 병합 결과 HEAD가 없습니다.")
+        git(root, "merge-base", "--is-ancestor", result_head, snapshot["head"])
+        current = {"version": 1, "kind": "integration-preserve", "project": project.id, "repository": str(common),
+                   "finish_sha256": finish_sha256, "reason": reason.strip(), "current": snapshot, "tasks": metadata,
+                   "owner": owner, "assignment": {key: assignment.get(key) for key in ("host", "role", "native_session")},
+                   "participants": participants,
+                   "pending": pending, "cancel_calls": sorted(set(cancel_calls)),
+                   "receipt": receipt, "reservation": reservation, "claim": claim,
+                   "effect": {"state": "PRESERVED", "verification": "incomplete", "cleanup": False,
+                              "release": ["owned Git worktree claim", "integration reservation"]}}
+        if plan is None:
+            if (receipt.get("state") != "merged" or metadata[source]["state"] != "READY_TO_MERGE"
+                    or any(value["state"] not in {"ACTIVE", "READY_TO_MERGE"} for value in metadata.values())
+                    or reservation != {"finish_sha256": finish_sha256, "owner": owner, "source": source, "target": target, "worktree": str(root)}
+                    or claim != {"owner": owner, "resource": "git:" + str(root)}):
+                raise PolicyError("검증 미완료 통합과 동일 소유자의 예약·Git claim이 필요합니다.")
+            destination, digest = reviewed_plan(repository / "recoveries", current, approved_sha256)
+            if approved_sha256 is None:
+                return destination, digest
+            plan = current
+            journal_path = destination.with_suffix(".transaction.json")
+            final_receipt = {**receipt, "state": "preserved", "preservation_sha256": digest,
+                             "preserved_target_head": snapshot["head"], "preserve_reason": reason.strip()}
+        else:
+            normalized_tasks = {task: {**value, "state": plan["tasks"][task]["state"]} for task, value in metadata.items()}
+            normalized = {**current, "tasks": normalized_tasks, "receipt": plan["receipt"],
+                          "reservation": plan["reservation"], "claim": plan["claim"], "pending": plan["pending"]}
+            if (normalized != plan or receipt not in (plan["receipt"], final_receipt) or reservation != plan["reservation"]
+                    or claim not in (plan["claim"], {}) or (not claim and receipt != final_receipt)
+                    or any(value != plan["pending"].get(name) for name, value in pending.items())
+                    or (pending != plan["pending"] and receipt != final_receipt)
+                    or any(value["state"] not in {plan["tasks"][task]["state"], "PRESERVED"} for task, value in metadata.items())):
+                raise PolicyError("중단 이후 상태가 바뀌었습니다. 승인 계약을 다시 검토하세요.")
+        state.write(journal_path, {"state": "applying", "finish_sha256": finish_sha256})
+        for task in tasks:
+            git(root, "config", f"branch.{task}.asan-state", "PRESERVED")
+        state.write(receipt_path, final_receipt)
+        for relative in pending:
+            (assignment_root / relative).unlink()
+        claim_path.unlink(missing_ok=True)
+        reservation_path.unlink()
+        state.write(journal_path, {"state": "complete", "finish_sha256": finish_sha256})
+        return destination, approved_sha256

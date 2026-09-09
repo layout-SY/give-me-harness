@@ -377,6 +377,11 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
         raise SystemExit("지원하지 않는 guard mode입니다.")
 
     root = repository_root(event)
+    raw_input = event.get("tool_input")
+    command = str(raw_input.get("command") or "") if isinstance(raw_input, dict) else ""
+    if normalized_tool_name(event) in SHELL_TOOLS and _tool_paths.unsupported_workflow_invocation(command, root):
+        emit_denial(host, "workflow는 단일 Python 명령으로 실행하세요. cd·개행·&&·리다이렉션을 분리하고 workdir로 위치를 지정하세요.")
+        return
     targets = denied_targets(event, root)
     if targets:
         emit_denial(host, denial_message(targets))

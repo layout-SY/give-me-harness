@@ -222,6 +222,37 @@ def bound_session_directory(event: dict[str, Any], root: Path, host: str) -> Pat
     return declared_session_directory(root, host)
 
 
+def integrated_artifact_owner(event: dict[str, Any], root: Path, host: str, record: dict,
+                              requested: Path, targets: list) -> bool:
+    """target 전환 후에도 원래 source assignment의 자기 로그 귀속을 유지한다."""
+    if not record.get("directory") or binding_worktree(root, record) != root.resolve():
+        return False
+    if requested.resolve() != (root / record["directory"]).resolve():
+        return False
+    if not targets or not all(target_root == root and (target_root / relative).resolve().is_relative_to(requested.resolve())
+                              for target_root, relative in targets):
+        return False
+    common = branch_guard.git_common_directory(root)
+    if common is None:
+        return False
+    owner = runtime_state.owner_id(host, event_session_id(event))
+    for path in (common / "asan-agent-policy/integrations").glob("*.json"):
+        receipt = runtime_state.read(path)
+        digest = receipt.get("finish_sha256", "")
+        if (re.fullmatch(r"[a-f0-9]{64}", str(digest)) is None or receipt.get("owner") != owner
+                or receipt.get("state") not in {"merged", "verified", "closed", "preserved"}
+                or receipt.get("worktree") != str(root.resolve())):
+            continue
+        contract = runtime_state.read(common / "asan-agent-policy/finish-proposals" / f"{digest}.json")
+        if (path.stem == digest and branch_guard.contract_sha256(contract) == digest and contract.get("source") == record.get("branch")
+                and contract.get("target") == branch_guard.current_branch(root)
+                and contract.get("source_head") == receipt.get("source_head")
+                and str(contract.get("integration_worktree") or root) == str(root.resolve())
+                and branch_guard.is_ancestor(root, str(contract.get("source_head")), str(contract.get("target")))):
+            return True
+    return False
+
+
 def bind_artifact_session(event: dict[str, Any], root: Path, host: str) -> str | None:
     raw_input = event.get("tool_input")
     tool_input = raw_input if isinstance(raw_input, dict) else {}
@@ -323,6 +354,9 @@ def bind_artifact_session(event: dict[str, Any], root: Path, host: str) -> str |
         if record
         else declared_session_directory(requested_root, host)
     )
+    if path is not None and integrated_artifact_owner(event, requested_root, host, record, requested, target_contexts):
+        _BINDING_DRAFT[path] = record
+        return None
     if path is None and existing is None:
         return (
             "호스트 이벤트에 session id가 없으므로 산출물 소유권을 자동 귀속할 수 없습니다. "

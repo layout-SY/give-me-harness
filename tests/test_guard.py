@@ -907,7 +907,7 @@ Python unittest로 정책 계약을 검증했습니다.
             environment,
         )
         self.assertEqual(chained.returncode, 2)
-        self.assertIn("중앙 프로젝트", chained.stderr)
+        self.assertIn("단일 Python 명령", chained.stderr)
 
     def test_trusted_create_still_enforces_the_contract_git_integrator(self) -> None:
         bundle = self.root / "central-bundle"

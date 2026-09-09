@@ -537,16 +537,22 @@ def _manifest_payload(
     }
 
 
-def _bundle_is_valid(bundle_root: Path, digest: str) -> bool:
+def bundle_diagnostics(bundle_root: Path, digest: str) -> dict:
+    result = {"valid": False, "error": "", "missing": [], "changed": [], "unexpected": [], "symlinks": [], "caches": []}
     if bundle_root.is_symlink() or not bundle_root.is_dir():
-        return False
+        return {**result, "error": "bundle root가 없거나 symlink입니다."}
+    manifest_path = bundle_root / BUNDLE_MANIFEST
+    if manifest_path.is_symlink():
+        return {**result, "error": "manifest가 symlink입니다."}
     try:
-        manifest = json.loads((bundle_root / BUNDLE_MANIFEST).read_text(encoding="utf-8"))
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return False
+        return {**result, "error": "manifest를 읽을 수 없습니다."}
+    if not isinstance(manifest, dict):
+        return {**result, "error": "manifest는 JSON object여야 합니다."}
     expected = manifest.get("files")
     if manifest.get("bundle_digest") != digest or not isinstance(expected, dict):
-        return False
+        return {**result, "error": "manifest의 bundle digest 또는 파일 목록이 다릅니다."}
     actual_files: set[str] = set()
     for path in bundle_root.rglob("*"):
         relative = path.relative_to(bundle_root).as_posix()
@@ -555,16 +561,30 @@ def _bundle_is_valid(bundle_root: Path, digest: str) -> bool:
         ):
             continue
         if path.is_symlink():
-            return False
+            result["symlinks"].append(relative)
+            continue
         if not path.is_file():
             continue
         if relative == BUNDLE_MANIFEST:
             continue
         actual_files.add(relative)
         expected_digest = expected.get(relative)
-        if not isinstance(expected_digest, str) or sha256_bytes(path.read_bytes()) != expected_digest:
-            return False
-    return actual_files == set(expected)
+        if relative not in expected:
+            result["unexpected"].append(relative)
+            match = re.fullmatch(r"(policy/.agent-policy/runtime)/__pycache__/([a-z_]+)\.cpython-[0-9]+(?:\.opt-[0-9]+)?\.pyc", relative)
+            if match and f"{match[1]}/{match[2]}.py" in expected:
+                result["caches"].append(relative)
+        elif not isinstance(expected_digest, str) or sha256_bytes(path.read_bytes()) != expected_digest:
+            result["changed"].append(relative)
+    result["missing"] = sorted(set(expected) - actual_files)
+    for key in ("changed", "unexpected", "symlinks", "caches"):
+        result[key].sort()
+    result["valid"] = not any(result[key] for key in ("missing", "changed", "unexpected", "symlinks"))
+    return result
+
+
+def _bundle_is_valid(bundle_root: Path, digest: str) -> bool:
+    return bool(bundle_diagnostics(bundle_root, digest)["valid"])
 
 
 def _install_bundle(
@@ -993,8 +1013,11 @@ def resume_injection(project: ProjectConfig, host: str, role: str, assignment: s
     if record.get("handed_off_to"):
         raise PolicyError("이미 다른 assignment로 인계한 세션입니다.")
     bundle = Path(record["bundle_root"])
-    if not _bundle_is_valid(bundle, record["bundle_digest"]):
-        raise PolicyError("원래 세션의 bundle 검증에 실패했습니다. 재개 중 다른 정책으로 교체하지 않습니다.")
+    diagnosis = bundle_diagnostics(bundle, record["bundle_digest"])
+    if not diagnosis["valid"]:
+        raise PolicyError("원래 세션의 bundle 검증에 실패했습니다. 재개 중 다른 정책으로 교체하지 않습니다.\n"
+                          + json.dumps(diagnosis, ensure_ascii=False)
+                          + f"\n생성 캐시만 문제라면: bin/agent-policy bundle-repair --project {project.id} --assignment {assignment}")
     command = list(record["command"])
     if native:
         if host == "codex":

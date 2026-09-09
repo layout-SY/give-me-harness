@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import shlex
@@ -98,6 +99,15 @@ def build_parser() -> argparse.ArgumentParser:
     handoff_parser.add_argument("--handoff-file", required=True)
     handoff_parser.add_argument("--approved-sha256")
 
+    sessions = subparsers.add_parser("sessions", help="격리된 assignment의 이력 위치·bundle 상태·재개 명령을 조회합니다.")
+    sessions.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    sessions.add_argument("--host", choices=("codex", "claude", "opencode"))
+    sessions.add_argument("--assignment")
+    sessions.add_argument("--json", action="store_true")
+    bundle_repair = subparsers.add_parser("bundle-repair", help="원본 정책이 모두 일치할 때 생성된 Python 캐시만 백업·격리합니다.")
+    bundle_repair.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    bundle_repair.add_argument("--assignment", required=True)
+
     recovery = subparsers.add_parser("assignment-recover", help="미확인 tool 결과의 현재 상태를 검토한 뒤 귀속 예약만 복구합니다.")
     recovery.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
     recovery.add_argument("--assignment", required=True)
@@ -109,6 +119,15 @@ def build_parser() -> argparse.ArgumentParser:
     integration.add_argument("--finish-file", required=True)
     integration.add_argument("--finish-sha256", required=True)
     integration.add_argument("--approved-sha256")
+
+    integration_preserve = subparsers.add_parser("integration-preserve", help="검증 미완료 병합을 보존하고 검토한 worktree 예약만 해제합니다.")
+    integration_preserve.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    integration_preserve.add_argument("--finish-file", required=True)
+    integration_preserve.add_argument("--finish-sha256", required=True)
+    integration_preserve.add_argument("--reason", required=True)
+    integration_preserve.add_argument("--related-task", action="append", default=[])
+    integration_preserve.add_argument("--cancel-call", action="append", default=[], help="실패 근거를 확인한 원래 assignment의 미확인 도구 예약 ID")
+    integration_preserve.add_argument("--approved-sha256")
 
     close_recovery = subparsers.add_parser("close-recover", help="검증된 동일 worktree cleanup 결함의 정리를 보류하고 CLOSED 기록만 복구합니다.")
     close_recovery.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
@@ -437,6 +456,29 @@ def main(argv: Sequence[str] | None = None) -> None:
                 arguments.responsibility,
                 arguments.resume_assignment,
             )
+        elif arguments.command == "sessions":
+            from .sessions import list_sessions
+            rows = list_sessions(select_projects(arguments.project)[0], arguments.host, arguments.assignment)
+            if arguments.json:
+                print(json.dumps(rows, ensure_ascii=False, indent=2))
+            else:
+                for row in rows:
+                    status = "정상" if row["bundle"]["valid"] else "검사 실패: " + json.dumps(row["bundle"], ensure_ascii=False)
+                    print(f"{row['assignment']}  {row['host']}/{row['role']}  {row['task'] or '(task 미지정)'}  {row['task_state']}\n  bundle: {status}")
+                    if row["pending_calls"]:
+                        print("  미확인 도구: " + ", ".join(row["pending_calls"]))
+                    print(f"  native session: {row['native_session'] or '(시작 전)'}\n  CODEX_HOME: {row['codex_home'] or '(해당 없음)'}")
+                    for transcript in row["transcripts"]:
+                        print(f"  대화: {transcript}")
+                    print(f"  재개: {row['resume_command'] or '(시작 전 또는 인계됨)'}")
+            code = 0
+        elif arguments.command == "bundle-repair":
+            from .sessions import repair_bundle
+            paths = repair_bundle(select_projects(arguments.project)[0], arguments.assignment)
+            print(f"원본 bundle 확인 완료. 생성 캐시 {len(paths)}개 격리.")
+            for path in paths:
+                print(f"  백업: {path}")
+            code = 0
         elif arguments.command == "assignment-recover":
             from .recovery import recover_assignment
             path, digest = recover_assignment(select_projects(arguments.project)[0], arguments.assignment,
@@ -448,6 +490,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             path, digest = recover_integration(select_projects(arguments.project)[0], Path(arguments.finish_file),
                                                 arguments.finish_sha256, arguments.approved_sha256)
             print(f"병합 중단 복구 계약: {path}\n복구 SHA-256: {digest}")
+            code = 0
+        elif arguments.command == "integration-preserve":
+            from .recovery import preserve_integration
+            path, digest = preserve_integration(select_projects(arguments.project)[0], Path(arguments.finish_file),
+                                                arguments.finish_sha256, arguments.reason, tuple(arguments.related_task),
+                                                arguments.approved_sha256, cancel_calls=tuple(arguments.cancel_call))
+            print(f"통합 보존 계약: {path}\n보존 SHA-256: {digest}")
+            print("PRESERVED 기록과 예약 해제 완료. 검증은 미완료로 유지합니다." if arguments.approved_sha256
+                  else "계약 승인 후 같은 명령에 --approved-sha256을 지정하세요.")
             code = 0
         elif arguments.command == "close-recover":
             from .recovery import recover_close

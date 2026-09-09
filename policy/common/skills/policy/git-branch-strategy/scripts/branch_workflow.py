@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
 import shlex
@@ -90,11 +89,10 @@ def guard_contract_issues(module: ModuleType) -> tuple[str, ...]:
 
 
 def import_guard(source: Path) -> ModuleType:
-    specification = importlib.util.spec_from_file_location("asan_branch_guard", source)
-    if specification is None or specification.loader is None:
-        raise SystemExit(f"branch guard를 불러올 수 없습니다: {source}")
-    module = importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(module)
+    # runtime_loader와 동일하게 원본만 읽는다. immutable bundle에 pyc를 만들거나 읽지 않는다.
+    module = ModuleType("asan_branch_guard")
+    module.__file__ = str(source)
+    exec(compile(source.read_bytes(), str(source), "exec"), module.__dict__)
     return module
 
 
@@ -504,6 +502,7 @@ def create(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
     )
     if canonical != contract:
         raise SystemExit("proposal 필드가 canonical branch 계약과 일치하지 않습니다.")
+    assert_creation_owner(root, Path(worktree) if worktree else root, guard)
     changed = guard.changed_paths(root)
     if getattr(guard, "GIT_STATUS_UNAVAILABLE", "") in changed:
         raise SystemExit("Git 변경 상태를 확인할 수 없어 branch 생성을 중단했습니다.")
@@ -857,6 +856,22 @@ def integration_state(guard: ModuleType) -> ModuleType:
     return import_guard(Path(guard.__file__).with_name("runtime_state.py"))
 
 
+def assert_creation_owner(root: Path, destination: Path, guard: ModuleType) -> None:
+    state = integration_state(guard)
+    common = git_common_directory(root)
+    owner = os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT", "manual")
+    resource = "git:" + str(destination.resolve())
+    with state.locked(state.repository_state(common) / "events.lock"):
+        claim = state.read(state.repository_state(common) / "claims" / f"{state.digest(resource)}.json")
+        if claim and claim.get("owner") != owner:
+            raise SystemExit("Git worktree의 통합 소유자가 다른 assignment입니다. 인계 또는 별도 worktree가 필요합니다.")
+        for path in (workflow_state_root(root) / "integration-targets").glob("*.json"):
+            if state.read(path).get("worktree") == str(destination.resolve()):
+                raise SystemExit("이 worktree의 병합 검증·close가 미완료입니다. 먼저 완료 또는 명시적 복구를 수행하세요.")
+        if os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT"):
+            state.claim(common, resource, owner)
+
+
 def integration_record_path(root: Path, contract: dict[str, object], guard: ModuleType) -> Path:
     return workflow_state_root(root) / "integrations" / f"{guard.contract_sha256(contract)}.json"
 
@@ -1020,6 +1035,18 @@ def finish(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
     return 0
 
 
+def record_verification_failure(root: Path, contract: dict[str, object], guard: ModuleType,
+                                command: list[str], exit_code: int | None, error: str = "") -> None:
+    state = integration_state(guard)
+    path = integration_record_path(root, contract, guard)
+    receipt = state.read(path)
+    receipt["state"] = "merged"
+    receipt["verification"] = {"status": "failed", "head": guard.head(root, str(contract["target"])),
+                               "command": command, "exit_code": exit_code, "error": error}
+    state.write(path, receipt)
+    git(root, "config", f"branch.{contract['source']}.asan-state", "READY_TO_MERGE")
+
+
 def verify(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
     contract = load_finish_proposal(root, arguments.proposal_file, arguments.proposal_sha256, guard)
     source, source_head, target, _ = _finish_fields(contract)
@@ -1055,27 +1082,33 @@ def verify(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
         try:
             completed = subprocess.run(tuple(raw), cwd=root, check=False, timeout=600)
         except (OSError, subprocess.TimeoutExpired) as error:
-            _ = git(root, "config", f"branch.{source}.asan-state", "READY_TO_MERGE")
+            record_verification_failure(root, contract, guard, raw, None, str(error))
             raise SystemExit(
                 "사후 검증을 실행하지 못했습니다. source와 worktree를 보존합니다.\n"
                 f"  명령: {shlex.join(raw)}\n"
                 f"  오류: {error}"
             ) from error
         if completed.returncode != 0:
-            _ = git(root, "config", f"branch.{source}.asan-state", "READY_TO_MERGE")
+            record_verification_failure(root, contract, guard, raw, completed.returncode)
             raise SystemExit(
                 "사후 검증이 실패했습니다. 자동 rollback·삭제 없이 source와 worktree를 보존합니다.\n"
                 f"  명령: {shlex.join(raw)}\n"
                 f"  exit: {completed.returncode}"
             )
     if guard.head(root, target) != result_head:
+        record_verification_failure(root, contract, guard, [], None, "검증 중 target HEAD 변경")
         raise SystemExit("검증 중 target HEAD가 변경되었습니다.")
-    _clean_worktree(guard, root)
+    try:
+        _clean_worktree(guard, root)
+    except SystemExit as error:
+        record_verification_failure(root, contract, guard, [], None, str(error))
+        raise
     state = integration_state(guard)
     receipt_path = integration_record_path(root, contract, guard)
     receipt = state.read(receipt_path)
     receipt.update({"finish_sha256": guard.contract_sha256(contract), "integration_head": result_head,
-                    "state": "verified", "validation_commands": raw_commands})
+                    "state": "verified", "validation_commands": raw_commands,
+                    "verification": {"status": "passed", "head": result_head}})
     state.write(receipt_path, receipt)
     _ = git(root, "config", f"branch.{source}.asan-state", "MERGED_VERIFIED")
     print(f"{target}에서 사후 검증이 통과했습니다. close를 별도 실행하세요.")
@@ -1126,6 +1159,8 @@ def close(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
     receipt_path = integration_record_path(root, contract, guard)
     receipt = state.read(receipt_path)
     values = guard.metadata(root, source)
+    if receipt.get("verification", {}).get("status") == "failed":
+        raise SystemExit("최근 사후 검증이 실패했습니다. verify 통과 후 close를 실행하세요.")
     if receipt.get("state") == "closed":
         release_closed_git_claims(root, contract, guard)
         print("이미 CLOSED로 기록된 동일 완료 계약입니다.")

@@ -218,6 +218,25 @@ launcher는 다음을 확인한다.
 
 primary checkout과 외부 worktree 모두 중앙 launcher의 `--worktree` 선택을 기준으로 한다. launcher는 실제 선택 위치를 검사하고 중앙 bundle의 절대 runtime 경로를 사용하며, 소비자 설정이나 primary checkout의 정책 파일로 fallback하지 않는다.
 
+#### 격리된 대화 이력 조회와 원래 assignment 재개
+
+Codex inject는 assignment별 `CODEX_HOME`에 대화 이력과 정책 설정을 보관한다. 일반 Codex 또는 다른 inject 세션의 `/resume` 목록에는 이 home의 대화가 합쳐지지 않는다. 중앙 저장소에서 다음 명령으로 원래 assignment, native session, 이력 파일, task 상태와 재개 명령을 조회한다.
+
+~~~sh
+bin/agent-policy sessions --project admin-ui --host codex
+bin/agent-policy sessions --project admin-ui --assignment <assignment-id> --json
+~~~
+
+출력된 `start --resume-assignment` 명령은 원래 home·native session·정책 bundle을 사용한다. `--print-only`를 붙여 실제 대화를 열기 전에 검사를 수행할 수 있다. 최신 정책을 적용하려면 기존 작업의 handoff와 새 inject 세션이 필요하다.
+
+bundle 검증 실패 메시지는 누락·변경·추가 파일을 구분한다. 구형 workflow가 생성한 Python 캐시만 문제라면 다음 명령을 사용한다.
+
+~~~sh
+bin/agent-policy bundle-repair --project admin-ui --assignment <assignment-id>
+~~~
+
+이 명령은 manifest에 선언된 원본이 모두 일치하고 추가 파일이 확인된 runtime Python 캐시뿐일 때 정확한 파일을 중앙 `state/.../bundle-repairs/`에 백업한 뒤 격리한다. 정책 변경·누락, 미상 파일 또는 symlink가 있으면 중단한다. 원래 bundle digest와 대화 저장 위치를 유지하며, 새 workflow는 캐시를 생성하지 않는다. 구형 bundle을 재개해 workflow를 다시 실행하면 캐시가 재생성될 수 있다.
+
 ## 6. 새 요청을 받았을 때
 
 ### 읽기 전용 조사
@@ -253,6 +272,8 @@ system prompt에 바인딩된 중앙 snapshot 내부 `branch_workflow.py`의 절
 ~~~
 
 이하 branch_workflow.py 명령은 중앙 정책 저장소가 아니라 해당 소비자 primary checkout 또는 계약에 지정된 task worktree를 실행 cwd로 사용한다. host 도구의 workdir를 명시하면 사용자가 직접 cd할 필요가 없다.
+
+workflow는 단일 Python 명령으로 실행한다. `cd`와 개행·`&&`·`;`로 결합하거나 다른 shell 실행과 섞으면 차단한다. create 본문도 대상 worktree의 Git 소유권과 미완료 통합 예약을 확인하므로 다른 assignment가 사용 중이면 새 task 생성 전에 중단한다.
 
 proposal 예시:
 
@@ -587,6 +608,8 @@ python3 <absolute-branch-workflow.py> close \
 
 실패 시 자동 rollback, rebase, reset 또는 강제 삭제하지 않는다. source와 worktree를 보존하고 정확한 실패 단계를 보고한다.
 
+verify 실패는 통합 receipt에 검증 HEAD, 실행 명령, 종료 코드와 실패 사유를 기록한다. finish가 source worktree를 target으로 전환했더라도 원래 assignment가 소유한 세션 디렉터리에는 handoff·최종 결과를 갱신할 수 있다. 원본 finish 계약과 통합 receipt로 귀속을 확인하며 다른 세션 로그나 target 애플리케이션 소스에 쓰기 권한을 부여하지 않는다.
+
 과거 번들에서 동일 worktree cleanup 계약으로 이미 `MERGED_VERIFIED`까지 진행한 경우, 중앙 CLI에서 정리 보류 계약을 검토한다.
 
 ~~~sh
@@ -596,6 +619,22 @@ bin/agent-policy close-recover --project user-ui \
 ~~~
 
 출력된 복구 JSON에는 원래 finish SHA, 현재 HEAD, 검증 receipt, assignment와 소유권, 보존할 branch·worktree가 담긴다. 정리 보류에 대한 새 SHA 승인을 받은 뒤 같은 명령에 `--approved-sha256 <recovery-sha256>`을 추가한다. 실행은 기존 검증 근거를 유지하고 `CLOSED` 기록과 해당 소유자의 통합 예약·Git claim 해제만 수행한다. branch, worktree, 로그를 보존하며 merge·검증 명령을 재실행하지 않는다. 승인 이후 상태가 달라지면 중단하고, 자신의 부분 기록 때문에 끊긴 경우에는 같은 복구 SHA로 재개한다. 완료한 복구의 재호출은 이후 작업의 예약을 해제하지 않는다.
+
+### 검증 미완료 병합의 보존과 예약 해제
+
+병합 후 검증이 실패했고 같은 worktree의 target에 후속 수동 병합까지 포함된 경우에는 성공 종료 대신 보존 계약을 만든다.
+
+~~~sh
+bin/agent-policy integration-preserve --project admin-ui \
+  --finish-file <original-finish-proposal-path> \
+  --finish-sha256 <original-finish-sha256> \
+  --related-task task/later-manual-merge \
+  --reason "검증 실패와 후속 수동 병합을 보존하고 통합 예약 정리"
+~~~
+
+`--related-task`는 함께 보존할 작업이 있을 때만 지정한다. 단일 source/통합 worktree, clean target, 원래 source·통합 결과와 관련 task의 현재 target 포함 관계, 원래 assignment·Git claim·통합 예약을 검사한다. 미확인 도구가 남아 있으면 원본 대화의 실패를 확인한 call만 `--cancel-call <call-id>`로 명시한다. 신규 소유권이나 workflow 예약은 이 방법으로 취소하지 않는다.
+
+미리보기는 실제 Git metadata와 예약을 바꾸지 않는다. 계약 JSON의 현재 HEAD, 관련 task·소유자, 실패 기록, 취소할 call과 해제할 예약을 검토하고 출력된 전체 SHA를 승인한 뒤 동일 명령에 `--approved-sha256 <recovery-sha256>`을 추가한다. 적용하면 대상 task를 `PRESERVED`, receipt를 `preserved`로 기록하고 계약에 포함된 예약만 해제한다. 검증은 미완료로 남으며 `CLOSED`를 기록하거나 branch·worktree를 삭제하지 않는다. 부분 적용은 journal을 근거로 같은 SHA로 재개한다.
 
 ## 13. 중앙 정책 운영
 

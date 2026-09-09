@@ -457,6 +457,18 @@ def trusted_branch_workflow_action(command: str, root: Path | None = None) -> st
     return arguments[0] if arguments else ""
 
 
+def unsupported_workflow_invocation(command: str, root: Path) -> bool:
+    """복합 shell 안의 workflow를 일반 읽기 명령으로 잘못 통과시키지 않는다."""
+    if "branch_workflow.py" not in command or trusted_branch_workflow_invocation(command, root):
+        return False
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
+        lexer.whitespace_split = True
+        return any(PYTHON_COMMAND_PATTERN.fullmatch(Path(token).name) for token in lexer)
+    except ValueError:
+        return True
+
+
 def trusted_branch_workflow_arguments(
     command: str,
     root: Path | None = None,
