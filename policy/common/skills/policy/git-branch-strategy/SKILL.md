@@ -139,12 +139,13 @@ V3 계약의 승인 worktree에서 Git 통합 담당자 한 명만 branch 전환
 ```sh
 python3 <absolute-branch-workflow.py> finish-proposal \
   --source task/<summary> \
+  --merge-strategy ff-only \
   --verify-command "npm run lint" \
   --verify-command "npm run build" \
   [--cleanup]
 ```
 
-출력된 source/target 전체 HEAD, ff-only 방식, 검증 명령, cleanup 여부, finish proposal 파일과 64자리 SHA-256을 사용자에게 별도 prompt로 승인받는다. 공통 guard는 승인된 SHA-256과 실행 인자가 일치하는지 확인한다. 승인 후 target worktree에서 다음을 각각 별도 명령으로 실행한다.
+출력된 source/target 전체 HEAD, ff-only 또는 merge-commit 방식, 통합 worktree, 검증 명령, cleanup 여부, finish proposal 파일과 64자리 SHA-256을 사용자에게 별도 prompt로 승인받는다. 공통 guard는 승인된 SHA-256과 실행 인자가 일치하는지 확인한다. 승인 후 다음을 각각 별도 명령으로 실행한다. workflow는 계약의 통합 worktree를 사용하며, 단일 worktree에서는 source와 target이 clean이고 target이 다른 곳에 checkout되지 않았을 때만 승인된 target 전환을 수행한다.
 
 `--verify-command`는 공통 runtime 계약에 렌더된 프로젝트 `lint`, `test`, `build` 명령의 정확한 argv만 허용한다. shell wrapper, Git, 임의 Python과 다른 실행 파일을 검증 명령으로 숨길 수 없다.
 
@@ -154,8 +155,8 @@ python3 <absolute-branch-workflow.py> verify --proposal-file <path> --proposal-s
 python3 <absolute-branch-workflow.py> close --proposal-file <path> --proposal-sha256 <sha256>
 ```
 
-- `finish`: source/target HEAD가 승인 후 그대로이고 target이 clean일 때만 ff-only merge한다.
-- `verify`: target에서 승인된 명령을 shell 없이 실행하고 모두 통과하면 `MERGED_VERIFIED`로 기록한다.
+- `finish`: source/target HEAD가 승인 후 그대로이고 target이 clean일 때만 승인된 방식으로 merge한다. 병렬 sibling이 분기되었으면 최신 target 기준의 merge-commit 계약을 별도로 승인받는다. 실행 후 실제 integration HEAD를 기록한다.
+- `verify`: 기록된 integration HEAD와 승인 source 포함 관계를 확인한 target에서 승인된 명령을 shell 없이 실행하고 모두 통과하면 `MERGED_VERIFIED`로 기록한다.
 - `close`: ancestry와 clean 상태를 다시 확인한 뒤 `CLOSED` 기록을 남긴다. `--cleanup`이 승인된 계약만 격리 worktree와 local source branch를 안전 삭제한다.
 - 실패하면 자동 rollback, rebase, 강제 삭제를 하지 않고 source와 worktree를 보존한다.
 
@@ -170,3 +171,17 @@ python3 <absolute-branch-workflow.py> context
 ```
 
 현재 task 상태, branch/HEAD, parent와 승인 SHA, merge target, roles, integrator, scope, worktree, dirty 경로, 미병합 자식과 다음 안전 조치를 확인한다. 실제 Git 상태와 문서가 다르면 작업을 멈추고 불일치를 보고한다.
+
+
+`PRESERVED` task는 launcher에 --task/--worktree를 명시해 진단·재개 세션을 열 수 있다. 귀속된 진단·handoff 쓰기는 가능하지만 source 변경은 명시적 resume 후에만 허용된다. READY_TO_MERGE와 MERGED_VERIFIED도 완료 복구 진입만 허용하며 일반 source 권한으로 취급하지 않는다.
+
+일반 질문과 compact는 구현·계약 승인을 철회하지 않는다. 새 독립 task나 승인 scope 변경에는 관련 승인을 새로 받아야 한다. 같은 assignment 재개는 launcher --resume-assignment <id>를 사용한다. 정책 업데이트를 적용하는 새 세션과 구별한다.
+
+
+### 실행 중단 복구
+
+동일 완료 계약의 finish를 다시 실행하면, 승인 source와 병합 방식에 맞는 결과 HEAD·부모 관계를 재조회하여 누락된 실행 기록을 복구한다. verify와 close도 동일 결과 HEAD에서는 재시도할 수 있다. cleanup 실패를 CLOSED로 기록하지 않으며 worktree 제거 전에 모든 host의 세션 로그를 수집한다.
+
+충돌·ff-only 실패는 중앙 `bin/agent-policy integration-recover --project {{PROJECT_ID}} --finish-file <원본 파일> --finish-sha256 <전체 SHA>`로 현재 HEAD·dirty 파일 해시·통합 예약을 검토한다. 출력된 복구 SHA를 사용자에게 승인받고 같은 명령에 `--approved-sha256 <복구 SHA>`를 붙여야 merge --abort와 ACTIVE 복원을 수행한다. 검토 후 변경이 생기면 다시 검토한다. source 변경이나 새로운 결과 HEAD를 이 계약으로 승인하지 않는다.
+
+결과 hook이 누락된 귀속 예약은 중앙 `assignment-recover --project {{PROJECT_ID}} --assignment <ID> --call-id <도구 ID> --outcome confirmed|cancelled`로 현재 상태를 검토하고 복구 SHA를 승인받아 처리한다. 이 복구는 탐색 완료나 구현 승인을 만들지 않는다. 중단된 `assignment-handoff`는 이미 승인한 동일 계약을 재실행하며, 인계가 끝날 때까지 양쪽 assignment의 작업을 차단한다.

@@ -21,7 +21,7 @@
 - 호스트 형식: `adapters/codex/`, `adapters/claude/`, `adapters/opencode/`
 - 프로젝트 경로와 명령: `projects/*.json`
 - 필수 세션 산출물 아카이브: `logs/projects/{project}/{host}/sessions/`
-- 소비자별 기능 정책은 V1 범위에 없으며 임의 overlay를 만들지 않는다.
+- 소비자별 기능 정책은 V1 범위에 없으며 임의 overlay를 만들지 않는다. 기존 projects/overlay/admin-ui/skills/reference/는 승인된 재사용 자산 카탈로그 예외이며 공통 정책을 덮어쓸 수 없다.
 
 ## 안전 규칙
 

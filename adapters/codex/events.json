@@ -1,0 +1,64 @@
+{
+  "SessionStart": [
+    {
+      "matcher": "startup|resume|clear|compact",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "session-start",
+          "timeout": 15,
+          "statusMessage": "Checking central agent policy context",
+          "additionalContextLimit": 1200
+        }
+      ]
+    }
+  ],
+  "UserPromptSubmit": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "user-prompt",
+          "timeout": 10,
+          "statusMessage": "Recording common harness approval"
+        }
+      ]
+    }
+  ],
+  "PreToolUse": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "pre-tool",
+          "timeout": 10,
+          "statusMessage": "Protecting central agent policy files"
+        }
+      ]
+    }
+  ],
+  "PostToolUse": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "post-tool",
+          "timeout": 10,
+          "statusMessage": "Recording common harness evidence"
+        }
+      ]
+    }
+  ],
+  "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "collect-logs",
+          "timeout": 30,
+          "statusMessage": "Mirroring required artifacts to central logs"
+        }
+      ]
+    }
+  ]
+}

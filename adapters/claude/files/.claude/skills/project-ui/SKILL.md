@@ -9,7 +9,7 @@ description: {{PROJECT_NAME}}에서 UI 역할이 사용자에게 확인된 경�
 
 1. `.claude/skills/project-role/SKILL.md`를 따른다.
 2. `.agent-policy/common/skills/policy/task-role-routing/references/ui.md`를 읽는다.
-3. 통합 구현 역할이면 `.agent-policy/common/skills/policy/task-role-routing/references/logic.md`도 함께 읽는다.
+3. 통합 구현 역할이면 주입된 시스템 프롬프트에 나열된 Logic reference도 함께 읽는다.
 4. `DESIGN.md`, `src/shared/ui/`, 같은 디렉터리와 인접 구현을 조사한다.
 
 완료·인계·검증은 `.agent-policy/common/AGENT_POLICY.md`와 `.agent-policy/common/skills/policy/task-role-routing/references/handoff-and-ownership.md`를 따른다.

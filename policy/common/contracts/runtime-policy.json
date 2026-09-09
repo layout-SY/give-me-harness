@@ -69,5 +69,20 @@
       "{{TEST_COMMAND}}",
       "{{BUILD_COMMAND}}"
     ]
+  },
+  "capabilities": {
+    "source_write": [
+      "logic",
+      "ui",
+      "generate"
+    ],
+    "artifact_write": [
+      "logic",
+      "ui",
+      "orchest",
+      "review",
+      "generate"
+    ],
+    "git_write": "approved-integrator-assignment"
   }
 }

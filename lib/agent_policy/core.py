@@ -178,139 +178,28 @@ def render_opencode_config(project: ProjectConfig) -> bytes:
     return (json.dumps(config, ensure_ascii=False, indent=2) + "\n").encode()
 
 
+def render_host_events(project: ProjectConfig, host: str) -> dict[str, Any]:
+    registrations = read_json(CENTRAL_ROOT / f"adapters/{host}/events.json")
+    for event, entries in registrations.items():
+        if not isinstance(entries, list):
+            raise PolicyError(f"host event 등록이 올바르지 않습니다: {host}:{event}")
+        for entry in entries:
+            for hook in entry["hooks"]:
+                mode = hook["command"]
+                hook["command"] = (log_collection_command(project, host) if mode == "collect-logs"
+                                   else hook_command(project, mode, host))
+    return registrations
+
+
 def render_codex_hooks(project: ProjectConfig) -> bytes:
     hooks = read_json(CENTRAL_ROOT / "adapters/codex/hooks.base.json")
-    registrations = hooks.setdefault("hooks", {})
-    if not isinstance(registrations, dict):
-        raise PolicyError("Codex hooks base의 hooks가 object가 아닙니다.")
-    registrations.setdefault("SessionStart", []).insert(
-        0,
-        {
-            "matcher": "startup|resume|clear|compact",
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": hook_command(project, "session-start", "codex"),
-                    "timeout": 15,
-                    "statusMessage": "Checking central agent policy context",
-                    "additionalContextLimit": 1200,
-                }
-            ],
-        },
-    )
-    registrations.setdefault("UserPromptSubmit", []).insert(
-        0,
-        {
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": hook_command(project, "user-prompt", "codex"),
-                    "timeout": 10,
-                    "statusMessage": "Recording common harness approval",
-                }
-            ],
-        },
-    )
-    registrations.setdefault("PreToolUse", []).insert(
-        0,
-        {
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": hook_command(project, "pre-tool", "codex"),
-                    "timeout": 10,
-                    "statusMessage": "Protecting central agent policy files",
-                }
-            ],
-        },
-    )
-    registrations.setdefault("PostToolUse", []).insert(
-        0,
-        {
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": hook_command(project, "post-tool", "codex"),
-                    "timeout": 10,
-                    "statusMessage": "Recording common harness evidence",
-                }
-            ],
-        },
-    )
-    registrations["Stop"] = [
-        {
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": log_collection_command(project, "codex"),
-                    "timeout": 30,
-                    "statusMessage": "Mirroring required artifacts to central logs",
-                }
-            ],
-        }
-    ]
+    hooks["hooks"] = render_host_events(project, "codex")
     return (json.dumps(hooks, ensure_ascii=False, indent=2) + "\n").encode()
 
 
 def render_claude_settings(project: ProjectConfig) -> bytes:
     settings = read_json(CENTRAL_ROOT / "adapters/claude/settings.base.json")
-    settings["hooks"] = {
-        "SessionStart": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": hook_command(project, "session-start", "claude"),
-                        "timeout": 15,
-                    }
-                ]
-            }
-        ],
-        "UserPromptSubmit": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": hook_command(project, "user-prompt", "claude"),
-                        "timeout": 10,
-                    }
-                ]
-            }
-        ],
-        "PreToolUse": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": hook_command(project, "pre-tool", "claude"),
-                        "timeout": 10,
-                    }
-                ],
-            }
-        ],
-        "PostToolUse": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": hook_command(project, "post-tool", "claude"),
-                        "timeout": 10,
-                    }
-                ]
-            }
-        ],
-        "Stop": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": log_collection_command(project, "claude"),
-                        "timeout": 30,
-                    }
-                ]
-            }
-        ],
-    }
+    settings["hooks"] = render_host_events(project, "claude")
     return (json.dumps(settings, ensure_ascii=False, indent=2) + "\n").encode()
 
 
@@ -333,6 +222,14 @@ def render_project(project: ProjectConfig) -> dict[str, bytes]:
     )
     overlay_skills = project_overlay_root(project) / "skills"
     if overlay_skills.is_dir():
+        for source in overlay_skills.rglob("*"):
+            if not source.is_file():
+                continue
+            relative = source.relative_to(overlay_skills)
+            if project.id != "admin-ui" or not relative.parts or relative.parts[0] != "reference" or source.suffix != ".md":
+                raise PolicyError(f"승인된 reference 카탈로그 밖의 overlay입니다: {source}")
+            if (CENTRAL_ROOT / "policy/common/skills" / relative).exists():
+                raise PolicyError(f"overlay가 공통 정책을 덮어쓸 수 없습니다: {relative}")
         add_tree(rendered, overlay_skills, Path(".agents/skills"), project)
         add_tree(rendered, overlay_skills, Path(".agent-policy/common/skills"), project)
     add_tree(
@@ -366,13 +263,8 @@ def render_project(project: ProjectConfig) -> dict[str, bytes]:
             project,
         )
     rendered["opencode.json"] = render_opencode_config(project)
-    branch_guard = render_content(
-        (CENTRAL_ROOT / "policy/guards/branch_guard.py").read_bytes(), project
-    )
-    rendered[".agent-policy/runtime/branch_guard.py"] = branch_guard
-    rendered[".agent-policy/runtime/managed_policy_guard.py"] = render_content(
-        (CENTRAL_ROOT / "policy/guards/managed_policy_guard.py").read_bytes(), project
-    )
+    for source in sorted((CENTRAL_ROOT / "policy/guards").glob("*.py")):
+        rendered[f".agent-policy/runtime/{source.name}"] = render_content(source.read_bytes(), project)
     rendered[".codex/hooks.json"] = render_codex_hooks(project)
     rendered[".claude/settings.json"] = render_claude_settings(project)
     return dict(sorted(rendered.items()))
@@ -389,6 +281,9 @@ def source_files(project: ProjectConfig) -> tuple[Path, ...]:
     files: list[Path] = []
     for root in roots:
         files.extend(path for path in root.rglob("*") if is_policy_source_file(path, root))
+    overlay = project_overlay_root(project) / "skills"
+    if overlay.is_dir():
+        files.extend(path for path in overlay.rglob("*") if is_policy_source_file(path, overlay))
     files.append(PROJECTS_ROOT / f"{project.id}.json")
     return tuple(sorted(set(files)))
 
@@ -619,13 +514,12 @@ def audit_source_contract() -> tuple[str, ...]:
     hooks_base = read_json(CENTRAL_ROOT / "adapters/codex/hooks.base.json")
     if hooks_base != {"hooks": {}}:
         issues.append("Codex adapter still registers legacy hooks")
-    common_guard = CENTRAL_ROOT / "policy/guards/managed_policy_guard.py"
+    common_guard = CENTRAL_ROOT / "policy/guards/approval_policy.py"
     common_guard_text = common_guard.read_text(encoding="utf-8")
     required_common_guard_markers = (
         "def record_user_prompt(",
         "def record_post_tool(",
         "def implementation_gate_denial(",
-        '"post-tool"',
     )
     if any(marker not in common_guard_text for marker in required_common_guard_markers):
         issues.append("common guard does not supersede Codex approval/evidence hooks")
@@ -768,4 +662,29 @@ def audit_source_contract() -> tuple[str, ...]:
                         issues.append(f"{project_id}: unresolved common reference {relative} -> {reference}")
                 elif normalized not in common_paths:
                     issues.append(f"{project_id}: unresolved common reference {relative} -> {reference}")
+    from .injection import _role_selected_rendered
+    from .role_profiles import INJECT_ROLES
+    capabilities = contract.get("capabilities", {})
+    if capabilities.get("source_write") != ["logic", "ui", "generate"]:
+        issues.append("source capability registry mismatch")
+    compiled_modules: set[bytes] = set()
+    for project_id in project_ids():
+        rendered = render_project(load_project(project_id))
+        for host in HOST_COMMANDS:
+            for role in INJECT_ROLES:
+                selected = _role_selected_rendered(rendered, host, role)
+                portfolio = ".agent-policy/common/skills/policy/portfolio/SKILL.md"
+                if portfolio not in selected:
+                    issues.append(f"{project_id}:{host}:{role}: required portfolio skill missing")
+                for relative, content in selected.items():
+                    if relative.startswith(".agent-policy/runtime/") and relative.endswith(".py") and content not in compiled_modules:
+                        compiled_modules.add(content)
+                        try:
+                            compile(content, relative, "exec")
+                        except SyntaxError as error:
+                            issues.append(f"{project_id}:{host}:{role}: invalid runtime module: {error}")
+                    if relative.endswith(".md"):
+                        for reference in re.findall(r"\.agent-policy/common/[A-Za-z0-9_./-]+\.(?:md|yaml)", content.decode()):
+                            if reference not in selected:
+                                issues.append(f"{project_id}:{host}:{role}: unresolved skill reference: {relative} -> {reference}")
     return tuple(dict.fromkeys(issues))

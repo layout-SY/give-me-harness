@@ -30,7 +30,7 @@ from .injection import (
     is_consumer_policy_path,
     prepare_injection,
 )
-from .log_mirror import collect_project_logs, selected_channels
+from .log_mirror import assignment_log_sources, collect_project_logs, selected_channels
 from .role_profiles import ARTIFACT_RESPONSIBILITIES, INJECT_ROLES, artifact_session_root
 
 
@@ -63,6 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="기존 명령 호환용 옵션입니다. 중앙 정책은 inject 방식만 지원합니다.",
     )
     start.add_argument("--model", help="host에 전달할 model 이름")
+    start.add_argument("--resume-assignment", help="원래 native session·bundle·승인을 유지할 assignment ID")
     start.add_argument(
         "--role",
         choices=INJECT_ROLES,
@@ -89,6 +90,35 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="inject 번들은 준비하되 host를 실행하지 않고 cwd, 환경과 명령만 출력합니다.",
     )
+
+    handoff_parser = subparsers.add_parser("assignment-handoff", help="동일 host·role의 담당 assignment 교체 계약을 출력하거나 적용합니다.")
+    handoff_parser.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    handoff_parser.add_argument("--from-assignment", required=True)
+    handoff_parser.add_argument("--to-assignment", required=True)
+    handoff_parser.add_argument("--handoff-file", required=True)
+    handoff_parser.add_argument("--approved-sha256")
+
+    recovery = subparsers.add_parser("assignment-recover", help="미확인 tool 결과의 현재 상태를 검토한 뒤 귀속 예약만 복구합니다.")
+    recovery.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    recovery.add_argument("--assignment", required=True)
+    recovery.add_argument("--call-id", default="")
+    recovery.add_argument("--outcome", choices=("confirmed", "cancelled"), required=True)
+    recovery.add_argument("--approved-sha256")
+    integration = subparsers.add_parser("integration-recover", help="실패한 병합의 정확한 상태를 검토한 뒤 merge --abort합니다.")
+    integration.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    integration.add_argument("--finish-file", required=True)
+    integration.add_argument("--finish-sha256", required=True)
+    integration.add_argument("--approved-sha256")
+
+    maintenance_plan = subparsers.add_parser("maintenance-plan", help="정책 퇴역의 정확한 diff와 새 V3 worktree 계약을 제안합니다.")
+    maintenance_plan.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    maintenance_plan.add_argument("--branch", required=True)
+    maintenance_plan.add_argument("--worktree", required=True)
+    maintenance_plan.add_argument("--host", required=True, choices=("codex", "claude", "opencode", "user"))
+    maintenance_apply = subparsers.add_parser("maintenance-apply", help="승인된 퇴역 manifest만 새 V3 worktree에 적용합니다.")
+    maintenance_apply.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    maintenance_apply.add_argument("--plan-file", required=True)
+    maintenance_apply.add_argument("--approved-sha256", required=True)
 
     collect_logs = subparsers.add_parser(
         "collect-logs",
@@ -227,7 +257,7 @@ def task_start_denial(project: ProjectConfig) -> str | None:
     guard.__file__ = str(CENTRAL_ROOT / "policy/guards/branch_guard.py")
     try:
         exec(compile(source, guard.__file__, "exec"), guard.__dict__)
-        denial = guard.active_branch_denial(project.path)
+        denial = guard.active_branch_denial(project.path, allowed_states=("ACTIVE", "PRESERVED", "READY_TO_MERGE", "MERGED_VERIFIED"))
     except (OSError, RuntimeError, TypeError, ValueError) as error:
         raise PolicyError(f"task branch 계약 검사기를 불러올 수 없습니다: {error}") from error
     if denial is not None and not isinstance(denial, str):
@@ -277,6 +307,7 @@ def run_start(
     role: str | None = None,
     task: str | None = None,
     responsibility: str = "owner",
+    resume_assignment: str | None = None,
 ) -> int:
     if responsibility not in ARTIFACT_RESPONSIBILITIES:
         raise PolicyError(f"지원하지 않는 산출물 책임입니다: {responsibility}")
@@ -331,6 +362,8 @@ def run_start(
         model,
         task=task,
         responsibility=responsibility,
+        session_dir=selected_session_dir,
+        resume_assignment=resume_assignment,
     )
     if print_only:
         print("mode: inject")
@@ -360,7 +393,14 @@ def run_collect_logs(selector: str, channel: str, quiet: bool) -> int:
         if runtime_path:
             project = active_project(project, runtime_path, None)
         for selected_channel in selected_channels(channel):
-            result = collect_project_logs(project, selected_channel)
+            assignment = os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT")
+            state_root = os.environ.get("ASAN_AGENT_POLICY_STATE_ROOT")
+            sources = None
+            if assignment and state_root:
+                if selected_channel != os.environ.get("ASAN_AGENT_POLICY_HOST", selected_channel):
+                    continue
+                sources = assignment_log_sources(project, selected_channel, assignment, Path(state_root))
+            result = collect_project_logs(project, selected_channel, session_sources=sources)
             if quiet:
                 continue
             state = "source-missing" if result.source_missing else "ok"
@@ -389,7 +429,40 @@ def main(argv: Sequence[str] | None = None) -> None:
                 arguments.role,
                 arguments.task,
                 arguments.responsibility,
+                arguments.resume_assignment,
             )
+        elif arguments.command == "assignment-recover":
+            from .recovery import recover_assignment
+            path, digest = recover_assignment(select_projects(arguments.project)[0], arguments.assignment,
+                                               arguments.call_id, arguments.outcome, arguments.approved_sha256)
+            print(f"tool 복구 계약: {path}\n복구 SHA-256: {digest}")
+            code = 0
+        elif arguments.command == "integration-recover":
+            from .recovery import recover_integration
+            path, digest = recover_integration(select_projects(arguments.project)[0], Path(arguments.finish_file),
+                                                arguments.finish_sha256, arguments.approved_sha256)
+            print(f"병합 중단 복구 계약: {path}\n복구 SHA-256: {digest}")
+            code = 0
+        elif arguments.command == "assignment-handoff":
+            from .assignment import handoff
+            path, digest = handoff(select_projects(arguments.project)[0], arguments.from_assignment,
+                                   arguments.to_assignment, Path(arguments.handoff_file), arguments.approved_sha256)
+            print(f"handoff 계약: {path}\nhandoff SHA-256: {digest}")
+            print("소유권 이전 완료" if arguments.approved_sha256 else "계약 승인 후 같은 명령에 --approved-sha256을 지정하세요.")
+            code = 0
+        elif arguments.command == "maintenance-plan":
+            from .maintenance import preview
+            path, digest, diff = preview(select_projects(arguments.project)[0], arguments.branch,
+                                         Path(arguments.worktree), arguments.host)
+            print(diff)
+            print(f"유지보수 계약 파일: {path}\n유지보수 SHA-256: {digest}")
+            print("이 diff와 새 V3 worktree 생성만 승인한 뒤 maintenance-apply를 실행하세요.")
+            code = 0
+        elif arguments.command == "maintenance-apply":
+            from .maintenance import apply
+            target = apply(select_projects(arguments.project)[0], Path(arguments.plan_file), arguments.approved_sha256)
+            print(f"검토·검증할 V3 유지보수 worktree: {target}")
+            code = 0
         elif arguments.command == "collect-logs":
             code = run_collect_logs(arguments.project, arguments.channel, arguments.quiet)
         else:

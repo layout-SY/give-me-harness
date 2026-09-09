@@ -378,7 +378,7 @@ python3 <absolute-branch-workflow.py> preserve \
   --reason "외부 의존성 확인 전까지 현재 변경과 worktree를 보존"
 ~~~
 
-PRESERVED worktree에는 애플리케이션·산출물 쓰기가 차단된다. 다른 task를 병행하려면 별도 worktree와 별도 세션을 사용한다.
+PRESERVED worktree에는 애플리케이션 소스 변경이 차단된다. 현재 assignment에 귀속된 진단·handoff 산출물은 작성할 수 있다. 다른 task를 병행하려면 별도 worktree와 별도 세션을 사용한다.
 
 해당 task로 돌아오면 그 worktree에서 resume한다.
 
@@ -535,7 +535,7 @@ python3 <absolute-branch-workflow.py> finish-proposal \
 finish proposal에는 다음 값이 포함된다.
 
 - source와 target 전체 HEAD
-- ff-only merge 방식
+- 승인된 ff-only 또는 merge-commit 방식과 실제 통합 worktree
 - 사후 검증 명령
 - cleanup 여부
 - proposal 파일 절대 경로
@@ -561,10 +561,10 @@ python3 <absolute-branch-workflow.py> close \
   --proposal-sha256 <printed-64-character-sha256>
 ~~~
 
-- finish: 승인된 source/target HEAD와 clean target을 확인하고 ff-only merge
-- verify: target에서 승인된 명령을 shell wrapper 없이 실행
+- finish: 승인된 source/target HEAD와 clean target을 확인하고 계약의 방식으로 merge. 필요한 단일 worktree의 target 전환은 이 명령 내부에서만 수행
+- verify: 기록된 integration HEAD와 source 포함 관계를 확인하고 target에서 승인된 명령을 shell wrapper 없이 실행
 - close: ancestry와 clean 상태를 확인하고 CLOSED 기록
-- cleanup: finish proposal에 포함해 승인된 경우에만 격리 worktree와 local source branch 정리
+- cleanup: finish proposal에 포함해 승인된 경우에만 로그 수집 성공을 확인한 뒤 격리 worktree와 local source branch 정리
 
 실패 시 자동 rollback, rebase, reset 또는 강제 삭제하지 않는다. source와 worktree를 보존하고 정확한 실패 단계를 보고한다.
 
@@ -701,3 +701,8 @@ bin/agent-policy collect-logs \
 - finish proposal을 별도로 승인받았는가
 - finish, verify, close를 분리 실행했는가
 - 소비자 정책 파일을 만들거나 Git push처럼 사용자 전용 작업을 임의 실행하지 않았는가
+
+
+## 18. 지속 assignment와 중단 복구
+
+세션 시작·재개, 종류별 승인, 실행 예약, Git 소유권, 중단 복구 명령과 host 검증 범위는 [runtime 개선 보고](runtime-remediation-2026-09-08.md)를 따른다. `--resume-assignment`는 원래 native session·bundle·Codex home을 재사용한다. 다른 담당 세션에는 명시적 `assignment-handoff` 계약이 필요하며 구현 승인은 복제하지 않는다.

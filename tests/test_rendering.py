@@ -4,6 +4,8 @@ import json
 import sys
 import tomllib
 import unittest
+import tempfile
+from unittest.mock import patch
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
@@ -19,6 +21,26 @@ from agent_policy.core import (
 
 
 class RenderingTests(unittest.TestCase):
+    def test_reference_overlay_changes_digest_but_logs_do_not(self) -> None:
+        import agent_policy.core as core
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            projects = root / "projects"
+            reference = projects / "overlay/admin-ui/skills/reference/catalog.md"
+            reference.parent.mkdir(parents=True)
+            reference.write_text("original catalog\n")
+            (projects / "admin-ui.json").write_text("{}")
+            project = load_project("admin-ui")
+            with patch.object(core, "CENTRAL_ROOT", root), patch.object(core, "PROJECTS_ROOT", projects):
+                original = source_digest(project)
+                reference.write_text("updated catalog\n")
+                changed = source_digest(project)
+                self.assertNotEqual(original, changed)
+                log = root / "logs/projects/admin-ui/codex/sessions/test/plan.md"
+                log.parent.mkdir(parents=True)
+                log.write_text("session log\n")
+                self.assertEqual(changed, source_digest(project))
+
     def test_project_metadata_is_rendered_without_cross_project_name(self) -> None:
         user = render_project(load_project("user-ui"))
         admin = render_project(load_project("admin-ui"))

@@ -250,7 +250,9 @@ class BranchGuardTests(unittest.TestCase):
         policy_root = Path(self.temporary_directory.name) / "bundle/policy"
         runtime = policy_root / ".agent-policy/runtime/branch_guard.py"
         runtime.parent.mkdir(parents=True)
-        runtime.write_bytes(self.rendered[".agent-policy/runtime/branch_guard.py"])
+        for relative, content in self.rendered.items():
+            if relative.startswith(".agent-policy/runtime/"):
+                (runtime.parent / Path(relative).name).write_bytes(content)
         contract = policy_root / ".agent-policy/common/contracts/runtime-policy.json"
         contract.parent.mkdir(parents=True, exist_ok=True)
         contract.write_bytes(

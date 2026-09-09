@@ -6,6 +6,8 @@ import os
 import re
 import shlex
 import shutil
+import subprocess
+import uuid
 import tempfile
 import tomllib
 from dataclasses import dataclass
@@ -301,7 +303,6 @@ def _role_selected_rendered(
         elif host == "claude":
             include = include or relative in {
                 ".claude/settings.json",
-                ".claude/hookify.require-documentation.local.md",
             }
             include = include or relative.startswith(".claude/hooks/")
             include = include or relative.startswith(".claude/templates/")
@@ -393,12 +394,10 @@ def _render_claude_files(
         elif relative.startswith(".claude/agents/"):
             files["plugin/agents/" + relative.removeprefix(".claude/agents/")] = content
 
-    files["plugin/runtime/managed_policy_guard.py"] = rendered[
-        ".agent-policy/runtime/managed_policy_guard.py"
-    ]
-    files["plugin/runtime/branch_guard.py"] = rendered[
-        ".agent-policy/runtime/branch_guard.py"
-    ]
+    for relative, content in rendered.items():
+        if relative.startswith(".agent-policy/runtime/"):
+            files["plugin/runtime/" + relative.removeprefix(".agent-policy/runtime/")] = content
+
     settings = json.loads(rendered[".claude/settings.json"])
     hooks = settings.pop("hooks", {})
     files["plugin/hooks/hooks.json"] = _json_bytes(
@@ -441,12 +440,10 @@ def _render_opencode_files(
     if plugin.count(original) != 1:
         raise PolicyError("OpenCode inject plugin의 guard 경로 계약이 변경되었습니다.")
     files[plugin_path] = plugin.replace(original, replacement).encode()
-    files["opencode-home/runtime/managed_policy_guard.py"] = rendered[
-        ".agent-policy/runtime/managed_policy_guard.py"
-    ]
-    files["opencode-home/runtime/branch_guard.py"] = rendered[
-        ".agent-policy/runtime/branch_guard.py"
-    ]
+    for relative, content in rendered.items():
+        if relative.startswith(".agent-policy/runtime/"):
+            files["opencode-home/runtime/" + relative.removeprefix(".agent-policy/runtime/")] = content
+
     return files
 
 
@@ -740,7 +737,7 @@ def _prepare_codex_home(
     state_root: Path,
     source_codex_home: Path,
 ) -> tuple[Path, tuple[str, ...]]:
-    codex_home = state_root / project.id / "codex-home"
+    codex_home = state_root / "codex-home"
     user_config_content = (
         (source_codex_home / "config.toml").read_bytes()
         if (source_codex_home / "config.toml").is_file()
@@ -833,6 +830,8 @@ def prepare_injection(
     source_codex_home: Path | None = None,
     task: str | None = None,
     responsibility: str = "owner",
+    session_dir: str | None = None,
+    resume_assignment: str | None = None,
 ) -> InjectionLaunch:
     if host not in HOST_COMMANDS:
         raise PolicyError(f"지원하지 않는 inject host입니다: {host}")
@@ -847,6 +846,9 @@ def prepare_injection(
     if not project.path.is_dir():
         raise PolicyError(f"대상 프로젝트를 찾을 수 없습니다: {project.path}")
 
+    if resume_assignment is not None:
+        return resume_injection(project, host, role, resume_assignment, state_root or STATE_ROOT, model, responsibility)
+
     rendered = _role_selected_rendered(render_project(project), host, role)
     digest = _bundle_digest(rendered, host, role, project.path)
     selected_build_root = (build_root or BUILD_ROOT).resolve()
@@ -855,12 +857,28 @@ def prepare_injection(
     _install_bundle(bundle_root, project, host, role, digest, files)
 
     selected_state_root = (state_root or STATE_ROOT).resolve()
+    common_result = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=project.path,
+                                   text=True, capture_output=True, check=True)
+    common_path = Path(common_result.stdout.strip())
+    common = (common_path if common_path.is_absolute() else project.path / common_path).resolve()
+    assignment_id = uuid.uuid4().hex
+    assignment_root = selected_state_root / "repositories" / sha256_bytes(str(common).encode()) / "assignments" / assignment_id
+    assignment_root.mkdir(mode=0o700, parents=True)
+    atomic_write(assignment_root / "assignment.json", _json_bytes({
+        "version": 1, "id": assignment_id, "repository": str(common), "project": project.id,
+        "host": host, "role": role, "task": task or "", "responsibility": responsibility,
+        "worktree": str(project.path.resolve()), "bundle_root": str(bundle_root), "bundle_digest": digest,
+    }))
     selected_source_home = (
         source_codex_home
         or Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
     ).resolve()
     codex_overrides: tuple[str, ...] = ()
     environment = {
+        "ASAN_AGENT_POLICY_ASSIGNMENT": assignment_id,
+        "ASAN_AGENT_POLICY_HOST": host,
+        "ASAN_SESSION_DIR": session_dir or (artifact_session_root(host) + "/" + datetime.now(timezone.utc).strftime("%Y-%m-%d") + "-" + (task or role).removeprefix("task/") + "-" + assignment_id[:8]),
+        "ASAN_AGENT_POLICY_STATE_ROOT": str(selected_state_root),
         INJECT_MODE_ENV: "inject",
         INJECT_PROJECT_ENV: project.id,
         INJECT_PROJECT_PATH_ENV: str(project.path),
@@ -875,7 +893,7 @@ def prepare_injection(
             project,
             rendered,
             bundle_root,
-            selected_state_root,
+            assignment_root,
             selected_source_home,
         )
         environment["CODEX_HOME"] = str(codex_home)
@@ -887,6 +905,11 @@ def prepare_injection(
     prompt_path = bundle_root / "system-prompt.md"
     prompt = prompt_path.read_text(encoding="utf-8")
     command = _host_command(host, model, bundle_root, prompt, codex_overrides)
+    record_path = assignment_root / "assignment.json"
+    record = json.loads(record_path.read_bytes())
+    record.update({"command": list(command), "environment": environment, "model": model,
+                   "system_prompt": str(prompt_path)})
+    atomic_write(record_path, _json_bytes(record))
     return InjectionLaunch(
         project=project,
         host=host,
@@ -896,3 +919,47 @@ def prepare_injection(
         command=command,
         environment=environment,
     )
+
+
+def resume_injection(project: ProjectConfig, host: str, role: str, assignment: str,
+                     state_root: Path, model: str | None, responsibility: str) -> InjectionLaunch:
+    if re.fullmatch(r"[a-f0-9]{32}", assignment) is None:
+        raise PolicyError("--resume-assignment에는 launcher의 32자리 assignment ID가 필요합니다.")
+    completed = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=project.path,
+                               text=True, capture_output=True, check=True)
+    raw = Path(completed.stdout.strip())
+    common = (raw if raw.is_absolute() else project.path / raw).resolve()
+    directory = state_root.resolve() / "repositories" / sha256_bytes(str(common).encode()) / "assignments" / assignment
+    from .runtime import load_runtime
+    runtime = load_runtime("runtime_state")
+    try:
+        record = runtime.read(directory / "assignment.json")
+    except RuntimeError as error:
+        raise PolicyError(str(error)) from error
+    if not record or any(record.get(key) != value for key, value in
+                         (("repository", str(common)), ("project", project.id), ("host", host),
+                          ("role", role), ("responsibility", responsibility))):
+        raise PolicyError("재개 assignment의 저장소·host·role·책임이 요청과 다릅니다.")
+    if model is not None and model != record.get("model"):
+        raise PolicyError("모델 변경은 새 세션에서 지정하세요. 재개는 원래 실행 계약을 사용합니다.")
+    native = record.get("native_session")
+    if record.get("handed_off_to"):
+        raise PolicyError("이미 다른 assignment로 인계한 세션입니다.")
+    bundle = Path(record["bundle_root"])
+    if not _bundle_is_valid(bundle, record["bundle_digest"]):
+        raise PolicyError("원래 세션의 bundle 검증에 실패했습니다. 재개 중 다른 정책으로 교체하지 않습니다.")
+    command = list(record["command"])
+    if native:
+        if host == "codex":
+            command[1:1] = ["resume", native]
+        else:
+            command.extend(["--resume" if host == "claude" else "--session", native])
+    if host == "codex":
+        home = Path(record["environment"]["CODEX_HOME"])
+        manifest = _read_state_manifest(home)
+        if not manifest or any(not (home / relative).is_file() or sha256_bytes((home / relative).read_bytes()) != digest
+                               for relative, digest in manifest.items()):
+            raise PolicyError("원래 Codex home의 정책 파일 검증에 실패했습니다.")
+    environment = dict(record["environment"])
+    environment[INJECT_PROJECT_PATH_ENV] = str(project.path.resolve())
+    return InjectionLaunch(project, host, role, bundle, Path(record["system_prompt"]), tuple(command), environment)

@@ -9,6 +9,7 @@ import os
 import re
 import shlex
 import subprocess
+from contextlib import contextmanager
 from pathlib import Path
 from typing import NamedTuple
 
@@ -133,7 +134,7 @@ class GitInvocation(NamedTuple):
     unsafe_repository_options: tuple[str, ...] = ()
 
 
-def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+def _git_uncached(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
     try:
         return subprocess.run(
             ("git", *arguments),
@@ -145,6 +146,30 @@ def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
         )
     except (OSError, subprocess.SubprocessError):
         return subprocess.CompletedProcess(("git", *arguments), 1, "", "")
+
+
+_QUERY_CACHE: dict | None = None
+
+
+@contextmanager
+def git_snapshot():
+    """한 hook 판정 안에서만 Git 조회를 공유한다. workflow 변경에는 사용하지 않는다."""
+    global _QUERY_CACHE
+    previous = _QUERY_CACHE
+    _QUERY_CACHE = {}
+    try:
+        yield
+    finally:
+        _QUERY_CACHE = previous
+
+
+def _git(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    key = (str(root.resolve()), arguments)
+    if _QUERY_CACHE is None:
+        return _git_uncached(root, *arguments)
+    if key not in _QUERY_CACHE:
+        _QUERY_CACHE[key] = _git_uncached(root, *arguments)
+    return _QUERY_CACHE[key]
 
 
 def _output(root: Path, *arguments: str) -> str:
@@ -575,6 +600,7 @@ def active_branch_denial(
     targets: tuple[str, ...] = (),
     base_branch: str = BASE_BRANCH,
     host: str = "",
+    allowed_states: tuple[str, ...] = ("ACTIVE",),
 ) -> str | None:
     """현재 작업 브랜치가 승인된 계보와 범위를 만족하는지 판정한다."""
 
@@ -596,12 +622,13 @@ def active_branch_denial(
         return f"작업 브랜치명은 task/<ascii-kebab-summary> 형식이어야 합니다: {branch}"
     if not branch_exists(root, base_branch):
         return f"기준 브랜치를 찾을 수 없습니다: {base_branch}"
-    lineage_problem = _lineage_denial(root, branch, base_branch)
+    lineage_problem = _lineage_denial(root, branch, base_branch,
+                                      allow_merged=any(state in allowed_states for state in ("READY_TO_MERGE", "MERGED_VERIFIED")))
     if lineage_problem is not None:
         return lineage_problem
     values = metadata(root, branch)
     state = str(values.get("state") or "")
-    if state != "ACTIVE":
+    if state not in allowed_states:
         return (
             f"V3 task {branch}는 ACTIVE 상태에서만 수정할 수 있습니다. 현재 상태: "
             f"{state or '없음'}"
@@ -1271,7 +1298,8 @@ def git_arguments_are_read_only(arguments: tuple[str, ...]) -> bool:
         return True
     subcommand = arguments[0]
     if subcommand in READ_ONLY_GIT_SUBCOMMANDS:
-        return True
+        return not any(value == "--output" or value.startswith("--output=") or
+                       value in {"--ext-diff", "--textconv"} for value in arguments[1:])
     if subcommand == "config":
         return _config_is_read_only(arguments)
     if subcommand == "remote":
@@ -1627,6 +1655,8 @@ def command_denial(
             continue
         if git_arguments_are_read_only(arguments):
             continue
+        if subcommand in READ_ONLY_GIT_SUBCOMMANDS:
+            return "조회형 Git의 파일 출력 또는 외부 실행 옵션은 사용할 수 없습니다."
         if subcommand not in READ_ONLY_GIT_SUBCOMMANDS | SUPPORTED_MUTATING_GIT_SUBCOMMANDS | {
             "config",
             "remote",

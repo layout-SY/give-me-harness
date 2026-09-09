@@ -9,7 +9,7 @@
 - 기준: `asan-metaverse-user-ui` Git commit `9edd378560c3c3b7f258984698202498f5c31831`
 - 다른 중앙 저장소는 직접 읽거나 복사하지 않으며, 2026-08-31에 한해 `user-ui` 소비자에 반영된 공통 정책 형태를 일회성으로 역이관
 - admin-ui는 기준을 제공하지 않고 소비만 함
-- 프로젝트별 overlay는 V1에서 지원하지 않음
+- 프로젝트별 기능 정책 overlay는 V1에서 지원하지 않음. 승인된 admin-ui 재사용 자산 reference 카탈로그만 예외로 렌더·digest에 포함
 - 정책 수정은 중앙 프로젝트에서만 수행
 - 소비자 저장소에는 host별 세션 로그와 허용된 개인 설정 외의 정책·프롬프트·훅 사본을 두지 않음
 - 중앙 launcher는 선택된 실제 worktree에 소비자 정책 출처가 남아 있으면 시작 전에 경로를 보고하고 중단
@@ -49,9 +49,9 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 
 ### 세션 시작
 
-`start`는 inject 방식만 지원합니다. `--role`을 필수로 받고 공통 정본에서 해당 role에 필요한 문서·스킬과 선택한 host adapter만 골라 중앙 `build/{project}/` 아래의 불변 digest 번들로 생성합니다. 소비자 저장소의 정책 파일을 쓰거나 배포 manifest를 만들지 않습니다. 중앙 정책 audit 실패, 대상 프로젝트 부재, 선택된 worktree의 소비자 정책 출처 잔존은 시작 전에 차단합니다. role 경계는 system prompt에 명시하며 별도 role 감시 hook은 두지 않습니다.
+`start`는 inject 방식만 지원합니다. `--role`을 필수로 받고 공통 정본에서 해당 role에 필요한 문서·스킬과 선택한 host adapter만 골라 중앙 `build/{project}/` 아래의 불변 digest 번들로 생성합니다. 소비자 저장소의 정책 파일을 쓰거나 배포 manifest를 만들지 않습니다. 중앙 정책 audit 실패, 대상 프로젝트 부재, 선택된 worktree의 소비자 정책 출처 잔존은 시작 전에 차단합니다. role 책임은 system prompt에 명시하고 공통 guard에서 review·orchest의 source 변경을 차단합니다. Git 권한은 통합 assignment 소유권과 별개로 판정합니다.
 
-- Codex: 중앙 `state/{project}/codex-home/`을 `CODEX_HOME`으로 사용합니다. 사용자 `config.toml`과 `auth.json`은 내용을 복사하지 않고 심볼릭 링크로 참조하고 중앙 정책 설정은 CLI override로 적용합니다. 세션 동안 소비자 `.codex` 계층과 소비자 skill을 끄고, 프로젝트 `AGENTS.md` 자동 로드는 제한한 뒤 중앙 prompt를 developer instruction으로 한 번만 주입합니다.
+- Codex: 중앙 `state/repositories/{repository-id}/assignments/{assignment-id}/codex-home/`을 `CODEX_HOME`으로 사용합니다. 사용자 `config.toml`과 `auth.json`은 내용을 복사하지 않고 심볼릭 링크로 참조하고 중앙 정책 설정은 CLI override로 적용합니다. 세션 동안 소비자 `.codex` 계층과 소비자 skill을 끄고, 프로젝트 `AGENTS.md` 자동 로드는 제한한 뒤 중앙 prompt를 developer instruction으로 한 번만 주입합니다.
 - Claude Code: 사용자 설정만 유지하고 중앙 settings, 임시 plugin, hook, skill 및 합성 prompt를 `--settings`, `--plugin-dir`, `--append-system-prompt-file`로 주입합니다.
 - OpenCode: 중앙 번들을 `OPENCODE_CONFIG_DIR`로 지정하고 `OPENCODE_DISABLE_PROJECT_CONFIG=1`로 프로젝트 설정·prompt 자동 로드를 끕니다. 중앙 config가 instructions, skills, agents, plugins를 제공합니다.
 
@@ -104,3 +104,24 @@ OpenCode V2는 `permission`/`bash` 대신 `permissions`/`shell` 규칙 배열을
 - 자동 수집 실패는 stderr에 표시하고 다음 Stop 또는 `session.idle`에서 다시 시도합니다. 필요하면 중앙 저장소에서 `collect-logs`를 직접 실행합니다.
 - `logs/**`는 정책 source digest에서 제외하며 중앙 로그를 정책 실행 원본으로 사용하지 않습니다.
 - 중앙 로그도 일반 파일처럼 검토 후 사용자가 승인한 Git 명령으로 커밋합니다.
+
+
+## 세션 재개와 오류 복구
+
+Codex writable home과 승인 상태는 중앙 state의 assignment별로 분리됩니다. `start` 출력의 assignment ID를 보관하고 동일 세션은 `start --project <project> --host <host> --role <role> --resume-assignment <id>`로 재개합니다. 기존 정책 bundle을 검증하여 그대로 사용하며 새 정책으로 교체하지 않습니다. 정책 업데이트는 handoff 후 새 start로 적용합니다.
+
+일반 질문·compact는 승인을 철회하지 않습니다. 구현 계획, branch/scope/finish SHA, 개별 명령 승인은 독립적입니다. 명령 승인은 실행 workdir에도 묶입니다. 같은 host의 다른 assignment에는 Git 소유권이 자동으로 넘어가지 않습니다.
+
+`finish-proposal --merge-strategy ff-only|merge-commit`은 통합 worktree와 실제 merge 방식을 승인 계약에 포함합니다. finish가 기록한 integration HEAD에서 verify와 close를 수행합니다. 병렬 child의 후속 통합에는 최신 target HEAD를 기준으로 새 계약이 필요합니다. 충돌이나 검증 실패 시 source·worktree·실행 기록을 보존합니다.
+
+정책 잔존물 때문에 일반 start가 차단되면 중앙에서 `maintenance-plan --project <project> --branch task/policy-retirement --worktree <새 경로> --host <host>`로 정확한 diff와 SHA를 확인합니다. 승인 후 `maintenance-apply --project <project> --plan-file <파일> --approved-sha256 <전체 SHA>`를 실행하면 기준 branch에서 새 V3 worktree를 만들고 명시된 퇴역 변경만 적용합니다. 기존 작업 폴더는 보존하며 검토·테스트·commit·통합은 별도 수행합니다.
+
+호스트 이벤트 등록은 adapters의 events.json(Codex·Claude)과 OpenCode plugin이 소유합니다. 공통 runtime의 이벤트 판정·결과 정규화·상태 저장, branch workflow의 실제 Git 실행을 분리합니다. OpenCode의 안전한 기본 Git 조회는 별도 승인 없이 사용하되 복잡한 global option이나 host가 안전하게 구분하지 못하는 형태는 승인 요청을 유지합니다.
+
+
+담당 세션을 교체하려면 같은 host·role의 새 start를 --print-only로 준비하고 source의 handoff.md를 작성합니다. `assignment-handoff --project <project> --from-assignment <기존 ID> --to-assignment <새 ID> --handoff-file <원본 handoff.md>`가 출력한 정확한 소유권·handoff SHA를 승인한 뒤 --approved-sha256으로 적용합니다. target은 --resume-assignment로 준비된 세션을 시작합니다. 아직 실행하지 않은 assignment에는 native resume 인자를 붙이지 않습니다. host·role 변경은 이 명령으로 우회하지 않고 새 branch 계약으로 처리합니다. 산출물 디렉터리와 구현 승인 상태는 다른 assignment에 자동 복제하지 않습니다.
+
+Codex/Claude hook payload는 각각 [Codex hooks](https://learn.chatgpt.com/docs/hooks), [Claude hooks](https://code.claude.com/docs/en/hooks)를 기준으로 정규화합니다. OpenCode는 [plugin 이벤트](https://opencode.ai/docs/plugins/)에 연결합니다. 성공 이벤트와 실패 결과를 구분하며, 성공 여부를 확인할 수 없는 결과는 탐색 완료 근거로 사용하지 않습니다.
+
+
+미확인 tool 예약은 `assignment-recover`, 실패한 병합의 중단은 `integration-recover`로 현재 상태와 복구 SHA를 먼저 검토합니다. 검토한 SHA를 `--approved-sha256`으로 명시한 실행만 상태를 변경합니다. 구체적인 이벤트 흐름, 복구 절차, 검증 결과와 소비자 이관 범위는 [runtime 개선 보고](docs/runtime-remediation-2026-09-08.md)에 정리했습니다.

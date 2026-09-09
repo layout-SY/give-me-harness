@@ -29,6 +29,7 @@ class InjectionTests(unittest.TestCase):
         self.root = Path(self.temporary_directory.name)
         self.project_root = self.root / "consumer"
         self.project_root.mkdir()
+        subprocess.run(["git", "init", "-q"], cwd=self.project_root, check=True)
         (self.project_root / "AGENTS.md").write_text("consumer drift\n", encoding="utf-8")
         local_skill = self.project_root / ".agents/skills/local/SKILL.md"
         local_skill.parent.mkdir(parents=True)

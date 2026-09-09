@@ -7,7 +7,7 @@
 - 모든 새 요청에서 `.agent-policy/common/skills/policy/task-role-routing/SKILL.md`와 `.agent-policy/common/skills/policy/git-branch-strategy/SKILL.md`를 먼저 읽는다.
 - context compact·resume·handoff 직후에는 두 스킬과 현재 브랜치 계보를 다시 확인한다.
 - 공통 행동 규칙의 정본은 `.agent-policy/common/**`, 호스트 고유 도구·이벤트 규칙은 각 호스트 adapter 문서를 따른다. 호스트 discovery용 복제 경로를 공통 정본으로 해석하지 않는다.
-- inject system prompt에 `--role`이 있으면 그 값은 이미 확인된 세션 역할이다. 같은 역할 범위에서는 다시 역할을 묻지 않으며 다른 역할이 필요하면 새 role 세션을 요청한다. 별도 role 감시 hook은 전제로 하지 않는다.
+- inject system prompt에 `--role`이 있으면 그 값은 이미 확인된 세션 역할이다. 같은 역할 범위에서는 다시 역할을 묻지 않으며 다른 역할이 필요하면 새 role 세션을 요청한다. 별도 role 감시 hook은 두지 않는다. 공통 PreTool guard는 review·orchest의 source 변경을 차단하며 Git 통합 권한은 승인된 assignment로 따로 확인한다.
 
 ### 작성 언어
 
@@ -29,7 +29,7 @@
 2. **역할 확인**: inject role이 없으면 제안 역할, 수정 범위, 필요한 스킬과 Git 통합 담당자를 사용자에게 알리고 확인받는다. 사용자가 같은 프롬프트에서 역할과 진행을 이미 명시했다면 그 지시를 확인으로 사용할 수 있다. inject role이 있으면 해당 role 경계를 확인하고 이 단계를 반복하지 않는다.
 3. **브랜치 확인**: 현재 브랜치, 변경 상태, 부모·merge 대상 계보와 승인 scope를 확인한다.
 4. **탐색**: 대상 코드와 인접 구현을 읽고, UI가 관련되면 `src/shared/ui/`를 먼저 조사하며 필요한 스킬만 불러온다.
-5. **계획·구현 승인**: 범위, 역할 소유권, 검증 방법, 예상 diff와 대안을 보고한다. 명시적인 `진행`, `진행해줘`, `전부 승인`, `모두 승인`, `Proceed` 또는 문서화된 동등한 승인 전에는 저장소를 변경하지 않는다. 공통 guard는 사용자 prompt의 승인을 세션별로 기록하고, 관련 `SKILL.md`와 역할별 재사용 자산·인접 구현을 실제로 확인하기 전 source mutation을 차단한다. 이 승인은 Codex의 정확한 shell 명령 1회 승인을 대신하지 않는다.
+5. **계획·구현 승인**: 범위, 역할 소유권, 검증 방법, 예상 diff와 대안을 보고한다. 명시적인 `진행`, `진행해줘`, `전부 승인`, `모두 승인`, `Proceed` 또는 문서화된 동등한 승인 전에는 저장소를 변경하지 않는다. 공통 guard는 사용자 prompt의 승인을 assignment와 작업 범위별로 기록하고, 관련 `SKILL.md`와 역할별 재사용 자산·인접 구현을 실제로 확인하기 전 source mutation을 차단한다. 이 승인은 Codex의 정확한 shell 명령 1회 승인을 대신하지 않는다.
 6. **브랜치 승인**: 저장소 변경 작업은 구현 승인과 별도로 분기 기준, 새 브랜치, 목적, 역할, Git 통합 담당자, scope와 직접 merge 대상을 포함한 계약을 승인받는다. `branch_workflow.py proposal`이 출력한 파일과 64자리 SHA-256을 보고한 뒤 해당 계약에 대한 사용자의 독립된 승인을 받아야 한다.
 7. **구현**: 확인된 역할과 승인된 브랜치·scope 안에서 한 번에 한 논리 구간씩 작업한다.
 8. **검토**: Watcher는 현재 변경의 통과 여부를 판정하고 Evaluator는 장기 개선 사항을 별도로 기록한다.
@@ -89,7 +89,7 @@ session assignment가 `contributor`인 작업자는 `handoff.md`를 작성한다
 - 한 세션에는 하나의 assignment 권한 root와 한 시점에 하나의 작업 branch 초점만 둔다. 세션 레코드의 `task`는 권한 root, `branch`는 현재 초점이다.
 - 권한 root 또는 그 아래 ACTIVE V3 task에서 승인 절차로 생성한 child는 `asan-parent` 계보를 따라 같은 세션 권한에 직계·전이 자손으로 포함된다. 이름 접두사로 계보를 추론하지 않는다.
 - V1·V2·무버전 branch metadata는 읽기 전용 history로만 취급하며 source·Git 변경 권한을 부여하지 않는다. 기존 branch에서 작업을 이어가려면 `branch_workflow.py proposal → create` 절차로 V3 계약을 다시 승인받는다.
-- 권한은 하향으로만 상속된다. parent-root assignment는 root와 승인된 자손 사이를 오갈 수 있지만, child-root assignment는 ancestor·형제·무관 branch를 수정할 수 없다. 각 초점 branch의 scope, role, Git 통합 담당자, 상태와 승인 worktree는 독립적으로 검증하고 한 mutation은 한 branch만 대상으로 한다.
+- 권한은 하향으로만 상속된다. parent-root assignment는 root와 승인된 자손 사이를 오갈 수 있지만, child-root assignment는 ancestor·형제·무관 branch를 수정할 수 없다. 각 초점 branch의 scope, role, Git 통합 담당자, 상태와 승인 worktree는 독립적으로 검증하고 한 mutation은 한 branch만 대상으로 한다. 승인된 finish lifecycle의 target 전환·병합은 해당 완료 계약에 한정된 별도 권한이다.
 - 같은 권한 계보 안의 초점 전환에는 기존 task의 `CLOSED`나 새 session directory가 필요하지 않다. 계보 밖 독립 작업으로 바꾸기 전에는 기존 root 작업을 검증·문서화·commit하고 직접 target에 merge하여 `CLOSED`로 만들거나, handoff를 작성해 `PRESERVED`로 둔다.
 - `CLOSED` 후에는 같은 세션에서 새 독립 작업을 시작할 수 있다. `PRESERVED` 작업과 독립 작업을 병행하려면 별도 worktree·세션을 사용한다.
 - dirty 기준 폴더를 피하려고 승인된 격리 worktree를 만든 경우, 현재 assignment 권한 계보 안의 branch라면 같은 세션에서 도구 `workdir` 또는 `git -C`의 대상으로 그 worktree를 사용해 계속할 수 있다. 세션 시작 cwd가 아니라 현재 초점 task의 승인 worktree가 변경 경계다.
@@ -123,7 +123,7 @@ handoff의 `next_role`은 다음 역할의 제안이며 권한 부여가 아니�
 
 ## 5. 병렬·순차 협업
 
-- 같은 worktree에서는 역할이나 호스트 수와 무관하게 Git 통합 담당자 한 명만 branch, index, commit과 merge를 조작한다.
+- 같은 worktree에서는 역할이나 호스트 수와 무관하게 Git 통합 담당 assignment 한 개만 branch, index, commit과 merge를 조작한다. 같은 host의 다른 세션도 자동으로 소유권을 공유하지 않는다.
 - 각 역할은 승인된 파일만 수정하고 다른 작업자의 변경을 되돌리거나 덮어쓰지 않는다.
 - 동일 파일이 필요하면 충돌 경로, 필요한 변경과 권장 소유자를 사용자에게 보고하고 확인을 기다린다.
 - UI와 Logic을 나누면 props/callback, DTO, hook 또는 상태 계약과 인계 순서를 먼저 합의한다.
@@ -163,7 +163,18 @@ Git 상태 변경, build와 개발 서버 실행은 호스트가 제공하는 �
 - 코드 수정 전 같은 디렉터리와 인접 구현을 확인하고 import 순서, 따옴표, 세미콜론, 들여쓰기와 JSX 양식을 따른다.
 - 관련 없는 코드의 포맷·재배치·정리는 하지 않는다.
 
-## 9. 필수 승인 문구
+## 9. 이벤트·상태 계약
+
+- SessionStart는 launcher assignment와 native session을 연결하고 현재 branch 정보를 제공한다. compact·동일 assignment 재개는 기존 승인을 지우지 않는다.
+- UserPromptSubmit은 명시적인 승인·철회만 반영한다. 복수 pending 계약에는 전체 SHA를 명시해야 한다. 일반 상태 질문을 승인 철회로 해석하지 않는다. 구현 승인, 종류별 proposal SHA 승인, 개별 명령 승인은 서로 대체하지 않는다.
+- PreTool은 입력을 읽기/변경으로 분류하고 관리 경로·산출물·branch·scope·role capability·Git 소유권·승인을 판정한다. 판정 뒤의 귀속은 예약이며 실제 성공 PostTool에서 확정한다.
+- 승인 범위를 넓히는 child 계약이나 이미 승인한 plan.md 변경은 구현 승인을 다시 확인한다. child의 branch SHA 승인만으로 확대 범위의 구현 승인을 만들지 않는다.
+- PostTool은 확인된 성공 결과만 탐색 근거로 사용한다. 실패 결과나 성공 여부가 없는 입력 경로만으로 구현 gate를 충족하지 않는다.
+- Stop/idle은 로그를 수집한다. 문서 누락으로 대화를 반복 차단하거나 자동 merge·close하지 않는다.
+- launcher의 `--resume-assignment`는 원래 bundle·role·home을 유지한다. 역할 또는 정책을 바꾸려면 handoff 후 새 assignment를 사용한다.
+- hook이 관찰하지 않는 shell 후속 입력과 미등록 도구까지 보호한다고 가정하지 않는다. host sandbox와 사용자 실행 권한은 별개다.
+
+## 10. 필수 승인 문구
 
 역할과 구현 계획 보고는 다음 문구로 끝낸다.
 

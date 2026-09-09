@@ -51,7 +51,9 @@ class GuardTests(unittest.TestCase):
         event: dict[str, object],
         environment: dict[str, str] | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        selected_environment = dict(os.environ)
+        if mode == "post-tool":
+            event = {"tool_response": {"success": True, "content": "성공한 도구 결과 fixture"}, **event}
+        selected_environment = {**os.environ, "ASAN_AGENT_POLICY_ROLE": "logic"}
         if environment:
             selected_environment.update(environment)
         return subprocess.run(
@@ -94,6 +96,8 @@ class GuardTests(unittest.TestCase):
             {"tool_name": "Read", "tool_input": {"file_path": "src/App.tsx"}},
             environment,
         )
+        if contract_sha256:
+            self.run_mode("user-prompt", host, {"prompt": "진행"}, environment)
         prompt = f"승인 {contract_sha256}" if contract_sha256 else "진행"
         approval = self.run_mode("user-prompt", host, {"prompt": prompt}, environment)
         self.assertEqual(skill.returncode, 0, skill.stderr)
@@ -105,6 +109,9 @@ class GuardTests(unittest.TestCase):
         bundle = self.root.parent / f"rendered-guard-{self.session_id}"
         runtime = bundle / ".agent-policy/runtime"
         runtime.mkdir(parents=True)
+        for relative, content in rendered.items():
+            if relative.startswith(".agent-policy/runtime/"):
+                (runtime / Path(relative).name).write_bytes(content)
         managed = runtime / "managed_policy_guard.py"
         managed.write_bytes(rendered[".agent-policy/runtime/managed_policy_guard.py"])
         (runtime / "branch_guard.py").write_bytes(
@@ -1047,7 +1054,11 @@ Python unittest로 정책 계약을 검증했습니다.
                 check=False,
             )
 
+        # parent 범위의 계획을 승인한 뒤 child로 이동한다. child에서 받은 좁은 구현
+        # 승인을 parent 전체의 구현 승인으로 확대하는 fixture를 만들지 않는다.
+        subprocess.run(["git", "switch", "-q", parent], cwd=self.root, check=True)
         self.record_common_readiness("claude", "0" * 64)
+        subprocess.run(["git", "switch", "-q", child], cwd=self.root, check=True)
         allowed = run_create(child)
         denied = run_create(unrelated)
 
@@ -1085,15 +1096,11 @@ Python unittest로 정책 계약을 검증했습니다.
         self.assertEqual(child_write.returncode, 0, child_write.stderr)
         repository_identity = rendered_branch_guard.git_common_directory(self.root)
         assert repository_identity is not None
-        binding_digest = hashlib.sha256(
-            f"{repository_identity}\0claude\0{self.session_id}".encode()
-        ).hexdigest()
-        binding_path = (
-            Path(tempfile.gettempdir())
-            / "asan-agent-policy-session-bindings"
-            / f"{binding_digest}.txt"
-        )
-        child_binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        from agent_policy.runtime import load_runtime
+        state = load_runtime("runtime_state")
+        binding_path = state.session_path(repository_identity, "claude", self.session_id, "session-binding")
+        self.assertIsNotNone(binding_path)
+        child_binding = state.read(binding_path.with_name("pending-binding.json"))["binding"]
         self.assertEqual(child_binding["task"], parent)
         self.assertEqual(child_binding["branch"], child)
         source = self.root / source_relative
@@ -1136,7 +1143,7 @@ Python unittest로 정책 계약을 검증했습니다.
         subprocess.run(["git", "switch", "-q", parent], cwd=self.root, check=True)
         parent_write = run_tool("Write", {"file_path": "src/parent.ts"})
         self.assertEqual(parent_write.returncode, 0, parent_write.stderr)
-        parent_binding = json.loads(binding_path.read_text(encoding="utf-8"))
+        parent_binding = state.read(binding_path.with_name("pending-binding.json"))["binding"]
         self.assertEqual(parent_binding["task"], parent)
         self.assertEqual(parent_binding["branch"], parent)
 
@@ -1249,13 +1256,14 @@ Python unittest로 정책 계약을 검증했습니다.
         script.parent.mkdir(parents=True)
         script.write_text("# trusted test fixture\n", encoding="utf-8")
         proposal = self.root / "proposal.json"
-        proposal.write_text(json.dumps({"git_integrator": "codex"}), encoding="utf-8")
+        proposal.write_text(json.dumps({"git_integrator": "codex", "branch": "task/full-digest", "parent": "sy-main"}), encoding="utf-8")
         environment = {
             "ASAN_AGENT_POLICY_MODE": "inject",
             "ASAN_AGENT_POLICY_PROJECT": "user-ui",
             "ASAN_AGENT_POLICY_BUNDLE_ROOT": str(bundle),
         }
         digest = "a" * 64
+        self.run_mode("user-prompt", "codex", {"prompt": "proceed"}, environment)
         proposal_command = f"python3 {script} proposal --branch task/full-digest"
         create = (
             f"python3 {script} create --proposal-file {proposal} "
@@ -1846,6 +1854,9 @@ Python unittest로 정책 계약을 검증했습니다.
         bundle = self.root.parent / f"runtime-{self.session_id}"
         runtime = bundle / ".agent-policy/runtime"
         runtime.mkdir(parents=True)
+        for relative, content in rendered.items():
+            if relative.startswith(".agent-policy/runtime/"):
+                (runtime / Path(relative).name).write_bytes(content)
         runtime_guard = runtime / "managed_policy_guard.py"
         runtime_guard.write_bytes(rendered[".agent-policy/runtime/managed_policy_guard.py"])
         branch_source = rendered[".agent-policy/runtime/branch_guard.py"]

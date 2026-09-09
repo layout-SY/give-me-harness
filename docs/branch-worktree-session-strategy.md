@@ -208,7 +208,7 @@ IDLE -> ACTIVE -> READY_TO_MERGE -> MERGED_VERIFIED -> CLOSED
        PRESERVED
 ```
 
-source의 구현·산출물·검증·commit이 끝나면 `finish-proposal`이 source/target 전체 HEAD, ff-only 방식, 사후 검증 argv, cleanup 여부를 canonical JSON과 SHA-256으로 고정한다.
+source의 구현·산출물·검증·commit이 끝나면 `finish-proposal`이 source/target 전체 HEAD, ff-only 또는 merge-commit 방식, 통합 worktree, 사후 검증 argv, cleanup 여부를 canonical JSON과 SHA-256으로 고정한다.
 
 ```sh
 python3 <branch_workflow.py> finish-proposal \
@@ -218,11 +218,11 @@ python3 <branch_workflow.py> finish-proposal \
   --cleanup
 ```
 
-승인 뒤 target worktree에서 다음을 분리 실행한다.
+승인 뒤 다음을 분리 실행한다. workflow가 계약의 target worktree를 선택하며 단일 worktree의 승인된 target 전환도 처리한다.
 
-1. `finish`: target clean과 두 HEAD를 재검증하고 ff-only merge.
-2. `verify`: shell 없이 승인된 argv를 target에서 실행. 실패 시 source/worktree 보존.
-3. `close`: ancestry·clean·MERGED_VERIFIED를 확인하고 CLOSED record 작성. cleanup이 계약에 있을 때만 격리 worktree와 local source branch 삭제.
+1. `finish`: target clean과 두 HEAD를 재검증하고 승인된 방식으로 merge한 integration HEAD를 기록한다.
+2. `verify`: source 포함 관계와 기록된 integration HEAD를 확인하고 shell 없이 승인된 argv를 target에서 실행. 실패 시 source/worktree 보존.
+3. `close`: ancestry·clean·MERGED_VERIFIED를 확인하고 로그 수집과 승인된 cleanup 성공 뒤 CLOSED record 작성. cleanup이 계약에 있을 때만 격리 worktree와 local source branch 삭제.
 
 raw merge·V3 branch 삭제·worktree remove는 사용하지 않는다. merge나 검증 실패 시 자동 rollback, rebase, force-delete를 하지 않는다.
 
@@ -246,7 +246,7 @@ assignment root: task/meeting-reserve-ui
 - PRESERVED: 현재 상태를 handoff하고 별도 worktree·세션에서 독립 task 시작.
 - CLOSED: 같은 프로세스에서 새 독립 branch와 새 session directory로 전환 가능.
 
-미완료 task의 상태 전이는 `branch_workflow.py preserve --reason <근거>`로 기록하고, 같은 worktree에서 새 assignment로 재개할 때 `branch_workflow.py resume`으로 `ACTIVE`를 복원한다. `PRESERVED` 상태에서는 애플리케이션·산출물 쓰기를 허용하지 않는다.
+미완료 task의 상태 전이는 `branch_workflow.py preserve --reason <근거>`로 기록하고, 같은 worktree에서 새 assignment로 재개할 때 `branch_workflow.py resume`으로 `ACTIVE`를 복원한다. `PRESERVED` 상태에서는 애플리케이션 소스 변경을 허용하지 않는다. 귀속된 진단·handoff 산출물은 작성할 수 있다.
 
 이 제한은 “항상 새 폴더·새 세션”을 강제하려는 것이 아니다. 하나의 승인 계보는 같은 세션에서 이어가고, 무관한 미완료 작업을 번갈아 다루면서 context, index, stage와 commit 범위가 섞이는 상황만 격리한다.
 
@@ -272,7 +272,9 @@ dirty 기준 폴더 때문에 격리 worktree를 새로 만든 경우에도 그 
 | 역할·workflow·소유권 | `policy/common/skills/policy/task-role-routing/` |
 | branch 규범·CLI | `policy/common/skills/policy/git-branch-strategy/` |
 | 계보·scope·Git parser | `policy/guards/branch_guard.py` |
-| managed path·session·완료 단계 guard | `policy/guards/managed_policy_guard.py` |
+| 이벤트 진입점 | `policy/guards/managed_policy_guard.py` |
+| 입력·경로, 승인·탐색, 산출물·귀속 | `policy/guards/tool_paths.py`, `approval_policy.py`, `artifact_policy.py` |
+| 결과 정규화·지속 상태·lock | `policy/guards/event_protocol.py`, `runtime_state.py` |
 | 중앙 bundle renderer | `lib/agent_policy/core.py` |
 | inject bundle | `lib/agent_policy/injection.py` |
 | worktree/session launcher | `lib/agent_policy/cli.py` |
