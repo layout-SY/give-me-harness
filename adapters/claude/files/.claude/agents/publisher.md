@@ -2,7 +2,6 @@
 name: publisher
 description: 확인된 UI 역할에서 구조·접근성·레이아웃·props와 이벤트 계약을 준비합니다.
 tools: Read, Grep, Glob, Bash, Edit, Write
-model: sonnet
 ---
 
 # Publisher 호스트 계약

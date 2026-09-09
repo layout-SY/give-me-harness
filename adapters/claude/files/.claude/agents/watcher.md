@@ -2,7 +2,6 @@
 name: watcher
 description: 현재 변경을 직접 읽고 승인·역할·scope·검증 근거로 PASS 또는 FAIL을 판정합니다.
 tools: Read, Grep, Glob, Bash
-model: sonnet
 ---
 
 # Watcher 호스트 계약

@@ -44,6 +44,7 @@ BASE_COMMON_SKILL_PREFIXES: Final = (
     ".agent-policy/common/skills/SKILL.md",
     ".agent-policy/common/skills/policy/SKILL.md",
     ".agent-policy/common/skills/policy/documentation/",
+    ".agent-policy/common/skills/policy/portfolio/",
     ".agent-policy/common/skills/policy/git-branch-strategy/",
     ".agent-policy/common/skills/policy/task-role-routing/SKILL.md",
     ".agent-policy/common/skills/policy/task-role-routing/references/handoff-and-ownership.md",

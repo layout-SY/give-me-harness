@@ -5,4 +5,4 @@ description: 속성, 콜백, 훅 및 DTO에 대한 TypeScript 계약 경계와 �
 
 # 타입 정의
 
-속성, 콜백 경계, 훅 반환 계약 및 어댑터 API처럼 두 주체 사이의 계약에는 `interface`를 사용한다. 유니온, 파생 타입, DTO 데이터 형태 및 로컬 상태에는 `type`을 사용한다. 계약을 명시적으로 유지하고 `any`를 피한다.
+속성, 콜백, 훅 반환값, DTO와 로컬 상태를 포함한 TypeScript 정의에는 `type` alias를 우선한다. 라이브러리 확장이나 declaration merging처럼 `interface`가 필요한 경우 이유를 명시한다. 계약을 명시적으로 유지하고 `any`를 도입하지 않는다. 사용자 지정 규칙과 실제 프로젝트 지침을 우선한다.
