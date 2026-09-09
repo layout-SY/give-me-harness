@@ -48,8 +48,12 @@ def run(output_dir: Path | None) -> None:
                                    "command": shlex.join((sys.executable, str(recorder), mode))}]}]
         (home / "hooks.json").write_text(json.dumps({"hooks": registrations}))
         skill = fixture.snapshot / ".agent-policy/common/skills/policy/coding-convention/SKILL.md"
+        ui = fixture.root / "src/shared/ui/button/button.tsx"
+        ui.parent.mkdir(parents=True)
+        ui.write_text("export const Button = () => null;\n")
         steps = [(f"cat {shlex.quote(str(skill))}", fixture.root),
-                 ("cat src/missing.tsx", fixture.root), ("cat src/App.tsx", worktree)]
+                 ("cat src/missing.tsx", fixture.root), ("cat src/App.tsx", worktree),
+                 ("cat src/shared/ui/button/button.tsx", fixture.root)]
 
         class Handler(BaseHTTPRequestHandler):
             calls = 0
@@ -105,14 +109,15 @@ def run(output_dir: Path | None) -> None:
         assert result.returncode == 0, result.stderr
         assert all(entry["returncode"] == 0 and '"deny"' not in entry["stdout"] for entry in captured), captured
         completed = [entry for entry in captured if entry["event"]["hook_event_name"] == "PostToolUse"]
-        assert len(completed) == 3, captured
+        assert len(completed) == 4, captured
         assert completed[0]["state"].get("skill_confirmed") is True, completed[0]
         assert completed[1]["state"].get("exploration_completed") is not True, completed[1]
         assert completed[2]["state"].get("exploration_completed") is True, completed[2]
+        assert completed[3]["state"].get("ui_exploration_completed") is True, completed[3]
         # 실제 Codex 훅은 외부 worktree 명령에도 session cwd를 보내며 workdir를 생략한다.
         assert completed[2]["event"]["cwd"] == str(fixture.root), completed[2]["event"]
         version = subprocess.check_output((executable, "--version"), text=True).strip()
-        print(f"PASS: {version}; native skill read, failed read, external worktree read")
+        print(f"PASS: {version}; native skill read, failed read, external worktree read, common UI read")
     finally:
         if server:
             server.shutdown()

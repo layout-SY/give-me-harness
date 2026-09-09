@@ -280,6 +280,7 @@ def check_session(event: dict[str, Any], host: str) -> None:
 
     record = session_binding_record(event, root, host)
     focus = _artifact_policy.binding_worktree(root, record)
+    messages.append(_approval_policy.readiness_context(event, focus if focus.is_dir() else root, host))
     context = branch_guard.branch_context(focus if focus.is_dir() else root)
     if context:
         messages.append(context)
@@ -355,6 +356,7 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
     if mode == "branch-context":
         root = repository_root(event)
         focus = _artifact_policy.binding_worktree(root, session_binding_record(event, root, host))
+        print(_approval_policy.readiness_context(event, focus if focus.is_dir() else root, host))
         context = branch_guard.branch_context(focus if focus.is_dir() else root)
         if context:
             print(context)

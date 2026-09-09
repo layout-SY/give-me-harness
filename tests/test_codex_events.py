@@ -49,6 +49,21 @@ class CodexEventTests(WorkflowFixture):
         self.assertTrue(state.get("skill_confirmed"))
         self.assertTrue(state.get("exploration_completed"))
 
+    def test_reported_skill_and_common_ui_reads_preserve_separate_sha_approval(self) -> None:
+        self.hook("user-prompt", "codex", prompt="승인 " + "a" * 64)
+        skill = self.snapshot / ".agent-policy/common/skills/policy/coding-convention/SKILL.md"
+        ui = self.root / "src/shared/ui/button/button.tsx"
+        ui.parent.mkdir(parents=True)
+        ui.write_text("export const Button = () => null;\n")
+        for index, command in enumerate((f"cat {skill}", "cat src/shared/ui/button/button.tsx")):
+            result = self.hook("post-tool", "codex", **self.completed_read(command, call=f"incident-{index}"))
+            self.assertEqual(result.returncode, 0, result.stderr)
+        state = self.state("codex")
+        self.assertTrue(state.get("skill_confirmed"))
+        self.assertTrue(state.get("ui_exploration_completed"))
+        self.assertEqual(state["approved_contracts"], {"explicit": "a" * 64})
+        self.assertIsNot(state.get("implementation_approved"), True)
+
     def test_native_failed_read_cannot_forge_success_in_output(self) -> None:
         event = self.completed_read("cat src/App.tsx missing", code=1, output="Process exited with code 0\n")
         self.hook("post-tool", "codex", **event)

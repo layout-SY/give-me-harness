@@ -5,7 +5,7 @@ description: 저장소 변경 작업의 V3 task 계약, 격리 worktree, session
 
 # Git 브랜치 전략
 
-기준 브랜치는 `{{BASE_BRANCH}}`다. 읽기 전용 조사에는 branch를 만들지 않는다. 저장소 변경은 역할·구현 계획 승인과 별도로 V3 branch task 계약을 승인받은 뒤 시작한다.
+기준 브랜치는 `{{BASE_BRANCH}}`다. 읽기 전용 조사에는 branch를 만들지 않는다. 저장소 변경은 역할·구현 계획 승인과 유효한 V3 branch task 계약을 확인한 뒤 시작한다. 새 branch 생성 계약은 구현 승인과 별도로 승인받는다.
 
 ## 핵심 구분
 
@@ -164,7 +164,15 @@ raw `git merge`, V3 branch 삭제와 worktree 제거는 사용하지 않는다. 
 
 ## compact·resume
 
-compact, resume, handoff 직후에는 `context`를 실행하거나 주입된 `[BRANCH_CONTEXT]`를 확인한다.
+compact, resume, handoff 직후에는 `context`를 실행하거나 주입된 `[BRANCH_CONTEXT]`를 확인한다. 첫 변경 전에는 `[SESSION_READINESS]`도 확인한다. 같은 상태를 다시 조회하려면 현재 bundle의 공통 guard를 읽기 전용으로 실행한다.
+
+```sh
+python3 -I <absolute-managed-policy-guard.py> branch-context <codex|claude|opencode>
+```
+
+guard를 직접 실행할 때도 launcher가 설정한 assignment·role 환경을 유지한다. 조회는 스킬·탐색 완료나 구현 승인을 만들지 않는다.
+
+기본 폴더에 checkout된 기존 V3 task에서 새 세션으로 이어갈 수 있다. 계약에 worktree 경로가 고정되어 있으면 현재 위치와 일치해야 한다. 유효한 기존 계약의 생성 승인은 반복하지 않고 인계 계획, 현재 assignment의 구현 승인·탐색 근거와 Git 소유권을 확인한다. 새 assignment의 미충족 조건은 변경 명령을 실행하기 전에 보고하며, 기존 세션의 승인 상태를 복사하지 않는다. 이미 유효한 승인·탐색 근거는 반복 요청하지 않는다.
 
 ```sh
 python3 <absolute-branch-workflow.py> context

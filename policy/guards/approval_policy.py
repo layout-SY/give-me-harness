@@ -211,31 +211,52 @@ def is_ui_exploration_evidence(event: dict[str, Any], root: Path) -> bool:
     return False
 
 
-def requires_ui_exploration(root: Path) -> bool:
-    selected_role = os.environ.get(INJECT_ROLE_ENV, "").strip().casefold()
-    if selected_role == "ui":
+def task_context(event: dict[str, Any], root: Path, host: str) -> dict[str, Any]:
+    """아직 쓰지 않은 기존 task도 식별하되 종료된 branch의 문맥은 제외한다."""
+    binding = _artifact_policy.session_binding_record(event, root, host)
+    task = active_assignment_branch(event, root, host)
+    if binding.get("_action") == "create":
+        # 생성 예약은 아직 branch 계약이 아니다. 생성 전 승인의 범위는 확정된
+        # 초점에 두고, 성공 PostTool 이후 처음 생성된 task에 연결한다.
+        binding = load_json_state(_artifact_policy.session_binding_path(event, root, host))
+    focus = binding.get("branch") or branch_guard.current_branch(root)
+
+    def active_values(branch: str) -> dict[str, Any]:
+        values = branch_guard.metadata(root, branch) if branch else {}
+        if values.get("contract-version") != branch_guard.CONTRACT_VERSION or values.get("state") == "CLOSED":
+            return {}
+        return values
+
+    focus_values = active_values(focus)
+    task_values = active_values(task)
+    if not task_values:
+        task = focus if focus_values else ""
+        task_values = focus_values
+    return {"task": task, "branch": focus if focus_values else "",
+            "task_values": task_values, "values": focus_values}
+
+
+def requires_ui_exploration(event: dict[str, Any], root: Path, host: str) -> bool:
+    if os.environ.get(INJECT_ROLE_ENV, "").strip().casefold() == "ui":
         return True
-    branch = branch_guard.current_branch(root)
-    values = branch_guard.metadata(root, branch) if branch else {}
-    roles = values.get("roles")
-    return isinstance(roles, tuple) and "ui" in roles
+    tool_input = event.get("tool_input") or {}
+    command = str(tool_input.get("command") or "")
+    if trusted_branch_workflow_action(command, root) == "create":
+        arguments = trusted_branch_workflow_arguments(command, root)
+        contract = _tool_paths.branch_workflow_contract(event, root, arguments)
+        if branch_guard.contract_sha256(contract) == branch_workflow_option(arguments, "--proposal-sha256"):
+            return "ui" in contract.get("roles", [])
+    return "ui" in task_context(event, root, host)["values"].get("roles", ())
 
 
 def approval_scope(event: dict[str, Any], root: Path, host: str) -> dict[str, Any]:
-    task = active_assignment_branch(event, root, host)
-    values = branch_guard.metadata(root, task) if task else {}
+    context = task_context(event, root, host)
     directory = _artifact_policy.bound_session_directory(event, root, host)
     plan = directory / "plan.md" if directory else None
     plan_digest = hashlib.sha256(plan.read_bytes()).hexdigest() if plan and plan.is_file() and not plan.is_symlink() else ""
-    binding = _artifact_policy.session_binding_record(event, root, host)
-    focus = binding.get("branch") or branch_guard.current_branch(root)
-    if binding.get("_action") == "create":
-        confirmed = load_json_state(_artifact_policy.session_binding_path(event, root, host))
-        focus = confirmed.get("branch") or branch_guard.current_branch(root)
-    focus_values = branch_guard.metadata(root, focus) if focus else {}
-    return {"task": task, "role": os.environ.get(INJECT_ROLE_ENV, ""),
-            "contract": str(values.get("contract-sha256") or ""), "plan": plan_digest,
-            "source_scopes": list(focus_values.get("scope") or values.get("scope") or ())}
+    return {"task": context["task"], "role": os.environ.get(INJECT_ROLE_ENV, ""),
+            "contract": str(context["task_values"].get("contract-sha256") or ""), "plan": plan_digest,
+            "source_scopes": list(context["values"].get("scope") or context["task_values"].get("scope") or ())}
 
 
 def load_harness_state(event: dict[str, Any], root: Path, host: str) -> dict[str, Any]:
@@ -261,6 +282,40 @@ def load_harness_state(event: dict[str, Any], root: Path, host: str) -> dict[str
         for parent in approved_sources) for candidate in scope["source_scopes"]):
         state["implementation_approved"] = False
     return state
+
+
+def readiness_requirements(event: dict[str, Any], root: Path, host: str) -> dict[str, str]:
+    exploration = ("ui_exploration_completed", "src/shared/ui 재사용 자산 탐색") if requires_ui_exploration(event, root, host) else (
+        "exploration_completed", "역할별 재사용 자산·인접 구현 탐색")
+    return {"implementation_approved": "사용자 구현 승인", "skill_confirmed": "관련 SKILL.md 확인",
+            exploration[0]: exploration[1]}
+
+
+def readiness_context(event: dict[str, Any], root: Path, host: str) -> str:
+    """조회용 상태와 다음 조치. 읽기나 사용자 승인을 생성하지 않는다."""
+    state = load_harness_state(event, root, host)
+    context = task_context(event, root, host)
+    requirements = readiness_requirements(event, root, host)
+    missing = [label for key, label in requirements.items() if state.get(key) is not True]
+    lines = ["[SESSION_READINESS]", f"- task: {context['task'] or '미지정'}",
+             f"- role: {os.environ.get(INJECT_ROLE_ENV, '') or '미지정'}",
+             f"- branch_creation_required: {str(not bool(context['branch'])).lower()}"]
+    lines.extend(f"- {key}: {str(state.get(key) is True).lower()}" for key in requirements)
+    lines.extend((f"- approved_contracts: {json.dumps(state.get('approved_contracts', {}), ensure_ascii=False)}",
+                  f"- pending_contracts: {json.dumps(state.get('pending_contracts', {}), ensure_ascii=False)}",
+                  f"- 미충족: {', '.join(missing) or '없음'}"))
+    if context["branch"]:
+        lines.append("- 기존 V3 task를 이어갈 때 branch 생성 승인은 필요하지 않습니다. 현재 계약·경로·소유권 검사는 적용됩니다.")
+        if context["values"].get("state") == "PRESERVED":
+            lines.append("- PRESERVED task는 준비 조건 확인 후 명시적 resume으로 ACTIVE를 복원하세요.")
+    else:
+        lines.append("- 변경 작업이면 계획·구현 승인 뒤 새 branch proposal의 SHA 승인을 별도로 확인하세요.")
+    if missing:
+        lines.append("- 첫 변경 전에 위 미충족 조건을 확인하세요. 구현 승인은 계획·역할 보고 후 Proceed로 기록하며, SHA 승인과 별개입니다.")
+        if state.get("pending_contracts"):
+            lines.append("- 이미 대기 중인 계약은 전체 SHA로 먼저 승인한 뒤 구현 승인을 별도로 기록하세요.")
+    lines.append("- 읽기 전용 조사는 가능합니다. 이 상태는 명령 실행 승인이나 변경 권한을 대신하지 않습니다.")
+    return "\n".join(lines)
 
 
 def record_post_tool(event: dict[str, Any], root: Path, host: str) -> None:
@@ -444,20 +499,8 @@ def implementation_gate_denial(
     if not implementation_gate_required(event, root):
         return None
     state = load_harness_state(event, root, host)
-    missing: list[str] = []
-    if state.get("implementation_approved") is not True:
-        missing.append("사용자 구현 승인")
-    if state.get("skill_confirmed") is not True:
-        missing.append("관련 SKILL.md 확인")
-    exploration_key = (
-        "ui_exploration_completed" if requires_ui_exploration(root) else "exploration_completed"
-    )
-    if state.get(exploration_key) is not True:
-        missing.append(
-            "src/shared/ui 재사용 자산 탐색"
-            if exploration_key == "ui_exploration_completed"
-            else "역할별 재사용 자산·인접 구현 탐색"
-        )
+    missing = [label for key, label in readiness_requirements(event, root, host).items()
+               if state.get(key) is not True]
 
     raw_input = event.get("tool_input")
     tool_input = raw_input if isinstance(raw_input, dict) else {}
@@ -479,6 +522,6 @@ def implementation_gate_denial(
     return (
         "공통 구현 gate의 필수 조건이 누락되었습니다: "
         + ", ".join(dict.fromkeys(missing))
-        + ". 계획·역할·branch proposal을 보고하고 사용자 승인을 받은 뒤, 관련 스킬과 "
-        "재사용 가능 자산 또는 인접 구현을 실제 도구로 확인하세요."
+        + ". 미충족 구현 승인은 계획·역할 보고 후 Proceed로 기록하고, 관련 스킬과 "
+        "재사용 자산·인접 구현은 실제 성공한 읽기로 확인하세요. SHA 승인은 구현 승인을 대신하지 않습니다."
     )

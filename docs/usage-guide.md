@@ -611,10 +611,15 @@ bin/agent-policy collect-logs \
 
 ## 15. 자주 발생하는 문제
 
+기존 브랜치를 기본 작업 폴더에서 이어가는 경우에도 새 assignment의 준비 상태는 별도로 확인한다. SessionStart의 `[SESSION_READINESS]`는 구현 승인, 스킬·코드 탐색, 종류별 SHA 승인과 미충족 항목을 보여 준다. 기존 V3 계약이 유효하고 현재 경로와 일치하면 branch를 다시 만들지 않는다. `PRESERVED`는 명시적 resume 후 구현할 수 있다. 현재 bundle의 `managed_policy_guard.py branch-context <host>`로 같은 상태를 다시 조회할 수 있다.
+
 | 증상                                                  | 원인                                                         | 조치                                                                                                     |
 | ----------------------------------------------------- | ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------- |
 | 외부 worktree에서 hook 파일을 찾지 못함               | 중앙 launcher가 아닌 소비자 legacy hook으로 실행             | 소비자 정책 출처를 중앙 history와 대조해 제거하고 중앙 launcher로 새 세션 시작                           |
 | 재시작 후에도 소비자 `.claude/hooks` 경로를 사용      | 기존 세션을 resume했거나 소비자 정책 파일이 남아 있음        | 새 `start --print-only`에서 bundle 절대 guard 경로 확인; 잔존 파일이 있으면 launcher가 시작 전에 거부     |
+| SHA 승인 후에도 구현 승인 누락                         | 생성 계약 SHA와 현재 assignment의 구현 승인은 별도 기록     | `[SESSION_READINESS]`를 확인하고 인계 계획·역할에 대한 미충족 구현 승인만 명시적으로 기록                  |
+| 스킬·공용 UI 읽기가 성공했는데 확인 상태가 비어 있음    | 이전 번들이 Codex 문자열 결과의 완료 정보를 판정하지 못함  | handoff 후 중앙 launcher의 새 start로 수정된 bundle 적용; --resume-assignment는 이전 bundle 유지          |
+| 새 Logic 작업에 종료된 UI 브랜치의 탐색·scope가 적용됨  | 이전 guard가 현재 폴더의 종료된 branch metadata를 참조       | 새 bundle에서 현재 assignment와 대상 계약 기준의 준비 상태 확인                                         |
 | proposal/create가 정책 snapshot 경로 때문에 차단      | 오래된 guard가 inject snapshot workflow를 신뢰하지 못함      | 새 inject 번들로 재시작하고 system prompt가 제공한 절대 branch_workflow.py 사용                          |
 | 승인 요청 식별자 불일치                               | 축약 SHA 또는 다른 proposal 값 사용                          | 현재 세션 산출물에 오류를 기록한 뒤 출력된 동일 파일과 64자리 SHA-256 전체값으로 계약 복구; source·Git 작업은 복구 전 중단 |
 | finish·close가 산출물 누락·귀속 오류 보고             | 구조화된 Write 없이 산출물을 만들었거나 owner 문서가 미완료 | 현재 session directory에 구조화된 Write 도구로 필수 문서를 완성                                          |
