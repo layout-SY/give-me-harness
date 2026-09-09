@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import replace
 from io import StringIO
 from pathlib import Path
 from types import ModuleType
@@ -58,6 +60,12 @@ class InjectionTests(unittest.TestCase):
                 "preview": "npm run preview",
             },
         )
+        # Unit tests never require Bun or launch a real MCP process.
+        executable_lookup = shutil.which
+        lookup = patch("shutil.which", side_effect=lambda command, *args, **kwargs:
+                       sys.executable if command == "bunx" else executable_lookup(command, *args, **kwargs))
+        lookup.start()
+        self.addCleanup(lookup.stop)
 
     def tearDown(self) -> None:
         self.temporary_directory.cleanup()
@@ -229,6 +237,122 @@ class InjectionTests(unittest.TestCase):
         self.assertIn("--append-system-prompt-file", launch.command)
         prompt_index = launch.command.index("--append-system-prompt-file")
         self.assertEqual(launch.command[prompt_index + 1], str(launch.system_prompt))
+
+    def test_claude_ui_mcp_defaults_work_without_personal_registration(self) -> None:
+        home = self.root / "empty-claude-home"
+        home.mkdir()
+        config = home / ".claude.json"
+        config.write_text('{"mcpServers": {}, "projects": {}}\n')
+        before = self.consumer_snapshot()
+        with patch("pathlib.Path.home", return_value=home):
+            for project_id in ("user-ui", "admin-ui"):
+                with self.subTest(project=project_id):
+                    self.project = replace(self.project, id=project_id)
+                    launch = self.prepare("claude", role="ui")
+                    self.assertIn("--mcp-config", launch.command)
+                    index = launch.command.index("--mcp-config")
+                    mcp_path = Path(launch.command[index + 1])
+                    self.assertEqual(mcp_path, launch.bundle_root / "claude-mcp.json")
+                    servers = json.loads(mcp_path.read_bytes())["mcpServers"]
+                    self.assertEqual(set(servers), {"TalkToFigma"})
+                    server = servers["TalkToFigma"]
+                    self.assertEqual(server["type"], "stdio")
+                    self.assertTrue(Path(server["command"]).is_absolute())
+                    self.assertEqual(server["args"], ["cursor-talk-to-figma-mcp@latest"])
+                    self.assertEqual(launch.command[launch.command.index("--setting-sources") + 1], "user")
+                    self.assertNotIn("--strict-mcp-config", launch.command)
+                    manifest = json.loads((launch.bundle_root / "manifest.json").read_bytes())
+                    self.assertIn("claude-mcp.json", manifest["files"])
+        self.assertEqual(config.read_text(), '{"mcpServers": {}, "projects": {}}\n')
+        self.assertEqual(self.consumer_snapshot(), before)
+
+    def test_claude_mcp_defaults_are_scoped_to_projects_host_and_ui_role(self) -> None:
+        for project_id in ("user-ui", "admin-ui"):
+            self.project = replace(self.project, id=project_id)
+            for host in ("codex", "claude", "opencode"):
+                for role in ("logic", "ui", "orchest", "review", "generate"):
+                    if (host, role) == ("claude", "ui"):
+                        continue
+                    with self.subTest(project=project_id, host=host, role=role):
+                        launch = self.prepare(host, role=role)
+                        self.assertNotIn("--mcp-config", launch.command)
+                        self.assertFalse((launch.bundle_root / "claude-mcp.json").exists())
+        self.project = replace(self.project, id="unrelated")
+        # Unknown projects are not launchable through the public CLI; isolate the
+        # selection boundary without needing a projects/unrelated.json fixture.
+        with patch("agent_policy.injection.source_digest", return_value="0" * 64):
+            launch = self.prepare("claude", role="ui")
+        self.assertNotIn("--mcp-config", launch.command)
+        self.assertFalse((launch.bundle_root / "claude-mcp.json").exists())
+
+    def test_claude_mcp_definition_change_creates_new_bundle_and_resume_preserves_old(self) -> None:
+        defaults = self.root / "mcp.defaults.json"
+        definition = {
+            "projects": ["user-ui", "admin-ui"], "roles": ["ui"],
+            "mcpServers": {"TalkToFigma": {
+                "type": "stdio", "command": sys.executable, "args": ["fixture-v1"],
+            }},
+        }
+        defaults.write_text(json.dumps(definition))
+        with patch("agent_policy.injection.CLAUDE_MCP_DEFAULTS", defaults, create=True):
+            first = self.prepare("claude", role="ui")
+            self.assertIn("--mcp-config", first.command)
+            original = (first.bundle_root / "claude-mcp.json").read_bytes()
+            definition["mcpServers"]["TalkToFigma"]["args"] = ["fixture-v2"]
+            defaults.write_text(json.dumps(definition))
+            second = self.prepare("claude", role="ui")
+            self.assertNotEqual(first.bundle_root, second.bundle_root)
+            self.assertIn("fixture-v2", (second.bundle_root / "claude-mcp.json").read_text())
+            resumed = prepare_injection(
+                self.project, "claude", "ui", state_root=self.state_root,
+                resume_assignment=first.environment["ASAN_AGENT_POLICY_ASSIGNMENT"],
+            )
+        self.assertEqual(resumed.bundle_root, first.bundle_root)
+        self.assertEqual(resumed.command, first.command)
+        self.assertEqual((first.bundle_root / "claude-mcp.json").read_bytes(), original)
+
+    def test_claude_ui_mcp_resolves_bunx_fallback_and_rejects_missing_executable(self) -> None:
+        home = self.root / "home with spaces"
+        bunx = home / ".bun/bin/bunx"
+        bunx.parent.mkdir(parents=True)
+        bun = bunx.with_name("bun")
+        bun.write_text("#!/bin/sh\nexit 0\n")
+        bun.chmod(0o700)
+        bunx.symlink_to(bun)
+        with patch("pathlib.Path.home", return_value=home), patch("shutil.which", return_value=None):
+            launch = self.prepare("claude", role="ui")
+            self.assertIn("--mcp-config", launch.command)
+            config = json.loads((launch.bundle_root / "claude-mcp.json").read_bytes())
+            self.assertEqual(config["mcpServers"]["TalkToFigma"]["command"], str(bunx))
+            bunx.unlink()
+            with self.assertRaisesRegex(PolicyError, "TalkToFigma.*bunx"):
+                self.prepare("claude", role="ui")
+            # Other roles must not depend on the UI integration's executable.
+            self.prepare("claude", role="logic")
+
+    def test_claude_mcp_upgrade_preserves_legacy_resume(self) -> None:
+        with patch("agent_policy.injection._claude_mcp_config", return_value=None):
+            legacy = self.prepare("claude", role="ui")
+        current = self.prepare("claude", role="ui")
+        self.assertNotEqual(legacy.bundle_root, current.bundle_root)
+        self.assertIn("--mcp-config", current.command)
+        resumed = prepare_injection(
+            self.project, "claude", "ui", state_root=self.state_root,
+            resume_assignment=legacy.environment["ASAN_AGENT_POLICY_ASSIGNMENT"],
+        )
+        self.assertEqual(resumed.bundle_root, legacy.bundle_root)
+        self.assertEqual(resumed.command, legacy.command)
+        self.assertNotIn("--mcp-config", resumed.command)
+
+    def test_claude_mcp_executable_change_creates_new_bundle(self) -> None:
+        with patch("shutil.which", return_value="/fixture/first/bunx"):
+            first = self.prepare("claude", role="ui")
+        with patch("shutil.which", return_value="/fixture/second/bunx"):
+            second = self.prepare("claude", role="ui")
+        self.assertNotEqual(first.bundle_root, second.bundle_root)
+        for launch, expected in ((first, "/fixture/first/bunx"), (second, "/fixture/second/bunx")):
+            servers = json.loads((launch.bundle_root / "claude-mcp.json").read_bytes())["mcpServers"]
+            self.assertEqual(servers["TalkToFigma"]["command"], expected)
 
     def test_codex_preserves_user_config_and_auth_while_overriding_policy(self) -> None:
         launch = self.prepare("codex", "gpt-test")

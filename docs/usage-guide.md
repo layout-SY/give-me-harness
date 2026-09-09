@@ -78,6 +78,23 @@ inject는 선택한 host와 role에 필요한 정책만 중앙 build 디렉터�
 - 실행 중인 세션은 기존 번들을 계속 사용한다. 중앙 정책이 바뀌면 기존 세션을 단순 복원하지 말고 중앙 launcher를 다시 실행해야 한다.
 - `--mode inject`는 기존 명령 호환을 위해 허용하며 생략할 수 있다. 다른 mode는 지원하지 않는다.
 
+### Claude UI의 TalkToFigma 기본 MCP
+
+`user-ui`와 `admin-ui`에서 `--host claude --role ui`로 새 세션을 시작하면 중앙 번들에 TalkToFigma 설정을 생성하고 `--mcp-config <bundle>/claude-mcp.json`으로 전달한다. 기본 정의는 `adapters/claude/mcp.defaults.json` 하나로 관리한다. 다른 프로젝트·host·role에는 이 기본 MCP를 자동 주입하지 않는다.
+
+launcher는 `bunx`를 PATH에서 찾고, 없으면 `~/.bun/bin/bunx`를 확인한다. 둘 다 실행할 수 없으면 설치·경로 확인 메시지와 함께 세션 시작을 중단한다. 확인한 절대경로와 `cursor-talk-to-figma-mcp@latest` 실행 인자를 번들 digest 및 manifest에 반영한다. `@latest`는 실행 시 패키지 해석에 따르므로 MCP 패키지 자체의 버전까지 고정하는 계약은 아니다.
+
+`--setting-sources user`는 유지한다. `~/.claude.json`이나 소비자 `.mcp.json`을 수정하지 않으며 전역 MCP 재등록이 필요하지 않다. Claude는 `--mcp-config`로 세션별 JSON 설정을 지원한다([공식 CLI 문서](https://code.claude.com/docs/en/cli-reference)). 개인 MCP를 전부 배제하는 `--strict-mcp-config`는 추가하지 않는다.
+
+적용 확인:
+
+1. `bin/agent-policy start --project user-ui --host claude --role ui --print-only`로 새 실행 인자에 `--mcp-config`가 있는지 확인한다. admin-ui도 같은 형식이다.
+2. 기존 작업은 handoff를 남긴 뒤 중앙 launcher로 새 inject 세션을 시작한다. 기존 `--resume-assignment`는 원래 번들과 MCP 설정을 유지한다.
+3. 새 Claude 세션의 `/mcp`에서 TalkToFigma 연결과 도구를 확인한다.
+4. 로컬 WebSocket 서버와 Figma 플러그인의 실행 상태를 확인하고 현재 채널에 참가한다. 채널 ID는 세션별 값으로 전달하며 중앙 기본 설정에 저장하지 않는다.
+
+회귀 검증은 `tests/test_injection.py`에 포함한다. 설치된 Claude CLI의 실제 MCP 연결·도구 탐색은 `python3 tests/smoke_claude_mcp.py`로 검증한다. 이 검사는 임시 개인 설정과 stdio MCP fixture를 사용하며 모델 요청이나 실제 Figma 작업은 수행하지 않는다.
+
 ## 4. role과 산출물 책임 선택
 
 inject에서 사용할 수 있는 role은 다음과 같다.

@@ -23,6 +23,7 @@ from .core import (
     ProjectConfig,
     atomic_write,
     central_commit,
+    read_json,
     render_project,
     sha256_bytes,
     source_digest,
@@ -46,6 +47,7 @@ INJECT_TASK_ENV: Final = "ASAN_AGENT_POLICY_TASK"
 ARTIFACT_RESPONSIBILITY_ENV: Final = "ASAN_ARTIFACT_RESPONSIBILITY"
 BUNDLE_MANIFEST: Final = "manifest.json"
 CODEX_STATE_MANIFEST: Final = ".asan-agent-policy-inject.json"
+CLAUDE_MCP_DEFAULTS: Final = CENTRAL_ROOT / "adapters/claude/mcp.defaults.json"
 OPENCODE_RUNTIME_FILES: Final[frozenset[str]] = frozenset(
     {
         "opencode-home/.gitignore",
@@ -188,11 +190,46 @@ def _json_bytes(value: object) -> bytes:
     return (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode()
 
 
+def _claude_mcp_config(project: ProjectConfig, role: str) -> bytes | None:
+    defaults = read_json(CLAUDE_MCP_DEFAULTS)
+    for field in ("projects", "roles"):
+        values = defaults.get(field)
+        if not isinstance(values, list) or not values or not all(
+            isinstance(value, str) and value for value in values
+        ):
+            raise PolicyError(f"Claude MCP 기본 설정의 {field} 목록이 올바르지 않습니다.")
+    if project.id not in defaults["projects"] or role not in defaults["roles"]:
+        return None
+    servers = defaults.get("mcpServers")
+    if not isinstance(servers, dict) or not servers:
+        raise PolicyError("Claude MCP 기본 설정의 mcpServers가 비어 있거나 올바르지 않습니다.")
+    for name, server in servers.items():
+        if not isinstance(server, dict) or server.get("type") != "stdio":
+            raise PolicyError(f"Claude MCP 기본 서버는 stdio 정의가 필요합니다: {name}")
+        command, arguments = server.get("command"), server.get("args")
+        if not isinstance(command, str) or not command or not isinstance(arguments, list) or not all(
+            isinstance(argument, str) for argument in arguments
+        ):
+            raise PolicyError(f"Claude MCP 기본 서버의 command·args가 올바르지 않습니다: {name}")
+        executable = shutil.which(command)
+        if executable is None and command == "bunx":
+            fallback = Path.home() / ".bun/bin/bunx"
+            if fallback.is_file() and os.access(fallback, os.X_OK):
+                executable = str(fallback)
+        if executable is None:
+            raise PolicyError(f"Claude UI MCP {name}: {command} 실행 파일을 찾을 수 없습니다. "
+                              "Bun 설치와 PATH 또는 ~/.bun/bin/bunx를 확인하세요.")
+        # Keep the bunx basename: Bun dispatches bun/bunx through the symlink name.
+        server["command"] = str(Path(executable).absolute())
+    return _json_bytes({"mcpServers": servers})
+
+
 def _bundle_digest(
     rendered: Mapping[str, bytes],
     host: str,
     role: str,
     project_path: Path,
+    claude_mcp_config: bytes | None = None,
 ) -> str:
     digest = hashlib.sha256()
     digest.update(host.encode())
@@ -208,6 +245,9 @@ def _bundle_digest(
         digest.update(b"\0")
     digest.update(Path(__file__).read_bytes())
     digest.update(Path(str(role_profiles_module.__file__)).read_bytes())
+    if claude_mcp_config is not None:
+        digest.update(b"\0claude-mcp.json\0")
+        digest.update(claude_mcp_config)
     return digest.hexdigest()
 
 
@@ -366,6 +406,7 @@ def _replace_guard_commands(value: object, runtime: Path, host: str) -> object:
 def _render_claude_files(
     rendered: Mapping[str, bytes],
     bundle_root: Path,
+    mcp_config: bytes | None = None,
 ) -> dict[str, bytes]:
     files: dict[str, bytes] = {}
     plugin = bundle_root / "plugin"
@@ -404,6 +445,8 @@ def _render_claude_files(
         {"hooks": _replace_guard_commands(hooks, runtime, "claude")}
     )
     files["claude-settings.json"] = _json_bytes(settings)
+    if mcp_config is not None:
+        files["claude-mcp.json"] = mcp_config
     return files
 
 
@@ -453,6 +496,7 @@ def _render_bundle_files(
     role: str,
     rendered: Mapping[str, bytes],
     bundle_root: Path,
+    claude_mcp_config: bytes | None = None,
 ) -> dict[str, bytes]:
     files = {f"policy/{relative}": content for relative, content in rendered.items()}
     files["system-prompt.md"] = _system_prompt(
@@ -463,7 +507,7 @@ def _render_bundle_files(
         bundle_root / "policy",
     )
     if host == "claude":
-        files.update(_render_claude_files(rendered, bundle_root))
+        files.update(_render_claude_files(rendered, bundle_root, claude_mcp_config))
     elif host == "opencode":
         files.update(_render_opencode_files(rendered, bundle_root))
     elif host != "codex":
@@ -814,6 +858,8 @@ def _host_command(
                 str(bundle_root / "system-prompt.md"),
             )
         )
+        if (bundle_root / "claude-mcp.json").is_file():
+            command.extend(("--mcp-config", str(bundle_root / "claude-mcp.json")))
     if model:
         command.extend(("--model", model))
     return tuple(command)
@@ -850,10 +896,11 @@ def prepare_injection(
         return resume_injection(project, host, role, resume_assignment, state_root or STATE_ROOT, model, responsibility)
 
     rendered = _role_selected_rendered(render_project(project), host, role)
-    digest = _bundle_digest(rendered, host, role, project.path)
+    claude_mcp_config = _claude_mcp_config(project, role) if host == "claude" else None
+    digest = _bundle_digest(rendered, host, role, project.path, claude_mcp_config)
     selected_build_root = (build_root or BUILD_ROOT).resolve()
     bundle_root = selected_build_root / project.id / f"{host}-{role}-{digest[:16]}"
-    files = _render_bundle_files(project, host, role, rendered, bundle_root)
+    files = _render_bundle_files(project, host, role, rendered, bundle_root, claude_mcp_config)
     _install_bundle(bundle_root, project, host, role, digest, files)
 
     selected_state_root = (state_root or STATE_ROOT).resolve()

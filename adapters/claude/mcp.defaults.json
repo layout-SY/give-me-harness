@@ -1,0 +1,11 @@
+{
+  "projects": ["user-ui", "admin-ui"],
+  "roles": ["ui"],
+  "mcpServers": {
+    "TalkToFigma": {
+      "type": "stdio",
+      "command": "bunx",
+      "args": ["cursor-talk-to-figma-mcp@latest"]
+    }
+  }
+}
