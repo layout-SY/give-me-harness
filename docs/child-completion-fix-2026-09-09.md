@@ -80,4 +80,4 @@ user-ui에서는 source를 `task/reservation-mock-logic`으로 바꾼다. 생성
 
 admin Logic의 최신 handoff에는 `npm run build` 성공, 별도 `tsconfig.app.json` 타입 검사 14건 실패, 전체 lint 68 errors/5 warnings 실패가 기록되어 있다. 부모 소유권 문제를 해결해도 실패한 검증은 MERGED_VERIFIED 또는 CLOSED가 되지 않는다. 변경 범위 밖의 오류 처리와 검증 명령 계약은 별도 판단 대상이다.
 
-소비자 branch 병합과 실제 소유권 인계는 아직 실행하지 않았다. 이 변경은 중앙 원본·회귀 테스트·적용 안내이며 소비자 HEAD·claim·예약 상태를 수정하지 않는다.
+이 정책 수정 시점에는 소비자 branch 병합과 실제 소유권 인계를 실행하지 않았다. 이후 별도의 사용자 직접 요청에 따라 두 자식→부모 병합을 중앙에서 처리했다. 현재 결과는 [중앙 직접 병합 기록](manual-child-merges-2026-09-09.md)을 따른다. user-ui 자식은 CLOSED, admin-ui 자식은 lint 실패로 READY_TO_MERGE이며 부모 소유권은 유지했다.

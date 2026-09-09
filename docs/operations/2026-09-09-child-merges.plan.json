@@ -1,0 +1,99 @@
+{
+  "actor": "codex-central-policy-session",
+  "cleanup": false,
+  "closure_rule": "CLOSED only when both lint and build pass; otherwise READY_TO_MERGE, keep claims",
+  "kind": "user-delegated-central-merge",
+  "merge_strategy": "ff-only",
+  "plans": [
+    {
+      "base_head": "c79f3d8c74c0536fa2d3afb983fb2e121742f076",
+      "claims": {
+        "/Users/okand/SynologyDrive/asan-worktrees/reservation-detail-ui": {
+          "path": "/Users/okand/SynologyDrive/asan-agent-policy/state/repositories/4513b4f40b840df844024984f40ab0b185b2f47439c6e7548d5c72fc4d83666b/claims/6795b947337563c58782322c47ac7f50f784d183e22a418bd0ec8bc475e435df.json",
+          "value": {
+            "owner": "98fa9835fbc24050a5d9765a1901d1e8",
+            "resource": "git:/Users/okand/SynologyDrive/asan-worktrees/reservation-detail-ui"
+          }
+        },
+        "/Users/okand/SynologyDrive/asan-worktrees/reservation-mock-logic": {
+          "path": "/Users/okand/SynologyDrive/asan-agent-policy/state/repositories/4513b4f40b840df844024984f40ab0b185b2f47439c6e7548d5c72fc4d83666b/claims/956d7a04d708759c1d1b9ade360e96f53cd6d6223a20f3525c3366afdd460fc8.json",
+          "value": {
+            "owner": "ed17a5549ae942c79f833b1ffadbe9de",
+            "resource": "git:/Users/okand/SynologyDrive/asan-worktrees/reservation-mock-logic"
+          }
+        }
+      },
+      "common": "/Users/okand/SynologyDrive/asan-metaverse-user-ui/.git",
+      "parent_assignment": "98fa9835fbc24050a5d9765a1901d1e8",
+      "parent_worktree": "/Users/okand/SynologyDrive/asan-worktrees/reservation-detail-ui",
+      "project": "user-ui",
+      "repository_state": "/Users/okand/SynologyDrive/asan-agent-policy/state/repositories/4513b4f40b840df844024984f40ab0b185b2f47439c6e7548d5c72fc4d83666b",
+      "source": "task/reservation-mock-logic",
+      "source_assignment": "ed17a5549ae942c79f833b1ffadbe9de",
+      "source_contract": "015f49eca96ee1c73add084c10faef2b8715b2dff63a17382e492ec7714f97d2",
+      "source_head": "2184467e3270acd2d49f7652122999fc1e8061f6",
+      "source_worktree": "/Users/okand/SynologyDrive/asan-worktrees/reservation-mock-logic",
+      "target": "task/reservation-detail-ui",
+      "target_contract": "8ca8b2b606f3932d21d85de8e7d101489e9da1b1166252b1630c7eebd0b91d9b",
+      "target_head": "b5b07fab0a0f93cf1b1423d8ee2cc1a7088377ac",
+      "validation_commands": [
+        [
+          "npm",
+          "run",
+          "lint"
+        ],
+        [
+          "npm",
+          "run",
+          "build"
+        ]
+      ]
+    },
+    {
+      "base_head": "5834f920fcceadbe79491791d5cf8a35ca7e2a98",
+      "claims": {
+        "/Users/okand/SynologyDrive/asan-metaverse-admin-ui": {
+          "path": "/Users/okand/SynologyDrive/asan-agent-policy/state/repositories/efc3a8561a1c88e862e3f5c61f955c00c442164e45dbe8ab31f06e61e7be50b8/claims/0307a4a35624c58970c0cd9e2d97b364b2aa8cf71820aff2f2719917ea573c03.json",
+          "value": {
+            "owner": "f14c4487b1bc4431a3ac89583753fad6",
+            "resource": "git:/Users/okand/SynologyDrive/asan-metaverse-admin-ui"
+          }
+        },
+        "/private/tmp/asan-metaverse-admin-ui-news-management-logic-14a3b5c5": {
+          "path": "/Users/okand/SynologyDrive/asan-agent-policy/state/repositories/efc3a8561a1c88e862e3f5c61f955c00c442164e45dbe8ab31f06e61e7be50b8/claims/5d8b2e37273d8f02fc4669fe29ea03fc661fb7e87a5ff8c08cc3faac3d8c9c60.json",
+          "value": {
+            "owner": "14a3b5c529a94f6d8c36fb91cfee693d",
+            "resource": "git:/private/tmp/asan-metaverse-admin-ui-news-management-logic-14a3b5c5"
+          }
+        }
+      },
+      "common": "/Users/okand/SynologyDrive/asan-metaverse-admin-ui/.git",
+      "parent_assignment": "f14c4487b1bc4431a3ac89583753fad6",
+      "parent_worktree": "/Users/okand/SynologyDrive/asan-metaverse-admin-ui",
+      "project": "admin-ui",
+      "repository_state": "/Users/okand/SynologyDrive/asan-agent-policy/state/repositories/efc3a8561a1c88e862e3f5c61f955c00c442164e45dbe8ab31f06e61e7be50b8",
+      "source": "task/news-management-logic",
+      "source_assignment": "14a3b5c529a94f6d8c36fb91cfee693d",
+      "source_contract": "5567cf5221dea8465566ce8d04c7355d61aa3beb29b27ea78af30f8fba90a79f",
+      "source_head": "6f1d322c5e14802a0d7504d9d83890bfda215b92",
+      "source_worktree": "/private/tmp/asan-metaverse-admin-ui-news-management-logic-14a3b5c5",
+      "target": "task/news-management-ui",
+      "target_contract": "0aa18eee3ae6503590c79bfa855822f76df4e5ebac7d6221093038e9d70b9775",
+      "target_head": "49aa7392882479dcb6fb08eacd73fc432d2af726",
+      "validation_commands": [
+        [
+          "npm",
+          "run",
+          "lint"
+        ],
+        [
+          "npm",
+          "run",
+          "build"
+        ]
+      ]
+    }
+  ],
+  "policy_commit": "0f7ed2447d916cb6c16dfcc518ca1a97cd9a32e7",
+  "request": "너가 그냥 임의로 merge 해주면 안돼?"
+}
