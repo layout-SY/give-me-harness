@@ -765,6 +765,17 @@ def _validation_argv(
     return tuple(commands)
 
 
+def validate_cleanup_layout(contract: dict[str, object]) -> None:
+    worktree = str(contract.get("worktree") or "")
+    integration = str(contract.get("integration_worktree") or "")
+    if contract.get("cleanup") is True and worktree and integration and Path(worktree).resolve() == Path(integration).resolve():
+        raise SystemExit(
+            "통합 worktree를 cleanup 대상으로 함께 지정할 수 없습니다. "
+            "별도 target worktree를 준비하거나 --cleanup 없이 완료 계약을 제안하세요. "
+            "이미 MERGED_VERIFIED인 계약은 중앙 close-recover로 정리 보류를 검토하세요."
+        )
+
+
 def finish_proposal(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
     source = arguments.source or guard.current_branch(root)
     if not source or not guard.branch_exists(root, source):
@@ -807,6 +818,7 @@ def finish_proposal(arguments: argparse.Namespace, guard: ModuleType, root: Path
         "worktree": str(values.get("worktree") or ""),
         "branch_contract_sha256": str(values.get("contract-sha256") or ""),
     }
+    validate_cleanup_layout(contract)
     path, digest = write_immutable_finish_proposal(root, contract, guard)
     print(
         "\n".join(
@@ -970,6 +982,7 @@ def finish(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
         git(root, "config", f"branch.{source}.asan-state", "READY_TO_MERGE")
         print("실제 Git 결과와 승인 계약을 대조하여 병합 실행 기록을 복구했습니다. verify를 실행하세요.")
         return 0
+    validate_cleanup_layout(contract)
     if guard.head(root, source) != source_head or guard.head(root, target) != target_head:
         raise SystemExit("승인 후 source 또는 target HEAD가 변경되었습니다. 새 finish proposal이 필요합니다.")
     values = guard.metadata(root, source)
@@ -1117,6 +1130,7 @@ def close(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
         release_closed_git_claims(root, contract, guard)
         print("이미 CLOSED로 기록된 동일 완료 계약입니다.")
         return 0
+    validate_cleanup_layout(contract)
     if receipt.get("state") not in {"verified", "closing"} and values.get("state") != "MERGED_VERIFIED":
         raise SystemExit("MERGED_VERIFIED 상태가 아니므로 close할 수 없습니다. verify를 먼저 실행하세요.")
     if guard.branch_exists(root, source) and guard.head(root, source) != source_head:

@@ -583,7 +583,19 @@ python3 <absolute-branch-workflow.py> close \
 - close: ancestry와 clean 상태를 확인하고 CLOSED 기록
 - cleanup: finish proposal에 포함해 승인된 경우에만 로그 수집 성공을 확인한 뒤 격리 worktree와 local source branch 정리
 
+`--cleanup`의 삭제 대상은 통합 worktree와 달라야 한다. target이 다른 worktree에서 checkout되어 있지 않으면 source worktree를 통합에 사용하므로, 이때는 `--cleanup`을 생략한다. 같은 경로를 통합과 삭제에 함께 지정하면 proposal과 신규 finish 실행을 차단한다.
+
 실패 시 자동 rollback, rebase, reset 또는 강제 삭제하지 않는다. source와 worktree를 보존하고 정확한 실패 단계를 보고한다.
+
+과거 번들에서 동일 worktree cleanup 계약으로 이미 `MERGED_VERIFIED`까지 진행한 경우, 중앙 CLI에서 정리 보류 계약을 검토한다.
+
+~~~sh
+bin/agent-policy close-recover --project user-ui \
+  --finish-file <original-finish-proposal-path> \
+  --finish-sha256 <original-finish-sha256>
+~~~
+
+출력된 복구 JSON에는 원래 finish SHA, 현재 HEAD, 검증 receipt, assignment와 소유권, 보존할 branch·worktree가 담긴다. 정리 보류에 대한 새 SHA 승인을 받은 뒤 같은 명령에 `--approved-sha256 <recovery-sha256>`을 추가한다. 실행은 기존 검증 근거를 유지하고 `CLOSED` 기록과 해당 소유자의 통합 예약·Git claim 해제만 수행한다. branch, worktree, 로그를 보존하며 merge·검증 명령을 재실행하지 않는다. 승인 이후 상태가 달라지면 중단하고, 자신의 부분 기록 때문에 끊긴 경우에는 같은 복구 SHA로 재개한다. 완료한 복구의 재호출은 이후 작업의 예약을 해제하지 않는다.
 
 ## 13. 중앙 정책 운영
 

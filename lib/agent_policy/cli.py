@@ -110,6 +110,12 @@ def build_parser() -> argparse.ArgumentParser:
     integration.add_argument("--finish-sha256", required=True)
     integration.add_argument("--approved-sha256")
 
+    close_recovery = subparsers.add_parser("close-recover", help="검증된 동일 worktree cleanup 결함의 정리를 보류하고 CLOSED 기록만 복구합니다.")
+    close_recovery.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    close_recovery.add_argument("--finish-file", required=True)
+    close_recovery.add_argument("--finish-sha256", required=True)
+    close_recovery.add_argument("--approved-sha256")
+
     maintenance_plan = subparsers.add_parser("maintenance-plan", help="정책 퇴역의 정확한 diff와 새 V3 worktree 계약을 제안합니다.")
     maintenance_plan.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
     maintenance_plan.add_argument("--branch", required=True)
@@ -442,6 +448,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             path, digest = recover_integration(select_projects(arguments.project)[0], Path(arguments.finish_file),
                                                 arguments.finish_sha256, arguments.approved_sha256)
             print(f"병합 중단 복구 계약: {path}\n복구 SHA-256: {digest}")
+            code = 0
+        elif arguments.command == "close-recover":
+            from .recovery import recover_close
+            path, digest = recover_close(select_projects(arguments.project)[0], Path(arguments.finish_file),
+                                         arguments.finish_sha256, arguments.approved_sha256)
+            print(f"close 복구 계약: {path}\n복구 SHA-256: {digest}")
+            print("CLOSED 복구 완료. branch·worktree 정리는 보류했습니다." if arguments.approved_sha256
+                  else "계약 승인 후 같은 명령에 --approved-sha256을 지정하세요.")
             code = 0
         elif arguments.command == "assignment-handoff":
             from .assignment import handoff
