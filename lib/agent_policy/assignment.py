@@ -53,6 +53,14 @@ def handoff(project: ProjectConfig, source_id: str, target_id: str, handoff_file
             if value.get("owner") == source_id:
                 if target.get("responsibility") != "owner":
                     raise PolicyError("진행 중인 통합은 owner assignment에만 인계할 수 있습니다.")
+                finish_digest = str(value.get("finish_sha256") or "")
+                if re.fullmatch(r"[a-f0-9]{64}", finish_digest):
+                    contract = state.read(common / "asan-agent-policy/finish-proposals" / f"{finish_digest}.json")
+                    if "completion_authority" in contract:
+                        raise PolicyError(
+                            "진행 중인 부모 완료 계약은 실행 assignment가 고정되어 있습니다. "
+                            "같은 assignment를 재개해 verify·close 또는 통합 복구를 완료한 뒤 인계하세요."
+                        )
                 integrations.append({"file": path.name, "record": value})
         plan = {"version": 1, "kind": "assignment-handoff", "source": source_id, "target": target_id,
                 "repository": str(common), "task": task or "", "claims": claims, "integrations": integrations,

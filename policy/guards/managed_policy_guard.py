@@ -30,6 +30,7 @@ try:
     load_json_state = _runtime_config.load_json_state
 
     _artifact_policy = load_runtime_module("artifact_policy")
+    _child_completion = load_runtime_module("child_completion")
     active_assignment_branch = _artifact_policy.active_assignment_branch
     bind_artifact_session = _artifact_policy.bind_artifact_session
     bind_task_assignment = _artifact_policy.bind_task_assignment
@@ -132,6 +133,12 @@ def branch_workflow_integrator_denial(
         )
     if action in {"finish", "verify", "close"}:
         contract = branch_workflow_contract(event, root, arguments)
+        if "completion_authority" in contract:
+            try:
+                _child_completion.validate(root, contract, action=action, host=host)
+            except ValueError as error:
+                return str(error)
+            return None
         source_value = contract.get("source")
         source = source_value if isinstance(source_value, str) else ""
     elif action == "update-scope":
@@ -154,6 +161,26 @@ def branch_workflow_integrator_denial(
             f"task({source})에 {action}을 실행할 수 없습니다."
         )
     return branch_guard.git_integrator_denial(root, source, host)
+
+
+def completion_documentation_denial(event: dict[str, Any], root: Path, host: str, command: str) -> str | None:
+    """자식 병합에서는 자식 owner의 산출물을 검사하고 부모의 미완료 산출물과 구분한다."""
+    arguments = trusted_branch_workflow_arguments(command, root)
+    action = arguments[0] if arguments else ""
+    try:
+        if action == "finish-proposal":
+            source = _tool_paths.branch_workflow_option(arguments, "--source")
+            if source and source != branch_guard.current_branch(root):
+                _child_completion.proposal(root, source, cleanup="--cleanup" in arguments, host=host)
+                return None
+        elif action in {"finish", "verify", "close"}:
+            contract = branch_workflow_contract(event, root, arguments)
+            if "completion_authority" in contract:
+                # 바로 다음 branch_workflow_integrator_denial이 권한과 자식 산출물을 함께 검사한다.
+                return None
+    except ValueError as error:
+        return str(error)
+    return documentation_denial(event, root, host)
 
 
 def branch_denial(event: dict[str, Any], root: Path, host: str) -> str | None:
@@ -412,7 +439,7 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
         if assignment_denial is not None:
             emit_denial(host, assignment_denial)
             return
-        completion_denial = documentation_denial(event, operation_root, host)
+        completion_denial = completion_documentation_denial(event, operation_root, host, command)
         if completion_denial is not None:
             emit_denial(host, completion_denial)
             return
@@ -476,8 +503,12 @@ def git_ownership(event: dict[str, Any], root: Path, host: str, *, reserve: bool
         reservations = common / "asan-agent-policy/integration-targets"
         for reservation in reservations.glob("*.json"):
             value = runtime_state.read(reservation)
-            if value.get("worktree") == str(selected.resolve()) and action not in {"finish", "verify", "close"}:
-                return "이 worktree의 병합 검증·close가 진행 중입니다. 완료 또는 명시적 복구 후 변경하세요."
+            if value.get("worktree") == str(selected.resolve()) and (
+                action not in {"finish", "verify", "close"}
+                or value.get("finish_sha256") != branch_guard.contract_sha256(contract)
+                or value.get("owner") != owner
+            ):
+                return "이 worktree의 다른 병합 검증·close 예약이 진행 중입니다. 완료 또는 명시적 복구 후 변경하세요."
         if reserve:
             runtime_state.claim(common, resource, owner)
     return None

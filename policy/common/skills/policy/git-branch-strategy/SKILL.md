@@ -117,7 +117,7 @@ python3 <absolute-branch-workflow.py> resume
 
 ## Git 통합 권한
 
-V3 계약의 승인 worktree에서 Git 통합 담당자 한 명만 branch 전환, index, commit과 완료 workflow를 실행한다. guard는 세션 시작 cwd가 아니라 각 Git 명령의 실제 대상(`workdir`, `git -C`, `--git-dir/--work-tree`)을 다시 해석한다. 다른 host는 승인 scope의 파일과 자신의 산출물을 수정할 수 있어도 Git 상태를 바꾸지 않는다.
+V3 계약의 승인 worktree에서 Git 통합 담당자 한 명만 branch 전환, index, commit과 완료 workflow를 실행한다. 직접 자식의 변경을 받는 부모 owner는 아래의 부모 완료 계약에 한해 자기 worktree에서 merge·verify·close를 실행할 수 있다. 자식의 index·commit 권한은 이전하지 않는다. guard는 세션 시작 cwd가 아니라 각 Git 명령의 실제 대상(`workdir`, `git -C`, `--git-dir/--work-tree`)을 다시 해석한다. 다른 host는 승인 scope의 파일과 자신의 산출물을 수정할 수 있어도 Git 상태를 바꾸지 않는다.
 
 다음 명령은 승인으로 해제하지 않는 사용자 전용 작업이다.
 
@@ -132,7 +132,7 @@ V3 계약의 승인 worktree에서 Git 통합 담당자 한 명만 branch 전환
 
 ## 완료 workflow
 
-구현·필수 8종·검증·commit이 끝난 source worktree에서 완료 proposal을 만든다.
+구현·필수 8종·검증·commit이 끝난 source worktree에서 완료 proposal을 만든다. 다른 assignment가 직접 부모 task를 소유하면 부모 owner가 부모 worktree에서 `--source <직접 자식>`으로 부모 완료 계약을 만든다.
 
 완료 workflow는 `owner` session assignment만 수행한다. contributor의 `handoff.md`는 부분 결과 인계이며 branch merge·verify·close의 완료 근거가 아니다.
 
@@ -161,6 +161,30 @@ python3 <absolute-branch-workflow.py> close --proposal-file <path> --proposal-sh
 - 실패하면 자동 rollback, rebase, 강제 삭제를 하지 않고 source와 worktree를 보존한다.
 
 raw `git merge`, V3 branch 삭제와 worktree 제거는 사용하지 않는다. 자식 branch가 있으면 leaf부터 `child -> parent -> {{BASE_BRANCH}}` 순서로 각 단계의 finish 계약을 별도 승인받는다.
+
+### 다른 세션의 자식을 부모에서 받기
+
+부모·자식이 각자 worktree를 소유한 경우, 자식 담당자는 commit과 자기 필수 산출물 8종을 완료하고 인계한다. 부모 Git 통합 담당자이면서 `owner`인 assignment가 자기 부모 worktree에서 다음을 실행한다. host·role 조합은 고정하지 않는다.
+
+```sh
+python3 <absolute-branch-workflow.py> finish-proposal \
+  --source task/<direct-child> \
+  --merge-strategy ff-only \
+  --verify-command "npm run lint" \
+  --verify-command "npm run build"
+```
+
+- 현재 branch가 source의 직접 부모이면 부모 완료 계약을 생성한다. 부모·자식의 유효한 V3 계약, ACTIVE 상태, 각 Git claim·assignment 귀속, clean 상태와 자식의 필수 산출물을 검사한다. 자식의 결과 미확인 도구 예약은 먼저 복구해야 한다.
+- 계약에는 source·target HEAD, 부모 branch 계약 SHA, 부모 실행 host·assignment, 자식 assignment와 산출물 디렉터리를 고정한다. 기존 source 담당자용 완료 SHA는 부모 실행 승인으로 재사용하지 않는다. 출력된 새 전체 SHA를 승인받은 뒤 부모 worktree에서 기존 `finish → verify → close` 명령을 각각 실행한다.
+- 부모의 진행 중인 작업에 자식 산출물 세트를 다시 작성하지 않는다. guard는 자식 owner의 실제 세션 산출물을 읽고, 부모의 구현 승인·탐색 조건과 새 완료 SHA 승인을 별도로 확인한다. 다른 세션의 산출물은 수정하지 않는다.
+- 승인 후 HEAD·계약·소유권·산출물 귀속이 달라지면 새 계약이 필요하다. 자식은 `finish`부터 READY_TO_MERGE로 전환되므로 일반 source 변경을 계속하지 않는다.
+- `close`는 자식을 CLOSED로 기록하고 승인된 자식 Git claim을 해제한다. 부모 task는 ACTIVE와 기존 claim을 유지한다. 이 경로는 `--cleanup`을 지원하지 않으며 자식 branch·worktree·산출물을 보존한다.
+- 부모의 ACTIVE claim을 강제로 제거하거나 자식에게 넘기는 방식으로 이 절차를 대신하지 않는다. 자식-root assignment의 ancestor 수정, raw Git merge, 다른 host의 자식 commit 권한도 생기지 않는다.
+- 검증은 부모에 기록된 실제 병합 결과 HEAD에서 승인된 정확한 명령을 실행한다. 기존 오류라도 실패는 실패로 기록하고 close를 차단한다. 허용 검증 명령을 바꾸거나 검증을 생략하는 권한을 소유권 수정으로 얻지 않는다.
+
+기존 inject 세션은 이전 bundle을 계속 사용한다. 중앙 정책 변경 후 현재 산출물을 handoff하고, 새 bundle의 동일 host·role 세션으로 중앙 `assignment-handoff` 절차를 거쳐 소유권을 인계한 뒤 새 완료 계약을 제안한다. `--resume-assignment`는 원래 bundle 재개이므로 정책 업데이트 수단이 아니다.
+
+부모 완료 계약은 실행 assignment를 고정한다. finish 이후 verify·close가 남아 있을 때는 같은 assignment를 재개해 완료한다. 진행 중인 부모 완료 계약의 담당자를 바꾸는 handoff는 이 계약의 실행 권한을 이전하지 않는다. 정책 업데이트를 위한 세션 교체는 부모 완료 계약을 제안하기 전에 수행한다.
 
 ## compact·resume
 

@@ -90,6 +90,7 @@ session assignment가 `contributor`인 작업자는 `handoff.md`를 작성한다
 - 권한 root 또는 그 아래 ACTIVE V3 task에서 승인 절차로 생성한 child는 `asan-parent` 계보를 따라 같은 세션 권한에 직계·전이 자손으로 포함된다. 이름 접두사로 계보를 추론하지 않는다.
 - V1·V2·무버전 branch metadata는 읽기 전용 history로만 취급하며 source·Git 변경 권한을 부여하지 않는다. 기존 branch에서 작업을 이어가려면 `branch_workflow.py proposal → create` 절차로 V3 계약을 다시 승인받는다.
 - 권한은 하향으로만 상속된다. parent-root assignment는 root와 승인된 자손 사이를 오갈 수 있지만, child-root assignment는 ancestor·형제·무관 branch를 수정할 수 없다. 각 초점 branch의 scope, role, Git 통합 담당자, 상태와 승인 worktree는 독립적으로 검증하고 한 mutation은 한 branch만 대상으로 한다. 승인된 finish lifecycle의 target 전환·병합은 해당 완료 계약에 한정된 별도 권한이다.
+- 다른 assignment의 직접 자식을 병합할 때는 부모 owner가 부모 worktree에서 `finish-proposal --source <자식>`으로 부모 실행 권한을 고정한 새 완료 계약을 승인받는다. 자식의 구현 담당자·산출물 귀속은 유지하고, 자식 close 뒤에도 부모의 ACTIVE 상태·Git claim은 유지한다. 기존 source 담당자용 SHA 승인이나 부모 claim 강제 해제로 대신하지 않는다.
 - 같은 권한 계보 안의 초점 전환에는 기존 task의 `CLOSED`나 새 session directory가 필요하지 않다. 계보 밖 독립 작업으로 바꾸기 전에는 기존 root 작업을 검증·문서화·commit하고 직접 target에 merge하여 `CLOSED`로 만들거나, handoff를 작성해 `PRESERVED`로 둔다.
 - `CLOSED` 후에는 같은 세션에서 새 독립 작업을 시작할 수 있다. `PRESERVED` 작업과 독립 작업을 병행하려면 별도 worktree·세션을 사용한다.
 - dirty 기준 폴더를 피하려고 승인된 격리 worktree를 만든 경우, 현재 assignment 권한 계보 안의 branch라면 같은 세션에서 도구 `workdir` 또는 `git -C`의 대상으로 그 worktree를 사용해 계속할 수 있다. 세션 시작 cwd가 아니라 현재 초점 task의 승인 worktree가 변경 경계다.

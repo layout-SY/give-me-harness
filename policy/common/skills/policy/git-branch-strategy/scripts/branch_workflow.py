@@ -10,6 +10,7 @@ import os
 import shlex
 import subprocess
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 from types import ModuleType
 
@@ -784,10 +785,16 @@ def finish_proposal(arguments: argparse.Namespace, guard: ModuleType, root: Path
         raise SystemExit("finish workflow는 V3 branch 계약에서만 사용할 수 있습니다.")
     if values.get("state") != "ACTIVE":
         raise SystemExit(f"ACTIVE task만 완료 제안할 수 있습니다. 현재 상태: {values.get('state') or '없음'}")
+    child_contract = None
+    source_root = root
     if guard.current_branch(root) != source:
-        raise SystemExit(f"finish proposal은 source worktree에서 실행해야 합니다: {source}")
+        try:
+            child_contract = child_completion(guard).proposal(root, source, cleanup=bool(arguments.cleanup))
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
+        source_root = Path(str(child_contract["source_worktree"]))
     _clean_worktree(guard, root)
-    lineage_denial = guard.active_branch_denial(root, (), str(guard.BASE_BRANCH))
+    lineage_denial = guard.active_branch_denial(source_root, (), str(guard.BASE_BRANCH))
     if lineage_denial is not None:
         raise SystemExit(lineage_denial)
     target = str(values.get("merge-target") or "")
@@ -811,12 +818,14 @@ def finish_proposal(arguments: argparse.Namespace, guard: ModuleType, root: Path
         "finish_schema": 1,
         "merge_strategy": arguments.merge_strategy,
         "integration_worktree": str((branch_worktrees(root, target) or (root.resolve(),))[0]),
-        "source_worktree": str(root.resolve()),
+        "source_worktree": str(source_root.resolve()),
         "validation_commands": [list(command) for command in validation],
         "cleanup": bool(arguments.cleanup),
         "worktree": str(values.get("worktree") or ""),
         "branch_contract_sha256": str(values.get("contract-sha256") or ""),
     }
+    if child_contract is not None:
+        contract["completion_authority"] = child_contract["completion_authority"]
     validate_cleanup_layout(contract)
     path, digest = write_immutable_finish_proposal(root, contract, guard)
     print(
@@ -827,6 +836,10 @@ def finish_proposal(arguments: argparse.Namespace, guard: ModuleType, root: Path
                 f"- target: {target}@{contract['target_head']}",
                 f"- merge 방식: {contract.get('merge_strategy')}",
                 f"- 통합 worktree: {contract.get('integration_worktree')}",
+                *([f"- 부모 완료 담당자: {child_contract['completion_authority']['target_host']} / "
+                   f"{child_contract['completion_authority']['target_assignment']}",
+                   f"- 자식 산출물 assignment: {child_contract['completion_authority']['source_assignment']}"]
+                  if child_contract else []),
                 "- 검증 명령:",
                 *(f"  - {shlex.join(command)}" for command in validation),
                 f"- merge 후 local cleanup: {'수행' if arguments.cleanup else '보존'}",
@@ -854,6 +867,10 @@ def _finish_fields(contract: dict[str, object]) -> tuple[str, str, str, str]:
 
 def integration_state(guard: ModuleType) -> ModuleType:
     return import_guard(Path(guard.__file__).with_name("runtime_state.py"))
+
+
+def child_completion(guard: ModuleType) -> ModuleType:
+    return import_guard(Path(guard.__file__).with_name("child_completion.py"))
 
 
 def assert_creation_owner(root: Path, destination: Path, guard: ModuleType) -> None:
@@ -903,12 +920,20 @@ def integration_head(root: Path, contract: dict[str, object], guard: ModuleType)
     return result
 
 
-def assert_integration_owner(root: Path, contract: dict[str, object], guard: ModuleType) -> None:
+def assert_integration_owner(root: Path, contract: dict[str, object], guard: ModuleType, *, action: str = "finish") -> None:
+    if "completion_authority" in contract:
+        try:
+            child_completion(guard).validate(root, contract, action=action)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
     state = integration_state(guard)
     reservation = state.read(target_reservation(root, contract, guard))
     owner = os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT", "manual")
     if reservation and (reservation.get("owner") != owner or reservation.get("finish_sha256") != guard.contract_sha256(contract)):
         raise SystemExit("통합 예약을 소유한 assignment만 finish/verify/close를 실행할 수 있습니다.")
+    for path in (workflow_state_root(root) / "integration-targets").glob("*.json"):
+        if path != target_reservation(root, contract, guard) and state.read(path).get("worktree") == str(root.resolve()):
+            raise SystemExit("이 worktree에 다른 완료 계약의 통합 예약이 있습니다. 해당 verify·close 또는 복구를 먼저 완료하세요.")
     receipt = state.read(integration_record_path(root, contract, guard))
     if contract.get("finish_schema") and receipt and not reservation and receipt.get("state") not in {"closed", "aborted"}:
         raise SystemExit("통합 예약이 없습니다. 실행 기록을 복구한 뒤 재개하세요.")
@@ -956,6 +981,9 @@ def collect_before_cleanup(root: Path, candidate: Path, contract: dict[str, obje
 def release_closed_git_claims(root: Path, contract: dict[str, object], guard: ModuleType) -> None:
     owner = os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT")
     if not owner:
+        return
+    if "completion_authority" in contract:
+        child_completion(guard).release_source_claim(root, contract)
         return
     state = integration_state(guard)
     common = git_common_directory(root)
@@ -1013,13 +1041,25 @@ def finish(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
         raise SystemExit(f"승인된 target 전환을 수행할 수 없습니다: {target}")
     if strategy == "merge-commit" and guard.is_ancestor(root, source_head, target_head):
         raise SystemExit("이미 target에 포함된 source입니다. 추가 merge commit을 만들 수 없습니다.")
-    state.write(reservation, {"finish_sha256": arguments.proposal_sha256, "owner": owner, "source": source,
-                              "target": target, "worktree": str(root)})
-    state.write(receipt_path, {"finish_sha256": arguments.proposal_sha256, "owner": owner,
-                               "source_head": source_head, "target_head": target_head, "state": "merging"})
+    parent_completion = "completion_authority" in contract
+    # 자식의 마지막 도구 예약 확인과 READY 전환 사이에 새 source mutation을 승인하지 않는다.
+    event_lock = state.repository_state(git_common_directory(root)) / "events.lock"
+    with state.locked(event_lock) if parent_completion else nullcontext():
+        if parent_completion:
+            assert_integration_owner(root, contract, guard)
+            _clean_worktree(guard, root)
+            if guard.head(root, source) != source_head or guard.head(root, target) != target_head:
+                raise SystemExit("통합 예약 전에 HEAD가 변경되었습니다. 새 finish proposal이 필요합니다.")
+        state.write(reservation, {"finish_sha256": arguments.proposal_sha256, "owner": owner, "source": source,
+                                  "target": target, "worktree": str(root)})
+        state.write(receipt_path, {"finish_sha256": arguments.proposal_sha256, "owner": owner,
+                                   "source_head": source_head, "target_head": target_head, "state": "merging"})
+        if parent_completion:
+            git(root, "config", f"branch.{source}.asan-state", "READY_TO_MERGE")
     if current != target:
         git(root, "switch", target)
-    git(root, "config", f"branch.{source}.asan-state", "READY_TO_MERGE")
+    if not parent_completion:
+        git(root, "config", f"branch.{source}.asan-state", "READY_TO_MERGE")
     try:
         if strategy == "ff-only":
             git(root, "merge", "--ff-only", source_head)
@@ -1051,7 +1091,7 @@ def verify(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
     contract = load_finish_proposal(root, arguments.proposal_file, arguments.proposal_sha256, guard)
     source, source_head, target, _ = _finish_fields(contract)
     root = integration_root(root, contract, guard)
-    assert_integration_owner(root, contract, guard)
+    assert_integration_owner(root, contract, guard, action="verify")
     result_head = integration_head(root, contract, guard)
     if guard.current_branch(root) != target:
         raise SystemExit(f"verify는 target worktree에서 실행해야 합니다: target={target}")
@@ -1146,7 +1186,7 @@ def close(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
     contract = load_finish_proposal(root, arguments.proposal_file, arguments.proposal_sha256, guard)
     source, source_head, target, _ = _finish_fields(contract)
     root = integration_root(root, contract, guard)
-    assert_integration_owner(root, contract, guard)
+    assert_integration_owner(root, contract, guard, action="close")
     result_head = integration_head(root, contract, guard)
     if guard.current_branch(root) != target:
         raise SystemExit(f"close는 target worktree에서 실행해야 합니다: target={target}")
@@ -1187,6 +1227,9 @@ def close(arguments: argparse.Namespace, guard: ModuleType, root: Path) -> int:
         if guard.branch_exists(root, source):
             git(root, "branch", "-d", source)
     else:
+        if "completion_authority" in contract:
+            receipt["state"] = "closing"
+            state.write(receipt_path, receipt)
         git(root, "config", f"branch.{source}.asan-state", "CLOSED")
     record = _write_closed_record(root, contract, guard)
     receipt["state"] = "closed"
