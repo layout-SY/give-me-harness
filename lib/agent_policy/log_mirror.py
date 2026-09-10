@@ -16,6 +16,9 @@ REQUIRED_ARTIFACTS: Final = tuple(
     for name in _ARTIFACT_CONTRACT.get("required", ())
     if isinstance(name, str)
 ) + (str(_ARTIFACT_CONTRACT.get("handoff", "handoff.md")),)
+COLLECTED_ARTIFACTS: Final = REQUIRED_ARTIFACTS + tuple(
+    str(name) for name in _ARTIFACT_CONTRACT.get("optional", ()) if isinstance(name, str)
+)
 UNKNOWN_DIRECTORY: Final = str(
     _ARTIFACT_CONTRACT.get("unknown_directory", "unknown")
 )
@@ -71,7 +74,7 @@ def collect_project_logs(
             if session.is_symlink() or not session.is_dir():
                 continue
             current_source_root = session.parent if session_sources is not None else source_root
-            sources = [session / artifact_name for artifact_name in REQUIRED_ARTIFACTS]
+            sources = [session / artifact_name for artifact_name in COLLECTED_ARTIFACTS]
             unknown_root = session / UNKNOWN_DIRECTORY
             if unknown_root.is_dir() and not unknown_root.is_symlink():
                 sources.extend(

@@ -13,7 +13,7 @@ RUNTIME_CONTRACT_PATH: Final = CENTRAL_ROOT / "policy/common/contracts/runtime-p
 
 def _load_runtime_contract() -> dict[str, Any]:
     value = json.loads(RUNTIME_CONTRACT_PATH.read_text(encoding="utf-8"))
-    if not isinstance(value, dict) or value.get("version") != 3:
+    if not isinstance(value, dict) or value.get("version") not in {3, 4}:
         raise RuntimeError(f"지원하지 않는 공통 runtime 계약입니다: {RUNTIME_CONTRACT_PATH}")
     return value
 

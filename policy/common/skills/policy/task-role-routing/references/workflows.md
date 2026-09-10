@@ -22,7 +22,7 @@ Planner → Refactorer → Watcher 순서를 기본으로 한다. 공개 계약�
 ## Logic·UI 분리 작업
 
 - Planner가 Logic과 UI의 파일 소유권, props/callback·DTO·hook 계약과 통합 순서를 정한다.
-- 같은 worktree이면 순차 인계하고 Git 통합 담당자 한 명만 index·commit을 조작한다.
+- 같은 worktree이면 순차 인계하고 Git 변경은 사용자 승인 후 순차 실행한다.
 - 실제 병렬 수정이면 역할별 child branch와 worktree를 사용한다.
 - 선행 역할의 Watcher 판정과 handoff 후 사용자가 다음 역할을 확인한다.
 - 통합 역할은 최신 파일과 handoff를 다시 읽고 기능을 연결한 뒤 전체 검증을 수행한다.

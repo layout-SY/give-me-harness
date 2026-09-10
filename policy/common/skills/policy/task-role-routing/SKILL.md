@@ -27,7 +27,7 @@ inject system prompt에 `--role logic|ui|orchest|review|generate`가 기록되�
 inject role이 없는 세션에서 새 작업을 시작할 때 다음 순서를 따른다.
 
 1. 사용자 요청, 적용 가능한 최신 `handoff.md`, 현재 브랜치 계약과 변경 상태를 읽는다.
-2. 아래 기본 역할 중 필요한 역할과 근거, 수정 예정 범위, 필요한 스킬·정책, Git 통합 담당자를 제안한다.
+2. 아래 기본 역할 중 필요한 역할과 근거, 수정 예정 범위, 필요한 스킬·정책, 승인할 Git 작업를 제안한다.
 3. 역할 판단을 사용자에게 알리고 확인을 받는다. 역할이 명시되지 않은 handoff는 자동 권한이 아니며 역할 판단의 근거로만 사용한다.
 4. 사용자가 역할과 진행을 이미 명시적으로 지시한 같은 프롬프트는 확인으로 사용할 수 있다. 요청 명확성 게이트가 `clear`가 아니거나 역할·범위·브랜치 계약 중 하나라도 모호하면 다음 단계 전에 질문한다.
 5. 확인된 역할이나 파일 범위를 확장하거나 다른 역할로 전환해야 하면 이유와 새 경계를 보고하고 다시 확인받는다.
@@ -42,11 +42,11 @@ inject role이 없는 세션에서 새 작업을 시작할 때 다음 순서를 
 - **통합 구현**: 같은 작업자가 Logic과 UI를 함께 맡는다. `logic.md`와 `ui.md`를 모두 따르되 계층 경계를 없애지 않는다.
 - **리뷰·평가·문서화**: 구현을 변경하지 않는 판정, 장기 평가 또는 기록만 수행한다. 관련 세부 역할은 [references/pipeline-roles.md](references/pipeline-roles.md)를 읽는다.
 
-역할 이름은 파일 경로를 자동 소유하게 하지 않는다. 실제 쓰기 권한은 사용자 승인, 브랜치 scope, 현재 파일 소유권과 충돌 상태의 교집합으로 정한다.
+역할 이름은 파일 경로를 자동 소유하게 하지 않는다. 실제 쓰기 권한은 사용자 승인과 작업 범위, 기존 변경의 충돌 상태로 정한다.
 
 ## handoff와 협업
 
-작업자·호스트·세션이 바뀌거나 부분 역할의 결과를 넘길 때는 [references/handoff-and-ownership.md](references/handoff-and-ownership.md)를 따른다. 같은 worktree에서는 역할이나 호스트 수와 무관하게 Git 통합 담당자 한 명만 index, commit, branch와 merge를 조작한다.
+작업자·호스트·세션이 바뀌거나 부분 역할의 결과를 넘길 때는 [references/handoff-and-ownership.md](references/handoff-and-ownership.md)를 따른다. 모든 세션이 사용자 승인 후 Git을 변경할 수 있으며 같은 worktree의 Git 변경은 순차 실행한다.
 
 ## 파이프라인 역할
 

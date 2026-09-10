@@ -1,38 +1,19 @@
-# Handoff와 소유권 계약
+# Handoff와 작업 기록
 
-handoff는 작업 연속성을 위한 상태 스냅샷이며 사용자 승인, 브랜치 scope 또는 Git 권한을 자동으로 부여하지 않는다.
+handoff는 작업 연속성을 위한 상태 기록이며 구현 승인이나 Git 변경 승인을 대신하지 않는다.
 
-## 작성 시점
+## 작성 시점과 내용
 
-- 작업이 끝나기 전에 작업자, 호스트, 세션 또는 역할 담당자가 바뀔 때
-- 부분 역할의 결과를 다음 역할에 전달할 때
-- 중앙 정책 배포나 context 문제로 새 세션을 시작해야 할 때
-- 작업을 `PRESERVED` 상태로 두고 별도 작업으로 전환할 때
+작업자·host·role·세션이 바뀌거나 중단할 때 목표, 현재 상태, 완료·대기 작업, 결정, 실제 경로·branch·HEAD·worktree, dirty/staged 변경, 명령과 검증 결과, 다음 조치를 기록한다. 역할 필드는 `requested_roles`, `confirmed_roles`, `completed_roles`, `next_role`을 사용한다. 인계받는 세션은 최신 사용자 요청과 실제 Git 상태를 함께 확인한다. inject role이 있으면 같은 역할을 반복 확인하지 않는다.
 
-## 필수 내용
+## 산출물
 
-- 목표와 현재 상태
-- `requested_roles`, `confirmed_roles`, `completed_roles`, `next_role`
-- 역할 판단 근거와 사용자 확인 내용
-- 완료·대기 작업, 결정 사항과 제약 조건
-- 변경 경로, 역할별 파일 소유권, 충돌 여부
-- 현재 Git 통합 담당자, branch/worktree/task 계약과 session assignment 책임
-- 실행한 명령과 결과, 실행하지 않은 검증
-- 차단 요인, 다음 조치와 필요한 스킬·정책
+`owner`는 `plan.md`와 `final-summary.md`를 작성한다. 부분 기여자 또는 중단·인계는 `handoff.md`로 남긴다. 세부 탐색·구현·리뷰·평가·portfolio·grill-me 문서는 필요에 따라 선택한다. 문서 누락으로 Git이나 다음 작업을 차단하지 않는다.
 
-인계받는 작업자는 사용자 요청과 handoff를 함께 읽는다. inject role이 없으면 다음 역할을 다시 제안하며, inject role이 있으면 handoff의 `next_role`과 일치하는지 확인한다. 서로 다르면 현재 역할을 확장하지 않고 올바른 `--role`로 새 세션을 시작하도록 보고한다. `next_role`은 제안이지 확정 권한이 아니다.
+자기 세션의 논리적 산출물 경로만 수정한다. 다른 host의 설정·로그와 다른 세션 기록은 읽기 전용이다. 이미 커밋된 기록을 branch 병합으로 전달할 수 있다. 정의되지 않은 보조 기록은 자기 세션의 `unknown/`에 둔다.
 
-## 산출물 기준
+## Git과 동시 작업
 
-- `owner` session assignment는 필수 산출물 8종을 작성한다.
-- `contributor` session assignment는 `handoff.md`를 작성한다. 이는 전체 작업 완료를 뜻하지 않으며 8종 산출물을 대신하지 않는다.
-- 한 작업자가 여러 역할을 모두 완료하면 역할별로 산출물 세트를 중복하지 않고 작업 단위 산출물 한 세트를 작성한다.
-- 다른 host·다른 세션의 산출물은 읽을 수 있지만 수정하지 않는다. 정의되지 않은 보조 기록은 자기 세션의 `unknown/`에 둔다.
+모든 세션은 프로젝트의 모든 branch/worktree에서 사용자 승인 후 Git 변경을 실행할 수 있다. contributor, 다른 host, 자식·부모 관계로 차단하지 않는다. 세션 독점 Git claim과 CLOSED 해제 절차는 없다. 같은 worktree의 Git 변경은 순차 실행하고 다른 작업의 변경을 덮어쓰거나 임의로 commit하지 않는다. 동시 소스 수정에는 별도 worktree를 권장한다.
 
-## 동시 작업과 Git 통합
-
-- 같은 worktree에서는 한 시점에 Git 통합 담당자 한 명만 branch, index, commit과 merge를 조작한다.
-- 역할이나 호스트가 Git 통합 권한을 자동 획득하지 않는다. 사용자와 branch 계약이 담당자를 정한다.
-- 서로 다른 assignment의 직접 자식→부모 통합은 부모 owner가 자기 worktree에서 자식을 source로 지정한 별도 완료 계약으로 실행한다. 계약은 부모 실행 assignment와 자식의 산출물 귀속을 고정하며 자식의 일반 Git 권한은 이전하지 않는다. 자식 close는 부모의 ACTIVE 상태·소유권을 해제하지 않는다. 세부 절차는 git-branch-strategy 스킬을 따른다.
-- 다른 작업자의 파일은 되돌리거나 덮어쓰지 않는다. 동일 파일이 필요하면 충돌 경로와 제안 해결책을 사용자에게 보고한다.
-- 각 인계 시점에는 인계하는 작업자 한 명만 `handoff.md`를 갱신한다.
+새 정책 적용 시 현재 세션을 handoff하고 새 inject assignment를 시작한다. Git 소유권 이전 명령은 필요하지 않으며, 과거 assignment를 resume하면 원래 bundle을 사용한다.

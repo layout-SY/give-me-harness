@@ -44,12 +44,13 @@ def _runtime_contract() -> dict[str, object]:
         value = json.loads(source.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError(f"공통 runtime 계약을 읽을 수 없습니다: {source}: {error}") from error
-    if not isinstance(value, dict) or value.get("version") != 3:
+    if not isinstance(value, dict) or value.get("version") not in {3, 4}:
         raise RuntimeError(f"지원하지 않는 공통 runtime 계약입니다: {source}")
     return value
 
 
 RUNTIME_CONTRACT = _runtime_contract()
+SHARED_GIT_ACCESS = RUNTIME_CONTRACT.get("version") == 4
 _HOSTS = RUNTIME_CONTRACT.get("hosts")
 if not isinstance(_HOSTS, dict):
     raise RuntimeError("공통 runtime 계약의 hosts가 올바르지 않습니다.")
@@ -1063,6 +1064,34 @@ SUPPORTED_MUTATING_GIT_SUBCOMMANDS = frozenset(
 
 
 def _config_is_read_only(arguments: tuple[str, ...]) -> bool:
+    if SHARED_GIT_ACCESS:
+        # --show-origin/--show-scope는 출력 장식이며 set 동작에도 붙을 수 있다.
+        if set(arguments[1:]) & {"--add", "--unset", "--unset-all", "--rename-section", "--remove-section"}:
+            return False
+        if set(arguments[1:]) & {"--get", "--get-all", "--get-regexp", "--get-urlmatch", "--list", "-l"}:
+            return True
+        if len(arguments) > 1 and arguments[1] in {"get", "list"}:
+            return True
+        positional = []
+        index = 1
+        while index < len(arguments):
+            value = arguments[index]
+            if value in {"--file", "-f", "--type"}:
+                index += 2
+                continue
+            if value.startswith(("--file=", "--type=")) or value in {
+                "--global", "--local", "--system", "--worktree", "--show-origin", "--show-scope",
+                "--includes", "--no-includes", "--null", "-z", "--bool", "--int", "--path",
+            }:
+                index += 1
+                continue
+            if value.startswith("-"):
+                return False
+            positional.append(value)
+            index += 1
+        return len(positional) == 1 and positional[0] not in {
+            "set", "unset", "rename-section", "remove-section", "edit",
+        }
     return any(
         option in arguments
         for option in (
@@ -1297,6 +1326,8 @@ def git_arguments_are_read_only(arguments: tuple[str, ...]) -> bool:
     if not arguments:
         return True
     subcommand = arguments[0]
+    if SHARED_GIT_ACCESS and subcommand == "fsck" and "--lost-found" in arguments:
+        return False
     if subcommand in READ_ONLY_GIT_SUBCOMMANDS:
         return not any(value == "--output" or value.startswith("--output=") or
                        value in {"--ext-diff", "--textconv"} for value in arguments[1:])
@@ -1989,6 +2020,10 @@ def branch_context(root: Path, base_branch: str = BASE_BRANCH) -> str:
         preview = ", ".join(dirty[:10])
         suffix = f" 외 {len(dirty) - 10}개" if len(dirty) > 10 else ""
         lines.append(f"- 변경 경로: {preview}{suffix}")
+    if SHARED_GIT_ACCESS:
+        lines.append("- 접근: 모든 branch/worktree 공유. Git 변경은 사용자 승인, 조회는 자유.")
+        lines.append("- 과거 branch 계약·Git claim·완료 상태는 접근 권한으로 사용하지 않습니다.")
+        return "\n".join(lines)
     if not branch or branch == base_branch:
         lines.extend(("- 작업 목적: 기준 브랜치", "- 직접 merge 대상: 없음", "- 다음 안전 조치: 변경 작업이면 새 작업 브랜치 승인을 요청"))
         return "\n".join(lines)

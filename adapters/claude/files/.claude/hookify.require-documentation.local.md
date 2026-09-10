@@ -6,20 +6,6 @@ pattern: .*
 action: warn
 ---
 
-⚠️ **문서화 완료 여부를 확인하세요**
-
-작업을 완료 처리하기 전에 아래 필수 산출물이 생성되었는지 확인하세요.
-
-**에이전트별 필수 문서:**
-
-| 에이전트 | 필수 문서 |
-|---------|---------|
-| planner | `plan.md`, `exploration.md` |
-| generator / refactorer | `implementation-log.md`, `final-summary.md` |
-| watcher | `review-log.md` |
-| evaluator | `evaluation-log.md` |
-
-**저장 경로:** `.claude/logs/sessions/{날짜}-{작업명}/`
-
-문서가 생성되지 않았다면 작업을 완료 처리하기 전에 반드시 작성하세요.
-`artifacts` 필드에 명시된 파일이 실제로 존재해야 완료로 간주합니다.
+작업 결과를 자기 세션의 `.claude/logs/sessions/{날짜}-{작업명}/`에 기록한다.
+owner는 `plan.md`와 `final-summary.md`, 부분 기여자 또는 인계 시에는 `handoff.md`를 사용한다. 세부 탐색·구현·리뷰·평가 기록은 필요에 따라 선택한다.
+문서 누락으로 대화 종료, Git 변경 또는 다음 작업 시작을 차단하지 않는다.

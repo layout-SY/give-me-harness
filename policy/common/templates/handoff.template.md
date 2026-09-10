@@ -28,7 +28,7 @@
 - 역할별 파일 소유권:
 - 충돌 여부:
 - task·branch·worktree:
-- Git 통합 담당자:
+- 승인할 Git 작업:
 - 산출물 책임: owner | contributor
 
 ## 관련 경로와 스킬

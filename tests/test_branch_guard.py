@@ -12,7 +12,8 @@ from types import ModuleType
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
-from agent_policy.core import load_project, render_project
+from agent_policy.core import load_project
+from legacy_runtime import render_project
 
 
 class BranchGuardTests(unittest.TestCase):

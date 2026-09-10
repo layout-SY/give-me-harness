@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "roles": {
     "logic": {
       "canonical": "logic"
@@ -34,19 +34,21 @@
   "artifacts": {
     "required": [
       "plan.md",
-      "exploration.md",
-      "implementation-log.md",
-      "grill-me-review.md",
-      "review-log.md",
-      "evaluation-log.md",
-      "final-summary.md",
-      "portfolio-log.md"
+      "final-summary.md"
     ],
     "handoff": "handoff.md",
     "unknown_directory": "unknown",
     "responsibilities": [
       "owner",
       "contributor"
+    ],
+    "optional": [
+      "exploration.md",
+      "implementation-log.md",
+      "grill-me-review.md",
+      "review-log.md",
+      "evaluation-log.md",
+      "portfolio-log.md"
     ]
   },
   "task_states": [
@@ -58,17 +60,13 @@
     "PRESERVED"
   ],
   "git": {
-    "never_agent_commands": [
-      "push",
-      "reset --hard",
-      "clean",
-      "update-ref"
-    ],
+    "never_agent_commands": [],
     "validation_commands": [
       "{{LINT_COMMAND}}",
       "{{TEST_COMMAND}}",
       "{{BUILD_COMMAND}}"
-    ]
+    ],
+    "access": "shared-project"
   },
   "capabilities": {
     "source_write": [
@@ -83,6 +81,6 @@
       "review",
       "generate"
     ],
-    "git_write": "approved-integrator-assignment"
+    "git_write": "user-approved-operation"
   }
 }

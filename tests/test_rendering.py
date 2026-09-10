@@ -182,8 +182,12 @@ class RenderingTests(unittest.TestCase):
         config = json.loads(rendered["opencode.json"])
         bash = config["permission"]["bash"]
         self.assertEqual(bash["*"], "allow")
-        for command in ("git", "git *", "npm run build", "npm run dev", "vite *"):
+        for command in ("npm run dev", "vite *"):
             self.assertEqual(bash[command], "ask")
+        # Git은 공통 guard의 실제 argv 분류/승인을 사용한다. build에는 중복 승인하지 않는다.
+        for command in ("git", "git *", "npm run build"):
+            self.assertNotIn(command, bash)
+        self.assertEqual(bash["vite build"], "allow")
 
     def test_rendered_role_contract_is_host_neutral(self) -> None:
         rendered = render_project(load_project("user-ui"))
@@ -285,9 +289,13 @@ class RenderingTests(unittest.TestCase):
         self.assertIn(b"ALLOWED_ROLES", runtime)
         self.assertIn(b"def assignment_includes_branch(", runtime)
         strategy = rendered[".agent-policy/common/skills/policy/git-branch-strategy/SKILL.md"]
-        self.assertIn(b"owner|contributor", strategy)
-        self.assertIn(b"proposal-sha256", strategy)
-        self.assertIn("assignment 권한 root".encode(), strategy)
+        # 이전 실행/복구 구현은 보존하지만 새 주입 문서가 V3 권한을
+        # 요구하면 안 된다. 실제 V4 허용/차단은 shared Git 통합 검사로 검증한다.
+        self.assertIn("모든 host·role·session".encode(), strategy)
+        self.assertNotIn(b"proposal-sha256", strategy)
+        self.assertNotIn("assignment 권한 root".encode(), strategy)
+        self.assertIn(".agent-policy/runtime/shared_git.py", rendered)
+        self.assertEqual(json.loads(rendered[".agent-policy/common/contracts/runtime-policy.json"])["version"], 4)
         self.assertIn(
             b'git(root, "worktree", "add"',
             rendered[

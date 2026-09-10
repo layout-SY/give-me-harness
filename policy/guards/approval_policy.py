@@ -213,6 +213,9 @@ def is_ui_exploration_evidence(event: dict[str, Any], root: Path) -> bool:
 
 def task_context(event: dict[str, Any], root: Path, host: str) -> dict[str, Any]:
     """아직 쓰지 않은 기존 task도 식별하되 종료된 branch의 문맥은 제외한다."""
+    if branch_guard.SHARED_GIT_ACCESS:
+        return {"task": os.environ.get("ASAN_AGENT_POLICY_TASK", ""),
+                "branch": branch_guard.current_branch(root), "task_values": {}, "values": {}}
     binding = _artifact_policy.session_binding_record(event, root, host)
     task = active_assignment_branch(event, root, host)
     if binding.get("_action") == "create":
@@ -239,6 +242,8 @@ def task_context(event: dict[str, Any], root: Path, host: str) -> dict[str, Any]
 def requires_ui_exploration(event: dict[str, Any], root: Path, host: str) -> bool:
     if os.environ.get(INJECT_ROLE_ENV, "").strip().casefold() == "ui":
         return True
+    if branch_guard.SHARED_GIT_ACCESS:
+        return False
     tool_input = event.get("tool_input") or {}
     command = str(tool_input.get("command") or "")
     if trusted_branch_workflow_action(command, root) == "create":
@@ -253,7 +258,19 @@ def approval_scope(event: dict[str, Any], root: Path, host: str) -> dict[str, An
     context = task_context(event, root, host)
     directory = _artifact_policy.bound_session_directory(event, root, host)
     plan = directory / "plan.md" if directory else None
+    if branch_guard.SHARED_GIT_ACCESS and (plan is None or not plan.is_file()):
+        # 다른 worktree에 결과 로그를 쓰더라도 승인한 원래 계획은 유지한다.
+        # 그 위치에 새 plan.md를 작성하거나 원래 계획을 바꾸면 내용 비교로
+        # 정상적으로 구현 재승인을 요구한다.
+        previous = load_json_state(harness_state_path(event, root, host)).get("implementation_scope", {})
+        raw = previous.get("plan_path", "")
+        context = _tool_paths.repository_target(root, raw) if raw else None
+        if context and context[1].startswith(_artifact_policy.artifact_sessions_prefix(host)):
+            plan = Path(raw)
     plan_digest = hashlib.sha256(plan.read_bytes()).hexdigest() if plan and plan.is_file() and not plan.is_symlink() else ""
+    if branch_guard.SHARED_GIT_ACCESS:
+        return {"task": "session", "role": os.environ.get(INJECT_ROLE_ENV, ""),
+                "contract": "", "plan": plan_digest, "plan_path": str(plan) if plan else "", "source_scopes": []}
     return {"task": context["task"], "role": os.environ.get(INJECT_ROLE_ENV, ""),
             "contract": str(context["task_values"].get("contract-sha256") or ""), "plan": plan_digest,
             "source_scopes": list(context["values"].get("scope") or context["task_values"].get("scope") or ())}
@@ -297,6 +314,16 @@ def readiness_context(event: dict[str, Any], root: Path, host: str) -> str:
     context = task_context(event, root, host)
     requirements = readiness_requirements(event, root, host)
     missing = [label for key, label in requirements.items() if state.get(key) is not True]
+    if branch_guard.SHARED_GIT_ACCESS:
+        return "\n".join([
+            "[SESSION_READINESS]", "- git_access: shared-project",
+            "- branch_creation_required: false",
+            f"- role: {os.environ.get(INJECT_ROLE_ENV, '') or '미지정'}",
+            *(f"- {key}: {str(state.get(key) is True).lower()}" for key in requirements),
+            f"- 소스 구현 준비: {', '.join(missing) or '완료'}",
+            "- 모든 branch/worktree에서 Git 변경은 사용자 승인, 조회는 자유입니다.",
+            "- Git에는 구현 준비·branch 계약·소유권·CLOSED 검사를 적용하지 않습니다.",
+        ])
     lines = ["[SESSION_READINESS]", f"- task: {context['task'] or '미지정'}",
              f"- role: {os.environ.get(INJECT_ROLE_ENV, '') or '미지정'}",
              f"- branch_creation_required: {str(not bool(context['branch'])).lower()}"]
@@ -366,6 +393,62 @@ def command_digest(command: str) -> str:
     return hashlib.sha256(command.encode()).hexdigest()
 
 
+def operation_fingerprint(root: Path, command: str) -> str:
+    """사용자가 확인한 작업 위치, 명령, ref와 실제 변경 내용을 함께 고정한다."""
+    invocations = branch_guard.git_invocations(root, command, root) or ()
+    snapshots = []
+    for invocation in invocations:
+        target, args = invocation.root, invocation.arguments
+        if not args or branch_guard.git_arguments_are_read_only(args):
+            continue
+        snapshots.append([str(target), branch_guard.current_branch(target), branch_guard.head(target)])
+        selected: tuple[str, ...] = ()
+        if args[0] == "add":
+            files = branch_guard._git(target, "ls-files", "-c", "-o", "--exclude-standard", "-z", "--",
+                                      *branch_guard._pathspecs_after_separator(args))
+            if files.returncode:
+                raise RuntimeError("승인할 stage 경로를 확인할 수 없습니다.")
+            selected = tuple(sorted(set(filter(None, files.stdout.split("\0")))))
+        elif args[0] == "commit":
+            # commit은 index의 실제 내용을 고정한다. 타 세션의 unstaged
+            # 로그 갱신은 이 작업의 재승인 사유가 아니다.
+            snapshots.append(["index", branch_guard._output(target, "diff", "--cached", "--binary")])
+            if any(value in {"--all", "--only", "--include"} or re.fullmatch(r"-[A-Za-z]*[aio][A-Za-z]*", value)
+                   for value in args[1:]):
+                selected = branch_guard.changed_paths(target)
+        else:
+            selected = tuple(name for name in branch_guard.changed_paths(target)
+                             if not name.startswith(ARTIFACT_SESSIONS_PREFIXES))
+            for value in args[1:]:
+                if not value.startswith("-"):
+                    resolved = branch_guard._output(target, "rev-parse", "--verify", "--end-of-options", value + "^{object}")
+                    if resolved:
+                        snapshots.append([value, resolved])
+            if args[0] in {"push", "pull", "fetch", "remote"}:
+                snapshots.append(["remotes", branch_guard._output(target, "remote", "-v")])
+        for relative in selected:
+            file = target / relative
+            content = (os.readlink(file).encode() if file.is_symlink() else
+                       file.read_bytes() if file.is_file() else b"<absent>")
+            snapshots.append([relative, hashlib.sha256(content).hexdigest()])
+    return command_digest(json.dumps([str(root.resolve()), command, snapshots], ensure_ascii=False))
+
+
+def operation_allowed(event: dict[str, Any], root: Path, host: str, command: str) -> bool:
+    path = approval_state_path(event, root, host)
+    if path is None:
+        return False
+    current = operation_fingerprint(root, command)
+    previous = load_approval_state(path)
+    if previous.get("approved") is True and previous.get("command_sha256") == current:
+        path.unlink(missing_ok=True)
+        return True
+    write_approval_state(path, {"approved": False, "command_sha256": current,
+                              "command": command, "worktree": str(root.resolve()),
+                              "created_at": time.time()})
+    return False
+
+
 def codex_operation_allowed(event: dict[str, Any], root: Path, command: str) -> bool:
     path = approval_state_path(event, root, "codex")
     if path is None:
@@ -391,6 +474,28 @@ def codex_operation_allowed(event: dict[str, Any], root: Path, command: str) -> 
 def record_user_prompt(event: dict[str, Any], root: Path, host: str) -> None:
     prompt = event.get("prompt")
     if not isinstance(prompt, str):
+        return
+
+    if branch_guard.SHARED_GIT_ACCESS:
+        path = approval_state_path(event, root, host)
+        pending = load_approval_state(path)
+        explicit = prompt.strip() == COMMAND_APPROVAL_PHRASE or is_implementation_approval(prompt)
+        if pending and explicit and not DENIAL_WORD_PATTERN.search(prompt):
+            pending["approved"] = True
+            pending["created_at"] = time.time()
+            write_approval_state(path, pending)
+            print("보고한 동일 Git 작업 단위를 한 번 실행하도록 승인했습니다.")
+            return
+        if pending and DENIAL_WORD_PATTERN.search(prompt):
+            path.unlink(missing_ok=True)
+        harness_path = harness_state_path(event, root, host)
+        harness = load_harness_state(event, root, host)
+        if explicit and prompt.strip() != COMMAND_APPROVAL_PHRASE:
+            harness["implementation_approved"] = True
+            harness["implementation_scope"] = approval_scope(event, root, host)
+        elif normalize_prompt(prompt) in {"구현 승인 취소", "구현 중단", "cancel implementation"}:
+            harness["implementation_approved"] = False
+        write_json_state(harness_path, harness)
         return
 
     harness_path = harness_state_path(event, root, host)
@@ -519,6 +624,9 @@ def implementation_gate_denial(
             missing.append("현재 proposal SHA-256에 대한 사용자 승인")
     if not missing:
         return None
+    if branch_guard.SHARED_GIT_ACCESS:
+        return ("소스 구현 준비가 필요합니다: " + ", ".join(dict.fromkeys(missing))
+                + ". 승인한 계획과 성공한 스킬·탐색 근거를 확인하세요. Git 변경 승인은 별도로 처리합니다.")
     return (
         "공통 구현 gate의 필수 조건이 누락되었습니다: "
         + ", ".join(dict.fromkeys(missing))

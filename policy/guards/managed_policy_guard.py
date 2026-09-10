@@ -404,6 +404,9 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
         raise SystemExit("지원하지 않는 guard mode입니다.")
 
     root = repository_root(event)
+    if branch_guard.SHARED_GIT_ACCESS:
+        load_runtime_module("shared_git").pre_tool(event, root, host)
+        return
     raw_input = event.get("tool_input")
     command = str(raw_input.get("command") or "") if isinstance(raw_input, dict) else ""
     if normalized_tool_name(event) in SHELL_TOOLS and _tool_paths.unsupported_workflow_invocation(command, root):

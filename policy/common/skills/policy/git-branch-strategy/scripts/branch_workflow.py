@@ -1344,6 +1344,11 @@ def main() -> int:
     guard = load_guard(root)
     if not guard.enabled(str(guard.BASE_BRANCH)):
         raise SystemExit("기준 브랜치 토큰이 렌더링되지 않았습니다. 중앙 agent-policy start로 새 inject 세션을 시작하세요.")
+    if guard.SHARED_GIT_ACCESS:
+        if arguments.command == "context":
+            print(guard.branch_context(root))
+            return 0
+        raise SystemExit("V4에서는 일반 Git 명령을 사용자 승인 후 실행합니다. V3 계약 생성·완료 절차는 사용하지 않습니다.")
     actions = {"proposal": proposal, "create": create, "scope-proposal": scope_proposal,
                "update-scope": update_scope, "finish-proposal": finish_proposal, "finish": finish,
                "verify": verify, "close": close, "preserve": preserve, "resume": resume}

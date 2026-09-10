@@ -1,0 +1,136 @@
+{
+  "policy_version": 4,
+  "baseline_commit": "d0d8b6f8dcb22beea8d3c08da07265f71949254c",
+  "results": [
+    {
+      "kind": "before_contract",
+      "log": "/private/tmp/asan-shared-git-before.log",
+      "sha256": "a853c4f2ac541f944797b4bacda623f5cafb2bf8017611f618032af3fd6fe454",
+      "test_count": 5,
+      "duration_seconds": 19.53,
+      "passed": false
+    },
+    {
+      "kind": "before_unrelated_log_fix",
+      "log": "/private/tmp/asan-shared-git-unrelated-before.log",
+      "sha256": "46782d473aa616e2438d511fe8f59edb2130392c7c1f752f272210b9deb01084",
+      "test_count": 1,
+      "duration_seconds": 1.206,
+      "passed": false
+    },
+    {
+      "kind": "before_plan_worktree_fix",
+      "log": "/private/tmp/asan-shared-git-plan-before.log",
+      "sha256": "6a794af29944cde6655077af4e715d86745af91f2abc2a6d5b615e4256e7bd30",
+      "test_count": 1,
+      "duration_seconds": 2.218,
+      "passed": false
+    },
+    {
+      "kind": "initial_full_suite",
+      "log": "/private/tmp/asan-shared-git-full-suite.log",
+      "sha256": "162e784c56092ffb5fbb041de22f1efb7ba8d3a21747be87371e2f569cadcb57",
+      "test_count": 242,
+      "duration_seconds": 1134.651,
+      "passed": false
+    },
+    {
+      "kind": "shared_git_regressions",
+      "log": "/private/tmp/asan-shared-git-final-regressions.log",
+      "sha256": "a8e0350c4db274b32f3fff20408e6a9faebdb25893b1cad79fe9a68bfa0f75e1",
+      "test_count": 17,
+      "duration_seconds": 38.996,
+      "passed": true
+    },
+    {
+      "kind": "injection",
+      "log": "/private/tmp/asan-shared-git-injection-final.log",
+      "sha256": "fcee8450076637fa791ff09e8be16d179f829bd7409c504f82dae3e920319f8a",
+      "test_count": 26,
+      "duration_seconds": 17.786,
+      "passed": true
+    },
+    {
+      "kind": "optional_log_collection",
+      "log": "/private/tmp/asan-shared-git-log-mirror-final.log",
+      "sha256": "d8b9e1c34d2eb880497d2eced07f731f918ba2bb88fc9aa1622dee1f1610fb9a",
+      "test_count": 6,
+      "duration_seconds": 0.022,
+      "passed": true
+    },
+    {
+      "kind": "rendering",
+      "log": "/private/tmp/asan-shared-git-rendering-final.log",
+      "sha256": "bcb0345c493dae505080b2c9c847b6c9f3b92db0eaf726db6c5bf72dabc3adc3",
+      "test_count": 23,
+      "duration_seconds": 0.793,
+      "passed": true
+    },
+    {
+      "kind": "final_full_suite",
+      "log": "/private/tmp/asan-shared-git-full-final.log",
+      "sha256": "8379de0486489cc3bb70e797bdb702f066505c6a0e5114a53cd99ff640a0e364",
+      "test_count": 248,
+      "duration_seconds": 1224.214,
+      "passed": true
+    }
+  ],
+  "audit": {
+    "log": "/private/tmp/asan-shared-git-audit-final.log",
+    "sha256": "9877ace957da35e5b345e90773110cdf7d9bff949ba157bdd08ccb791e1aa297",
+    "output": [
+      "[central-contract] PASS",
+      "[admin-ui] PASS (263 bundle files)",
+      "[user-ui] PASS (193 bundle files)"
+    ]
+  },
+  "tested_source_files": {
+    "adapters/claude/CLAUDE.template.md": "4792a374661978800e62ac2f6b69584b23f4799d3d02862dcf428505f3fbf894",
+    "adapters/claude/files/.claude/agents/planner.md": "3bdc16cb77a4d8fec0074f91537066b6efa790e976f3bd5534d2da2821d81c0b",
+    "adapters/claude/files/.claude/agents/watcher.md": "f16f64022867cbca56d1de6a5f44e362fee15b8dc76802b62e80cb30f69d9af0",
+    "adapters/claude/files/.claude/hookify.require-documentation.local.md": "540d933fd7eade85ece712c3fb784f99ee406c3e8d8f1849501f56f2a9528aa7",
+    "adapters/codex/files/.codex/agents/generator.toml": "3d27d6aa043172e18ed465ff3b0d8f67d8378fbbd95ddedfa4ecc5e9afd439db",
+    "adapters/codex/files/.codex/agents/planner.toml": "4d0e155dd8f71367e6705bee3ed1c8a9bb8355a6731c4ca0ef9fd1590e9527aa",
+    "adapters/opencode/files/.opencode/agent/watcher.md": "c8f6bea34f23d644727afe51aee9ceba82fb13fcd2aa4a418c76ba847e51ae97",
+    "adapters/opencode/opencode.base.json": "addc4f2bf6285852f4b2ade51c811c43088f75b62474a0c1c9a1ded53dc999e3",
+    "lib/agent_policy/cli.py": "bf5b669dfb078241f105143141af964d6613a542e942286b9b8e955d568400d5",
+    "lib/agent_policy/core.py": "5451625d771b4de7fec9202a353603eed47769599d2c6924afe3d9f8ca4a89da",
+    "lib/agent_policy/injection.py": "ca3f33ecff97593ba104f439478c7899f384f86ccafa059864038c7a36d29776",
+    "lib/agent_policy/log_mirror.py": "484c63041061dbecf3ad3cbf3c0c6b114d374a1d84bf8445b727a64fc2f21a36",
+    "lib/agent_policy/role_profiles.py": "2b130ce2301fe66b478b9e2c1ee8c0d434cc6aef7ee29c8aa4ce6e5f5110b2d7",
+    "policy/common/AGENT_POLICY.template.md": "9e0fbb23e719d50a6f87e9eaa2f14eec144be5edd991a4c88a7a2dbdab4a249a",
+    "policy/common/contracts/runtime-policy.json": "6a8c2411394c5d60f16a8bb947428f30c0eb714fd7a99eb321c6e8244d22347d",
+    "policy/common/skills/policy/documentation/SKILL.md": "4621cbbed88635b94b17b4fc191799d2cb392985a5f16d72a3ce2fa5dbf4103a",
+    "policy/common/skills/policy/git-branch-strategy/SKILL.md": "d8030e4a522f5af5bc1dbe8c8f8b285d114fd0494d26720e8297e91b00343025",
+    "policy/common/skills/policy/git-branch-strategy/scripts/branch_workflow.py": "984adede865f50302b17c4167715795a9020ad15812d0ca68d2727e401e66275",
+    "policy/common/skills/policy/harness/SKILL.md": "d0ea90a54de1007f503c7a9f034c6e590fa05e3f5c3219e6f6e6396e591ce2ce",
+    "policy/common/skills/policy/task-role-routing/SKILL.md": "754ebae8ce7c96803201d42a8c6d37e8228995492db11d68d7c44527c1918dec",
+    "policy/common/skills/policy/task-role-routing/references/handoff-and-ownership.md": "b6d1cb48857acf742f205190faa64e2ce330c5171970b9be93c54c9f2c790ca6",
+    "policy/common/skills/policy/task-role-routing/references/orchestration.md": "50ef24e3e9a4cff919232e0c23ed1a4577522937ae485c2e90a889b1adb33738",
+    "policy/common/skills/policy/task-role-routing/references/pipeline-roles.md": "23b26c65061684282fa9eeb8adbb4f7893f59966b8b82761425f8d617f7d0416",
+    "policy/common/skills/policy/task-role-routing/references/workflows.md": "1bc91acf658c24e5f646ca8008a24469187abef92ea9126551c7d9393c6fa29c",
+    "policy/common/templates/README.md": "c2f4f92e137274436a59365940aeca66f0af040d3b78fc9b9e7877c3b1190888",
+    "policy/common/templates/handoff.md": "fb9c623f2c9a608fd06ac134eda6128fd542dd1e18444567727b4e93208f831e",
+    "policy/common/templates/handoff.template.md": "fd512755543ca6dcfd3ae274191d172fb831b49a7ef0aa2a22339133ccf00d80",
+    "policy/common/templates/plan.md": "1d1c38042cd6e21b96e71083f72295d1d1f416ea8934de26f6d8e07cacadf37f",
+    "policy/common/templates/plan.template.md": "a744056bd21d5cef15c0dacb34a9721cda655775bc18337c7b704f1b319c9170",
+    "policy/guards/approval_policy.py": "476c8466feb297bd46bc76013458139748607d81596ab467e4551c976d65ab6f",
+    "policy/guards/artifact_policy.py": "37c7863861d799ba308814afdeae4d6f7a4220e86059830fda70d763eb1de6c7",
+    "policy/guards/branch_guard.py": "44aa9211c7b4a9ef5a249aa63ddab68972348852f6d3f2185a5da23e57a889ce",
+    "policy/guards/managed_policy_guard.py": "16467c9f5804301a9379902e1d7167fd95f0d3e7a5172b1f8f0f1f3ff8f15b46",
+    "policy/guards/shared_git.py": "96dc0bb10d5fdc6d9fea31aa47bfaf73d57e90234ef8c36345cd5dadc47f6202",
+    "policy/guards/tool_paths.py": "c98f0753a1cf1433a09dd926e0bb283593589dbc92cdfebd2658a804135d428f",
+    "tests/legacy_runtime.py": "355620bb073bffbb18a589a030818296092995e4d09b415d3b292a890311b467",
+    "tests/test_branch_guard.py": "42a63cfa4d0c7ce23c84c95bb88d0bf57e0bffaeeed18ef84f6b4f5f455e20ac",
+    "tests/test_child_completion.py": "a1f8e8823a3b255dc840f6c063ff6ba5fedd372d75c82a228f9bef1936e0f9b3",
+    "tests/test_guard.py": "b1d15b894a000b0ae8552d46c62e825bbd7476ebae4f9c453646313c98150f3e",
+    "tests/test_injection.py": "167e9f3a9c91ace4eb9c6b2f545773702b204fc8657edac1871478300bd5f4e4",
+    "tests/test_remediation.py": "a348dce6c506d14463d9df1a49a26a08bed69efba2fb98322b90af5e210699dc",
+    "tests/test_rendering.py": "3f6f40b725198c1cc7d88a70d6ac4ca77d508a6355bce593abe65214eabcbf44",
+    "tests/test_shared_git_access.py": "1fec461d243ce59033c502643ae81c63b6b31d2c5bb67caca2cdbf40fdeea6b2"
+  },
+  "initial_full_suite_fixes": [
+    "선택 문서의 중앙 로그 수집 유지",
+    "V4에 맞는 주입 문서 기대값으로 변경"
+  ]
+}

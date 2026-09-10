@@ -22,8 +22,8 @@ inject system prompt에 `--role`이 있으면 해당 값은 이번 세션에서 
 - 읽기 전용 shell의 `2>&1`, `2>/dev/null`은 산출물 생성으로 취급하지 않는다. 일반 파일로 향하는 redirect는 실제 쓰기이므로 관리 파일·산출물 정책을 적용한다.
 - 사용자 권한 UI가 필요한 명령은 중앙 `PreToolUse` hook의 `ask` 결정을 따른다. 차단을 우회하거나 같은 명령을 의미 없이 반복하지 않는다.
 - `git checkout -- <path>` 대신 `git restore ... -- <path>`를 사용한다.
-- branch 전환과 merge를 하나의 복합 shell 명령으로 결합하지 않는다.
-- 정책 스냅샷의 branch workflow가 출력한 전체 SHA와 승인 요청 식별자를 그대로 사용한다.
+- 관련 Git 명령을 묶을 때 전체 작업 위치·대상·영향을 보고하여 한 번에 승인받는다.
+- branch workflow의 계약·SHA 승인은 사용하지 않는다. 일반 Git 변경은 native 권한 요청을 따른다.
 
 ## 4. 관리 정책 파일
 
@@ -35,9 +35,9 @@ inject system prompt에 `--role`이 있으면 해당 값은 이번 세션에서 
 
 - Claude Code 세션 산출물의 정본은 `.claude/logs/sessions/{YYYY-MM-DD-task-slug}/`다.
 - 산출물 스키마는 `.claude/templates/`, 부분 역할 인계는 `.claude/templates/handoff.template.md`를 사용한다.
-- 전체 작업 책임자는 공통 계약의 필수 산출물 8종을 작성하고, 부분 기여자는 `handoff.md`를 작성한다.
+- 전체 작업 책임자는 공통 계약의 계획·최종 결과 기록을 작성하고, 부분 기여자는 `handoff.md`를 작성한다.
 - handoff의 `next_role`은 다음 역할의 제안이며 자동 권한이 아니다.
-- 같은 worktree의 Git 통합 담당자가 따로 있으면 branch, index, commit과 merge를 조작하지 않는다. Claude Code가 담당자로 확인된 경우에만 해당 Git 작업을 수행한다.
+- 모든 branch/worktree에서 사용자 승인 후 Git 변경을 수행한다. 다른 세션의 Git 소유권이나 CLOSED를 요구하지 않는다.
 
 ## 6. Claude native agent와 검증
 

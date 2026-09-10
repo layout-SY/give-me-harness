@@ -174,10 +174,8 @@ class InjectionTests(unittest.TestCase):
             "기존 회귀 테스트를 삭제하거나 검증을 약화해 통과시켜서는 안 된다."
         )
         loop_contract = "동일 원인의 훅 차단을 무한히 재시도하지 않는다."
-        v3_contract = (
-            "V1·V2·무버전 branch metadata는 읽기 전용 history로만 취급하며 "
-            "source·Git 변경 권한을 부여하지 않는다."
-        )
+        # V4는 metadata를 권한으로 사용하지 않는다. 사고 회귀 의무는 유지한다.
+        v3_contract = "V1/V2/V3 metadata, git-integrator, Git claim, ACTIVE/CLOSED/PRESERVED와 완료 예약은 새 세션의 권한 판정에 사용하지 않는다."
 
         for host in ("codex", "claude", "opencode"):
             with self.subTest(host=host):
@@ -708,8 +706,13 @@ class InjectionTests(unittest.TestCase):
             assigned.environment["ASAN_ARTIFACT_RESPONSIBILITY"],
             "contributor",
         )
+        described = self.prepare("claude", task="임의 작업 설명")
+        self.assertEqual(described.environment["ASAN_AGENT_POLICY_TASK"], "임의 작업 설명")
+        self.assertRegex(described.environment["ASAN_SESSION_DIR"], r"^\.claude/logs/sessions/[a-zA-Z0-9._-]+$")
+        escaped = self.prepare("claude", task="../../다른 작업")
+        self.assertNotIn("..", escaped.environment["ASAN_SESSION_DIR"])
         with self.assertRaises(PolicyError):
-            self.prepare("claude", task="invalid-task")
+            self.prepare("claude", task="invalid\ntask")
 
     def test_start_parser_is_inject_only_and_sync_commands_are_absent(self) -> None:
         default = build_parser().parse_args(
@@ -857,7 +860,7 @@ class InjectionTests(unittest.TestCase):
             self.assertEqual(stderr.getvalue(), "")
             self.assertIn("mode: inject", stdout.getvalue())
 
-    def test_task_start_rejects_legacy_branch_before_host_launch(self) -> None:
+    def test_task_start_accepts_legacy_branch_without_contract_approval(self) -> None:
         repository = self.root / "legacy-task-repository"
         repository.mkdir()
         subprocess.run(["git", "init", "-q", "-b", "sy-main"], cwd=repository, check=True)
@@ -913,12 +916,18 @@ class InjectionTests(unittest.TestCase):
             patch("agent_policy.cli.select_projects", return_value=(project,)),
             patch("agent_policy.cli.audit_project", return_value=()),
             patch("agent_policy.cli.prepare_injection") as prepare,
-            self.assertRaisesRegex(PolicyError, "V3 계약을 다시 승인"),
+            redirect_stdout(StringIO()),
         ):
-            run_start("user-ui", "codex", None, True, role="logic", task=branch)
-        prepare.assert_not_called()
+            result = run_start("user-ui", "codex", None, True, role="logic", task="새 작업 설명")
+        self.assertEqual(result, 0)
+        prepare.assert_called_once()
 
     def test_task_start_rejects_pending_policy_retirement_outside_scope(self) -> None:
+        # 이전 V3 maintenance 복구 계약의 scope 검사는 계속 회귀 검증한다.
+        from legacy_runtime import render_project
+        legacy = patch("agent_policy.cli.render_project", render_project)
+        legacy.start()
+        self.addCleanup(legacy.stop)
         repository = self.root / "retirement-task-repository"
         repository.mkdir()
         subprocess.run(["git", "init", "-q", "-b", "sy-main"], cwd=repository, check=True)

@@ -99,7 +99,7 @@ def artifact_layout_denial(root: Path, raw_path: str, host: str) -> str | None:
     if len(parts) < 2 or SESSION_NAME_PATTERN.fullmatch(parts[0]) is None:
         return f"세션 산출물 경로가 올바르지 않습니다: {relative}"
     artifact_parts = parts[1:]
-    known = {*REQUIRED_ARTIFACTS, HANDOFF_ARTIFACT}
+    known = {*REQUIRED_ARTIFACTS, HANDOFF_ARTIFACT, *branch_guard.RUNTIME_CONTRACT["artifacts"].get("optional", [])}
     if len(artifact_parts) == 1 and artifact_parts[0] in known:
         return None
     if len(artifact_parts) >= 2 and artifact_parts[0] == UNKNOWN_ARTIFACT_DIRECTORY:
@@ -189,6 +189,8 @@ def binding_worktree(root: Path, record: dict[str, str]) -> Path:
 def active_assignment_branch(event: dict[str, Any], root: Path, host: str) -> str:
     """CLOSED 전까지 같은 세션이 소유하는 assignment 권한 root를 반환한다."""
 
+    if branch_guard.SHARED_GIT_ACCESS:
+        return ""
     record = session_binding_record(event, root, host)
     declared = os.environ.get(TASK_ENV, "").strip()
     recorded = record.get("task", "")
@@ -913,7 +915,7 @@ def reserve_binding(event: dict[str, Any], root: Path, host: str) -> None:
             if other_path == pending:
                 continue
             proposed = other.get("binding", {})
-            if any(proposed.get(key) != binding.get(key) for key in ("branch", "worktree", "directory")):
+            if any(proposed.get(key) != binding.get(key) for key in (("directory",) if branch_guard.SHARED_GIT_ACCESS else ("branch", "worktree", "directory"))):
                 raise RuntimeError("실행 결과가 확인되지 않은 다른 branch/worktree의 도구 예약이 있습니다. 먼저 결과를 확인하세요.")
         directory = binding.get("directory")
         resource = "artifact:" + host + ":" + directory if directory else ""

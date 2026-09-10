@@ -3,22 +3,6 @@
   "permission": {
     "bash": {
       "*": "allow",
-      "git": "ask",
-      "git *": "ask",
-      "npm run build": "ask",
-      "npm run build *": "ask",
-      "pnpm build": "ask",
-      "pnpm build *": "ask",
-      "yarn build": "ask",
-      "yarn build *": "ask",
-      "bun run build": "ask",
-      "bun run build *": "ask",
-      "vite build": "ask",
-      "vite build *": "ask",
-      "npx vite build": "ask",
-      "npx vite build *": "ask",
-      "tsc -b": "ask",
-      "tsc -b *": "ask",
       "npm run dev": "ask",
       "npm run dev *": "ask",
       "npm start": "ask",
@@ -47,17 +31,10 @@
       "vite *": "ask",
       "npx vite": "ask",
       "npx vite *": "ask",
-      "git status": "allow",
-      "git status *": "allow",
-      "git diff": "allow",
-      "git diff *": "allow",
-      "git log": "allow",
-      "git log *": "allow",
-      "git worktree list": "allow",
-      "git worktree list *": "allow",
-      "git branch --list": "allow",
-      "git branch --list *": "allow",
-      "git branch": "allow"
+      "vite build": "allow",
+      "vite build *": "allow",
+      "npx vite build": "allow",
+      "npx vite build *": "allow"
     }
   }
 }

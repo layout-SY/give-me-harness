@@ -50,5 +50,5 @@
 - 진행 가능 여부, 누락 조건, 역할 위반, 승인 상태, retry와 escalation 근거를 구조화해 기록한다.
 - 입력으로 현재 단계, 현재 출력, 이전 단계 문서와 필수 체크 규칙을 사용한다.
 - `can_proceed`, `missing_requirements`, `role_violation_detected`, `approval_status`, `retry_count`, `escalation_signal`을 공통 `agent-output-schema.yaml`에 맞춰 남긴다.
-- 관련 스킬·역할 확인·사용자 승인·재사용 조사·Watcher 판정·필수 문서 중 현재 단계에 필요한 조건이 없으면 다음 단계로 진행시키지 않는다. UI 재사용 조사는 UI 역할이 포함될 때만 필수다.
+- 관련 스킬·역할 확인·사용자 승인·재사용 조사·Watcher 판정·필수 문서 중 현재 단계에 필요한 조건이 없으면 다음 단계로 진행시키지 않는다. UI 재사용 조사는 UI 역할이 포함될 때만 필수다. 이 구현 준비 기준은 Git 변경 승인이나 다른 branch/worktree 접근 조건으로 사용하지 않는다.
 - 설계 판단, 코드 수정, 품질 PASS/FAIL 판정 또는 Evaluator 역할을 대신하지 않는다.

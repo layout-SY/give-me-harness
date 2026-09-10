@@ -13,7 +13,8 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 
-from agent_policy.core import CENTRAL_ROOT, ProjectConfig, render_project
+from agent_policy.core import CENTRAL_ROOT, ProjectConfig
+from legacy_runtime import render_project
 from agent_policy.injection import prepare_injection
 from agent_policy.cli import task_start_denial
 from agent_policy.log_mirror import assignment_log_sources, collect_project_logs
@@ -21,6 +22,11 @@ from agent_policy.log_mirror import assignment_log_sources, collect_project_logs
 
 class RuntimeFixture(unittest.TestCase):
     def setUp(self) -> None:
+        # 기존 V3 실행/복구 계약을 명시적으로 유지한다.
+        for target in ("agent_policy.injection.render_project", "agent_policy.cli.render_project"):
+            selected = patch(target, render_project)
+            selected.start()
+            self.addCleanup(selected.stop)
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name).resolve()

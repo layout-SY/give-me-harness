@@ -20,7 +20,8 @@ HOST_COMMANDS: Final = {
     "claude": ["claude"],
     "opencode": ["opencode"],
 }
-EXPECTED_REQUIRED_ARTIFACTS: Final = (
+EXPECTED_REQUIRED_ARTIFACTS: Final = ("plan.md", "final-summary.md")
+EXPECTED_TEMPLATE_ARTIFACTS: Final = (
     "plan.md",
     "exploration.md",
     "implementation-log.md",
@@ -171,7 +172,7 @@ def render_opencode_config(project: ProjectConfig) -> bytes:
     bash = permission.get("bash") if isinstance(permission, dict) else None
     if not isinstance(bash, dict):
         raise PolicyError("OpenCode config의 permission.bash가 object가 아닙니다.")
-    for command_name in ("build", "dev"):
+    for command_name in ("dev",):
         command = project.commands[command_name]
         bash[command] = "ask"
         bash[f"{command} *"] = "ask"
@@ -397,7 +398,7 @@ def audit_source_contract() -> tuple[str, ...]:
     except PolicyError as error:
         return (str(error),)
 
-    if contract.get("version") != 3:
+    if contract.get("version") != 4:
         issues.append("runtime contract version mismatch")
     roles = contract.get("roles")
     expected_roles = {
@@ -421,7 +422,7 @@ def audit_source_contract() -> tuple[str, ...]:
     artifacts = contract.get("artifacts")
     required = artifacts.get("required") if isinstance(artifacts, dict) else None
     if required != list(EXPECTED_REQUIRED_ARTIFACTS):
-        issues.append("OpenCode-origin required artifact registry mismatch")
+        issues.append("required artifact registry mismatch")
     if not isinstance(artifacts, dict) or artifacts.get("responsibilities") != [
         "owner",
         "contributor",
@@ -443,7 +444,7 @@ def audit_source_contract() -> tuple[str, ...]:
 
     git_policy = contract.get("git")
     never_agent = git_policy.get("never_agent_commands") if isinstance(git_policy, dict) else None
-    if never_agent != ["push", "reset --hard", "clean", "update-ref"]:
+    if never_agent != [] or git_policy.get("access") != "shared-project":
         issues.append("never-agent Git command registry mismatch")
     validation = git_policy.get("validation_commands") if isinstance(git_policy, dict) else None
     if validation != ["{{LINT_COMMAND}}", "{{TEST_COMMAND}}", "{{BUILD_COMMAND}}"]:
@@ -455,7 +456,7 @@ def audit_source_contract() -> tuple[str, ...]:
         "agent-output-schema.yaml",
         "handoff.md",
         "handoff.template.md",
-        *(name for artifact in EXPECTED_REQUIRED_ARTIFACTS for name in (artifact, f"{artifact.removesuffix('.md')}.template.md")),
+        *(name for artifact in EXPECTED_TEMPLATE_ARTIFACTS for name in (artifact, f"{artifact.removesuffix('.md')}.template.md")),
     }
     actual_templates = {
         path.name for path in template_root.iterdir() if path.is_file()

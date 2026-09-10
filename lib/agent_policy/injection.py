@@ -903,8 +903,8 @@ def prepare_injection(
         raise PolicyError(f"지원하지 않는 inject host입니다: {host}")
     if responsibility not in ARTIFACT_RESPONSIBILITIES:
         raise PolicyError(f"지원하지 않는 산출물 책임입니다: {responsibility}")
-    if task is not None and re.fullmatch(r"task/[a-z0-9]+(?:-[a-z0-9]+)*", task) is None:
-        raise PolicyError("--task는 task/<ascii-kebab-summary> 형식이어야 합니다.")
+    if task is not None and (not task.strip() or any(c in task for c in "\0\n\r")):
+        raise PolicyError("--task는 비어 있지 않은 한 줄 작업 설명이어야 합니다.")
     try:
         role_profile(role)
     except ValueError as error:
@@ -935,16 +935,20 @@ def prepare_injection(
         "version": 1, "id": assignment_id, "repository": str(common), "project": project.id,
         "host": host, "role": role, "task": task or "", "responsibility": responsibility,
         "worktree": str(project.path.resolve()), "bundle_root": str(bundle_root), "bundle_digest": digest,
+        "git_access": "shared-project" if json.loads(rendered[".agent-policy/common/contracts/runtime-policy.json"])["version"] == 4 else "legacy-integrator",
     }))
     selected_source_home = (
         source_codex_home
         or Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
     ).resolve()
     codex_overrides: tuple[str, ...] = ()
+    # task는 브랜치 권한이 아닌 자유로운 설명이다. 파일 경로에는 안전한
+    # 짧은 slug만 사용하고 한글 설명 등은 role과 assignment로 구분한다.
+    session_slug = re.sub(r"[^a-z0-9]+", "-", (task or role).removeprefix("task/").casefold()).strip("-")[:64] or role
     environment = {
         "ASAN_AGENT_POLICY_ASSIGNMENT": assignment_id,
         "ASAN_AGENT_POLICY_HOST": host,
-        "ASAN_SESSION_DIR": session_dir or (artifact_session_root(host) + "/" + datetime.now(timezone.utc).strftime("%Y-%m-%d") + "-" + (task or role).removeprefix("task/") + "-" + assignment_id[:8]),
+        "ASAN_SESSION_DIR": session_dir or (artifact_session_root(host) + "/" + datetime.now(timezone.utc).strftime("%Y-%m-%d") + "-" + session_slug + "-" + assignment_id[:8]),
         "ASAN_AGENT_POLICY_STATE_ROOT": str(selected_state_root),
         INJECT_MODE_ENV: "inject",
         INJECT_PROJECT_ENV: project.id,

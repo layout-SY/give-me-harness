@@ -512,7 +512,7 @@ def branch_workflow_contract(
 
 
 def shell_mentions_managed(command: str, files: set[str], roots: tuple[str, ...]) -> list[str]:
-    if BROAD_MUTATION_PATTERN.search(command):
+    if not branch_guard.SHARED_GIT_ACCESS and BROAD_MUTATION_PATTERN.search(command):
         return ["<repository-wide mutation>"]
     candidates = sorted(files | {root.rstrip("/") for root in roots}, key=len, reverse=True)
     return [candidate for candidate in candidates if candidate and candidate in command]
@@ -609,14 +609,14 @@ def command_matches(segment: str, expected: str) -> bool:
 def protected_operation_categories(command: str) -> tuple[str, ...]:
     categories: set[str] = set()
     git_commands = branch_guard._git_commands(command)
-    if git_commands and git_commands != (("<unparsed>",),) and git_command_mutates(command):
+    if git_commands and (branch_guard.SHARED_GIT_ACCESS or git_commands != (("<unparsed>",),)) and git_command_mutates(command):
         categories.add("Git")
     for raw_segment in shell_segments(command):
         segment = strip_shell_prefix(raw_segment)
         is_build = bool(
             command_matches(segment, BUILD_COMMAND) or PACKAGE_BUILD_PATTERN.match(segment)
         )
-        if is_build:
+        if is_build and not branch_guard.SHARED_GIT_ACCESS:
             categories.add("빌드")
         if not is_build and (
             command_matches(segment, DEV_COMMAND) or PACKAGE_DEV_PATTERN.match(segment)

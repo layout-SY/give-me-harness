@@ -9,7 +9,8 @@ from unittest.mock import patch
 
 import test_guard
 from test_remediation import WorkflowFixture
-from agent_policy.core import ProjectConfig, render_project
+from agent_policy.core import ProjectConfig
+from legacy_runtime import render_project
 
 
 class ChildCompletionTests(WorkflowFixture):

@@ -80,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--responsibility",
         choices=("owner", "contributor"),
         default="owner",
-        help="owner는 8종 산출물, contributor는 handoff.md를 책임집니다.",
+        help="owner는 plan.md·final-summary.md, contributor는 handoff.md를 기록합니다.",
     )
     start.add_argument(
         "--session-dir",
@@ -282,6 +282,8 @@ def task_start_denial(project: ProjectConfig) -> str | None:
     guard.__file__ = str(CENTRAL_ROOT / "policy/guards/branch_guard.py")
     try:
         exec(compile(source, guard.__file__, "exec"), guard.__dict__)
+        if guard.SHARED_GIT_ACCESS:
+            return None
         denial = guard.active_branch_denial(project.path, allowed_states=("ACTIVE", "PRESERVED", "READY_TO_MERGE", "MERGED_VERIFIED"))
     except (OSError, RuntimeError, TypeError, ValueError) as error:
         raise PolicyError(f"task branch 계약 검사기를 불러올 수 없습니다: {error}") from error
@@ -336,23 +338,12 @@ def run_start(
 ) -> int:
     if responsibility not in ARTIFACT_RESPONSIBILITIES:
         raise PolicyError(f"지원하지 않는 산출물 책임입니다: {responsibility}")
-    if task is not None and re.fullmatch(r"task/[a-z0-9]+(?:-[a-z0-9]+)*", task) is None:
-        raise PolicyError("--task는 task/<ascii-kebab-summary> 형식이어야 합니다.")
     configured_project = select_projects(project_id)[0]
     project = (
         active_project(configured_project, worktree, expected_branch)
         if worktree is not None or expected_branch is not None
         else configured_project
     )
-    current_branch = ""
-    if task is not None or expected_branch is not None:
-        current_branch = git_output(project.path, "branch", "--show-current")
-        if task is not None and current_branch != task:
-            raise PolicyError(
-                f"--task와 worktree의 현재 branch가 다릅니다: task={task}, 현재={current_branch or 'detached HEAD'}"
-            )
-    if expected_branch is not None and task is not None and expected_branch != task:
-        raise PolicyError(f"--branch와 --task가 다릅니다: {expected_branch} != {task}")
     conflicting_sources = consumer_policy_sources(project)
     if conflicting_sources:
         listed = ", ".join(conflicting_sources)
