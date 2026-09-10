@@ -133,6 +133,7 @@ class GitInvocation(NamedTuple):
     root: Path
     arguments: tuple[str, ...]
     unsafe_repository_options: tuple[str, ...] = ()
+    working_directory: Path | None = None
 
 
 def _git_uncached(root: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
@@ -693,8 +694,10 @@ def git_integrator_denial(root: Path, branch: str, host: str) -> str | None:
 
 def _git_commands(command: str) -> tuple[tuple[str, ...], ...]:
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|\n" if SHARED_GIT_ACCESS else ";&|")
         lexer.whitespace_split = True
+        if SHARED_GIT_ACCESS:
+            lexer.whitespace = " \t\r"
         lexer.commenters = ""
         tokens = list(lexer)
     except ValueError:
@@ -702,6 +705,8 @@ def _git_commands(command: str) -> tuple[tuple[str, ...], ...]:
     commands: list[tuple[str, ...]] = []
     index = 0
     separators = {";", "&&", "||", "|", "&"}
+    if SHARED_GIT_ACCESS:
+        separators.update(token for token in tokens if token and not token.strip("\n"))
     while index < len(tokens):
         if os.path.basename(tokens[index]) != "git":
             index += 1
@@ -961,6 +966,7 @@ def _git_invocation(
         root=target_root,
         arguments=arguments,
         unsafe_repository_options=tuple(dict.fromkeys(unsafe)),
+        working_directory=working_directory,
     )
 
 
@@ -973,12 +979,73 @@ def git_invocations(
 
     cwd = (execution_cwd or root).resolve()
     invocations: list[GitInvocation] = []
-    for raw_arguments in _git_commands(command):
-        invocation = _git_invocation(cwd, raw_arguments)
+    if SHARED_GIT_ACCESS:
+        contexts = shell_command_contexts(command, cwd)
+        if contexts is None:
+            return None
+        commands = [(location, words[1:]) for location, words in contexts if Path(words[0]).name == "git"]
+        if len(commands) != len(_git_commands(command)):
+            return None
+    else:
+        commands = [(cwd, arguments) for arguments in _git_commands(command)]
+    for location, raw_arguments in commands:
+        invocation = _git_invocation(location, raw_arguments)
         if invocation is None:
             return None
         invocations.append(invocation)
     return tuple(invocations)
+
+
+def shell_command_contexts(command: str, cwd: Path) -> tuple[tuple[Path, tuple[str, ...]], ...] | None:
+    """리터럴 cd·env -C를 반영한다. 동적으로 바뀌는 실행 위치는 추측하지 않는다."""
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
+        lexer.whitespace = " \t\r"
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        return None
+    segments: list[list[str]] = [[]]
+    for token in tokens:
+        if token and all(char in ";&|()\n" for char in token):
+            if "(" in token or ")" in token:
+                return None
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    contexts: list[tuple[Path, tuple[str, ...]]] = []
+    for words in filter(None, segments):
+        location = cwd
+        while words and (words[0] in {"command", "exec", "env"} or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", words[0])):
+            prefix = words.pop(0)
+            if prefix.startswith("GIT_") or prefix.startswith("CDPATH="):
+                return None
+            if prefix == "env" and words and (words[0] in {"-C", "--chdir"} or words[0].startswith("--chdir=")):
+                option = words.pop(0)
+                raw = option.split("=", 1)[1] if "=" in option else words.pop(0) if words else ""
+                if any(char in raw for char in "$`*"):
+                    return None
+                selected = _resolved_option_path(location, raw)
+                if selected is None or not selected.is_dir():
+                    return None
+                location = selected
+        if not words or words[0].startswith("-"):
+            return None
+        if words[0] in {"eval", "export", "source", ".", "pushd", "popd", "if", "for", "while", "case", "function"}:
+            return None
+        contexts.append((location, tuple(words)))
+        if words[0] == "cd":
+            values = words[1:] if len(words) < 2 or words[1] != "--" else words[2:]
+            if (len(values) != 1 or values[0] == "-" or any(char in values[0] for char in "$`*")
+                    or any(token in {"||", "|", "&"} for token in tokens)):
+                return None
+            selected = _resolved_option_path(location, values[0])
+            if selected is None or not selected.is_dir():
+                return None
+            cwd = selected
+            # cd 자체도 대상 디렉터리를 실행 위치로 검사한다.
+            contexts[-1] = (cwd, tuple(words))
+    return tuple(contexts)
 
 
 def same_git_repository(left: Path, right: Path) -> bool:

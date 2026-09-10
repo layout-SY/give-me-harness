@@ -1,5 +1,10 @@
 {
   "version": 4,
+  "execution": {
+    "boundary": "session-project",
+    "linked_worktrees": "same-git-common-directory",
+    "outside_project": "deny-before-approval"
+  },
   "roles": {
     "logic": {
       "canonical": "logic"

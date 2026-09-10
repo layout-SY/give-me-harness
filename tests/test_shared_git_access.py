@@ -38,7 +38,7 @@ class SharedGitAccessTests(unittest.TestCase):
         self.worktree = self.base / "other-worktree"
         self.git("worktree", "add", "-qb", "existing-without-contract", str(self.worktree))
         self.bundle = self.base / "bundle"
-        for name, content in render_project(load_project("user-ui")).items():
+        for name, content in render_project(replace(load_project("user-ui"), path=self.root)).items():
             if name.startswith((".agent-policy/runtime/", ".agent-policy/common/contracts/")):
                 path = self.bundle / name
                 path.parent.mkdir(parents=True, exist_ok=True)
@@ -276,6 +276,133 @@ class SharedGitAccessTests(unittest.TestCase):
                 result = subprocess.run(command, input=json.dumps(event), cwd=self.root,
                     env={**env, **launch.environment}, text=True, capture_output=True)
                 self.assert_asks(result, host)
+
+    def test_project_boundary_precedes_read_and_mutation_approval_for_all_hosts(self):
+        other = self.base / "admin-ui"
+        other.mkdir()
+        self.git("init", "-q", root=other)
+        alias = self.root / "admin-link"
+        alias.symlink_to(other, target_is_directory=True)
+        for host in ("codex", "claude", "opencode"):
+            for command, cwd in (
+                ("git status --short", other), ("npm run build", other),
+                (f"git -C {other} status", self.root),
+                (f"git -C {other} commit -m unrelated", self.root),
+                (f"cd {other} && git status", self.root),
+                (f"cd {other}\ngit commit -m unrelated", self.root),
+                (f"npm --prefix {other} run build", self.root),
+                (f"pnpm -C {other} test", self.root),
+                (f"yarn --cwd={other} build", self.root),
+                (f"env -C {other} git status", self.root),
+                (f"sh -c 'cd {other} && pwd'", self.root),
+                (f"git -C {alias} status", self.root),
+                (f"git --git-dir={other}/.git --work-tree={other} status", self.root),
+                (f"GIT_DIR={other}/.git git status", self.root),
+                (f"git diff --output={other}/report.txt", self.root),
+                (f"git config --file={other}/.git/config user.name Changed", self.root),
+                (f"git worktree add {other}/nested", self.root),
+                (f"git push {other} HEAD", self.root),
+                (f"git clone {other} {self.base}/clone", self.root),
+                (f"git init {other}", self.root),
+                ("git config --global user.name Changed", self.root),
+            ):
+                with self.subTest(host=host, command=command, cwd=cwd):
+                    result = self.pre(host, command, workdir=cwd)
+                    output = result.stdout + result.stderr
+                    self.assertTrue(result.returncode != 0 or '"deny"' in output, output)
+                    self.assertNotIn('"ask"', output, output)
+                    self.assertIn("프로젝트", output, output)
+
+    def test_event_cwd_cannot_rebind_the_injected_project(self):
+        other = self.base / "admin-ui"
+        other.mkdir()
+        self.git("init", "-q", root=other)
+        for host in ("codex", "claude", "opencode"):
+            for command in ("git status", "git commit -m unrelated", "npm run lint"):
+                result = self.run_event(host, "pre-tool", {"cwd": str(other),
+                    "tool_name": "Bash", "tool_input": {"command": command}})
+                output = result.stdout + result.stderr
+                self.assertTrue(result.returncode != 0 or '"deny"' in output, output)
+                self.assertNotIn('"ask"', output, output)
+                self.assertIn("프로젝트", output, output)
+            result = self.run_event(host, "pre-tool", {"cwd": str(other),
+                "tool_name": "Write", "tool_input": {
+                    "file_path": f".{host}/logs/sessions/shared-session/final-summary.md", "content": "잘못된 위치"}})
+            self.assertIn("프로젝트", result.stdout + result.stderr)
+
+    def test_same_project_directories_and_new_linked_worktrees_remain_available(self):
+        for host in ("codex", "claude", "opencode"):
+            for command in (f"git -C {self.worktree} status", f"cd {self.worktree} && git status",
+                            f"npm --prefix {self.worktree} run build", f"env -C {self.worktree} git status",
+                            f"cd {self.worktree}\ngit status\ngit log -1"):
+                self.assert_allowed(self.pre(host, command))
+            self.assert_asks(self.pre(host, f"git worktree add {self.base}/new-linked"), host)
+        command = f"cd {self.worktree} && git add -- src/app.ts && git commit -m reviewed"
+        self.assert_asks(self.pre("codex", command), "codex")
+        self.run_event("codex", "user-prompt", {"prompt": "진행"})
+        self.assert_allowed(self.pre("codex", command))
+
+    def test_approval_cannot_override_project_boundary_or_changed_local_remote(self):
+        other = self.base / "admin-ui"
+        other.mkdir()
+        self.git("init", "-q", root=other)
+        self.git("remote", "add", "origin", "https://example.test/user-ui.git")
+        command = "git push origin HEAD"
+        self.assert_asks(self.pre("codex", command), "codex")
+        self.run_event("codex", "user-prompt", {"prompt": "진행"})
+        self.git("remote", "set-url", "origin", str(other))
+        result = self.pre("codex", command)
+        self.assertIn("프로젝트", result.stdout + result.stderr)
+        self.assertNotIn("이 작업 단위", result.stdout + result.stderr)
+
+    def test_nested_repository_alias_and_default_remote_cannot_cross_the_boundary(self):
+        other = self.root / "admin-ui"
+        other.mkdir()
+        self.git("init", "-q", root=other)
+        self.git("config", "alias.other-status", f"!git -C {other} status")
+        self.git("remote", "add", "admin", str(other))
+        self.git("config", "remote.pushDefault", "admin")
+        for command in ("git other-status", "git push", "git push --repo=admin HEAD",
+                        "git worktree add admin-ui/nested", "git -C admin-ui status",
+                        "npm --prefix admin-ui run build"):
+            result = self.pre("claude", command)
+            self.assertEqual(result.returncode, 2, f"{command}: {result.stdout} {result.stderr}")
+            self.assertNotIn('"ask"', result.stdout)
+            self.assertIn("프로젝트", result.stderr)
+
+    def test_native_project_binding_survives_foreign_event_cwd_for_both_projects(self):
+        other = self.base / "foreign-project"
+        other.mkdir()
+        self.git("init", "-q", root=other)
+        home = self.base / "native-home"
+        home.mkdir()
+        (home / "config.toml").write_text("")
+        for project_id in ("user-ui", "admin-ui"):
+            for host in ("codex", "claude", "opencode"):
+                with self.subTest(project=project_id, host=host):
+                    launch = prepare_injection(replace(load_project(project_id), path=self.root), host, "logic",
+                        build_root=self.base / "native-build", state_root=self.base / "native-state", source_codex_home=home)
+                    if host == "codex":
+                        hooks = json.loads((Path(launch.environment["CODEX_HOME"]) / "hooks.json").read_text())["hooks"]
+                        command = shlex.split(hooks["PreToolUse"][0]["hooks"][0]["command"])
+                    elif host == "claude":
+                        hooks = json.loads((launch.bundle_root / "plugin/hooks/hooks.json").read_text())["hooks"]
+                        command = shlex.split(hooks["PreToolUse"][0]["hooks"][0]["command"])
+                    else:
+                        command = [sys.executable, "-I", str(launch.bundle_root / "opencode-home/runtime/managed_policy_guard.py"), "pre-tool", host]
+                    env = {k: v for k, v in os.environ.items() if not k.startswith("ASAN_")}
+                    for location, expected in ((self.worktree, "allow"), (other, "deny")):
+                        event = {"cwd": str(location), "session_id": f"{project_id}-{host}", "tool_name": "bash",
+                                 "tool_input": {"command": "git status"}}
+                        result = subprocess.run(command, cwd=location, text=True, capture_output=True,
+                            env={**env, **launch.environment, "ASAN_AGENT_POLICY_PROJECT_PATH": str(location)}, input=json.dumps(event))
+                        if expected == "allow":
+                            self.assert_allowed(result)
+                        else:
+                            output = result.stdout + result.stderr
+                            self.assertTrue(result.returncode != 0 or '"deny"' in output, output)
+                            self.assertNotIn('"ask"', output)
+                            self.assertIn("프로젝트", output)
 
 
 if __name__ == "__main__":

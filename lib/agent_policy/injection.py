@@ -265,6 +265,7 @@ def _injection_preamble(
 이 세션은 소비자 저장소에 배포된 정책 파일이 아니라 중앙 정책 번들을 사용한다.
 
 - 작업 프로젝트 루트: `{project.path}`
+- 명령 실행은 이 프로젝트와 같은 Git 저장소의 연결 worktree 안에서만 허용한다. 다른 프로젝트의 Git 조회·변경도 실행하지 않으며 해당 프로젝트의 별도 세션을 사용한다.
 - 읽기 전용 정책 스냅샷: `{policy_root}`
 - 실행 호스트: `{host}`
 - 선택된 role: `{role}` (`{profile.canonical_name}`)

@@ -69,6 +69,12 @@ def normalized_tool_name(event: dict[str, Any]) -> str:
 
 
 def repository_root(event: dict[str, Any]) -> Path:
+    if branch_guard.SHARED_GIT_ACCESS:
+        # 도구 cwd나 변경 가능한 shell 환경으로 세션 프로젝트를 재지정하지 않는다.
+        project = _runtime_config.PROJECT_ROOT
+        if not project.is_absolute() or not project.is_dir():
+            raise ValueError("세션 프로젝트 경로가 유효하지 않습니다. 중앙 launcher로 시작하세요.")
+        return project.resolve()
     cwd_value = event.get("cwd")
     cwd = Path(cwd_value) if isinstance(cwd_value, str) and cwd_value else Path.cwd()
     completed = subprocess.run(

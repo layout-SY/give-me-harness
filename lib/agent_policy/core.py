@@ -443,6 +443,12 @@ def audit_source_contract() -> tuple[str, ...]:
         issues.append("task state registry mismatch")
 
     git_policy = contract.get("git")
+    if contract.get("execution") != {
+        "boundary": "session-project",
+        "linked_worktrees": "same-git-common-directory",
+        "outside_project": "deny-before-approval",
+    }:
+        issues.append("session project execution boundary mismatch")
     never_agent = git_policy.get("never_agent_commands") if isinstance(git_policy, dict) else None
     if never_agent != [] or git_policy.get("access") != "shared-project":
         issues.append("never-agent Git command registry mismatch")

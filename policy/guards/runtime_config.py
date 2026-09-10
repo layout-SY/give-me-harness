@@ -17,6 +17,7 @@ branch_guard = load_runtime_module("branch_guard")
 event_protocol = load_runtime_module("event_protocol")
 runtime_state = load_runtime_module("runtime_state")
 CENTRAL_ROOT: Final = Path("{{CENTRAL_ROOT}}")
+PROJECT_ROOT: Final = Path("{{PROJECT_PATH}}")
 DEV_COMMAND: Final = "{{DEV_COMMAND}}"
 BUILD_COMMAND: Final = "{{BUILD_COMMAND}}"
 COMMAND_APPROVAL_PHRASE: Final = "명령 실행 승인"

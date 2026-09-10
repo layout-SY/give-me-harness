@@ -9,6 +9,8 @@ description: 모든 세션의 프로젝트 Git 접근과 사용자 변경 승인
 
 ## 조회와 변경
 
+- 접근 공유는 현재 세션 프로젝트 안에서만 적용한다. 다른 프로젝트의 Git 조회·변경과 명령 실행은 금지하며 해당 프로젝트의 별도 세션을 사용한다. 실행 위치와 실제 Git 저장소는 사용자 승인보다 먼저 확인한다.
+- 같은 Git common directory를 공유하는 연결 worktree는 허용한다. 다른 저장소를 만드는 clone/init, 프로젝트 외 global/system Git 설정, 다른 로컬 프로젝트를 가리키는 remote·파일 출력·worktree 대상은 현재 세션에서 사용하지 않는다.
 - status, diff, log, 조회형 branch/config와 worktree list는 승인 없이 조회한다. 옵션이 파일이나 Git 상태를 바꾸면 변경 작업이다.
 - 생성, 전환, stage, commit, merge, fetch, pull, rebase, stash, restore, branch/worktree 삭제, config 수정과 push는 사용자 승인 후 수행한다.
 - reset --hard, clean, update-ref, force push 등도 승인 가능한 작업이다. 유실 가능한 변경·commit과 원격 영향을 먼저 설명한다.

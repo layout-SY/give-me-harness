@@ -1,0 +1,59 @@
+{
+  "policy_version": 4,
+  "baseline_commit": "3184d3b8b563be8ce50a4be12a903357937f0ca7",
+  "results": [
+    {
+      "kind": "before_fix",
+      "log": "/private/tmp/asan-project-boundary-before.log",
+      "sha256": "d16a586470e4ea5c3a238a4bcf4fd6f903d8ba385639c70c394d8a57f6969a12",
+      "test_count": 4,
+      "duration_seconds": 21.244,
+      "passed": false,
+      "result": "FAILED (failures=62)"
+    },
+    {
+      "kind": "shared_git_and_boundary_regressions",
+      "log": "/private/tmp/asan-project-boundary-focused-pass.log",
+      "sha256": "661afeb83e6295e98c98735dd99a4398af906ea8f445ad9ef0983a7b6fdedbd9",
+      "test_count": 23,
+      "duration_seconds": 54.171,
+      "passed": true,
+      "result": "OK"
+    },
+    {
+      "kind": "full_suite",
+      "log": "/private/tmp/asan-project-boundary-full.log",
+      "sha256": "ff27b4312539f674ddcc21a810121bcac256bf5213942d18b97ffce9886bee07",
+      "test_count": 254,
+      "duration_seconds": 1133.898,
+      "passed": true,
+      "result": "OK"
+    }
+  ],
+  "audit": {
+    "log": "/private/tmp/asan-project-boundary-audit.log",
+    "sha256": "c26fa3a4a9952e72538b90e04e9dd0abdf55b13403a11ab7ac364c5ff3a2b730",
+    "output": [
+      "[central-contract] PASS",
+      "[admin-ui] PASS (264 bundle files)",
+      "[user-ui] PASS (194 bundle files)"
+    ]
+  },
+  "tested_files": {
+    "docs/project-command-boundary-2026-09-10.md": "2600aab9cd4fbcafc73986aa9ad295d489e990674c19eabc2152e3e07c037fdf",
+    "lib/agent_policy/core.py": "8d5a6bbf17cc5fa5124f24370dce50b24a84c84d01ff1a38b1b63907f2ce7f5e",
+    "lib/agent_policy/injection.py": "4fb39b1203d2fc8e264145e64a72c0f6ecaee87f8d08271472d377be2e383c0a",
+    "policy/common/AGENT_POLICY.template.md": "6282f82757c8ebfa6058159e0206cbb7a3c6c49add4316268a1d392b811ae286",
+    "policy/common/contracts/runtime-policy.json": "4aebdda1443c32c3c6ac21e33fd2d30645e22b7d2a59eb1be48c410e0fb5635f",
+    "policy/common/skills/policy/git-branch-strategy/SKILL.md": "45da763b852e818ad65cb206e8d5e4efe69a7c2e8b5221b25ac59bf6c726660e",
+    "policy/guards/branch_guard.py": "47d07e6ab61c4c47e67e5a074e85dc5991785504afa8eb0d1e5c7641e71b850d",
+    "policy/guards/project_boundary.py": "0bfd03fb60cced0894786cc5f6e8e7adb4c8535d18dc52f94710b649255b47e1",
+    "policy/guards/runtime_config.py": "494a6fd7688469aeb08a169197e255c233706c0df66b181ef3c43e08f11af253",
+    "policy/guards/shared_git.py": "75cc0ae0062f9f0766131a19b829054cc4095c688efb462803a1f14f074b497e",
+    "policy/guards/tool_paths.py": "239aab94b505af6f43c33ca700c1cf07cbd7be603f4e924973bd97407a0ee9fd",
+    "tests/test_rendering.py": "3f27e1782997fc9a84b2ab2cde8c4ca9051a8a10a44795b3fa6a8dc2bdc489d2",
+    "tests/test_shared_git_access.py": "988b1278ac44bb3bad5c9385f01f6a35bcceed6db79bb32ccfc4ee4e92ff25f9"
+  },
+  "diff_check": "PASS",
+  "scope": "중앙 원본·회귀 테스트·자체 산출물. 소비자 Git 상태와 다른 세션 로그는 변경하지 않음."
+}

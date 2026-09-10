@@ -75,6 +75,8 @@ Todo는 한국어로 작성하고 작업 위치, 수행 방법, 목적과 기대
 
 - assignment는 host·role·native session과 자기 산출물 경로를 식별한다. branch·worktree의 독점 권한이 아니다.
 - 프로젝트의 기본 checkout, 기존 branch, 부모·자식·형제 branch와 모든 연결 worktree에서 같은 세션으로 작업할 수 있다. 기준 branch도 동일하게 사용자 Git 승인 규칙을 따른다.
+- 명령 실행 경계는 launcher가 지정한 세션 프로젝트다. `user-ui` 세션에서 `admin-ui`를 대상으로 하는 명령과 그 반대는 조회를 포함해 실행하지 않는다. 다른 프로젝트 작업은 해당 프로젝트의 별도 세션에서 수행한다.
+- 실제 `workdir`, `cd`, `git -C`, Git 저장소 옵션과 패키지 명령의 실행 경로를 확인한다. 연결 worktree는 경로의 상하 관계가 아니라 같은 Git common directory인지로 판정한다. 프로젝트 밖 대상은 Git 승인 전에 차단하며 사용자 변경 승인으로 이 경계를 확장하지 않는다.
 - V1/V2/V3 metadata, git-integrator, Git claim, ACTIVE/CLOSED/PRESERVED와 완료 예약은 새 세션의 권한 판정에 사용하지 않는다. 기존 기록은 이력으로 보존한다.
 - `--worktree`와 `--branch`는 시작 위치를 확인하는 선택값이고 `--task`는 작업 설명이다. branch 생성·CLOSED·소유권 인계 없이 기존 branch에서 새 세션을 시작할 수 있다.
 - 실행 위치는 도구의 `workdir` 또는 `git -C`로 명시한다. host sandbox의 파일 쓰기 권한은 별개이며 필요한 경로만 승인받는다.

@@ -296,6 +296,11 @@ class RenderingTests(unittest.TestCase):
         self.assertNotIn("assignment 권한 root".encode(), strategy)
         self.assertIn(".agent-policy/runtime/shared_git.py", rendered)
         self.assertEqual(json.loads(rendered[".agent-policy/common/contracts/runtime-policy.json"])["version"], 4)
+        self.assertEqual(json.loads(rendered[".agent-policy/common/contracts/runtime-policy.json"])["execution"], {
+            "boundary": "session-project", "linked_worktrees": "same-git-common-directory",
+            "outside_project": "deny-before-approval",
+        })
+        self.assertIn(".agent-policy/runtime/project_boundary.py", rendered)
         self.assertIn(
             b'git(root, "worktree", "add"',
             rendered[

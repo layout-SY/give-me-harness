@@ -19,6 +19,7 @@ paths = _loader.load("tool_paths")
 artifacts = _loader.load("artifact_policy")
 approval = _loader.load("approval_policy")
 protocol = _loader.load("event_protocol")
+boundary = _loader.load("project_boundary")
 branch = config.branch_guard
 state = config.runtime_state
 
@@ -74,14 +75,15 @@ def bind_artifacts(event: dict, root: Path, host: str, contexts: list) -> str | 
 def git_denial(event: dict, root: Path, host: str, command: str, cwd: Path) -> str | None:
     invocations = branch.git_invocations(root, command, cwd)
     if invocations is None:
-        return "Git 대상과 변경 범위를 확인할 수 없습니다. 실제 Git 명령과 workdir 또는 git -C를 명시하세요."
+        return "프로젝트 Git 대상과 변경 범위를 확인할 수 없습니다. 실제 Git 명령과 workdir 또는 git -C를 명시하세요."
     for invocation in invocations:
-        if branch.git_arguments_are_read_only(invocation.arguments):
-            continue
         if not branch.same_git_repository(root, invocation.root):
             return f"현재 프로젝트와 다른 Git 저장소입니다: {invocation.root}"
         if invocation.unsafe_repository_options:
-            return "Git 대상 경로가 모호합니다. 실제 worktree를 workdir 또는 git -C로 지정하세요."
+            return "프로젝트 Git 대상 경로가 모호합니다. 실제 worktree를 workdir 또는 git -C로 지정하세요."
+        denial = boundary.git_arguments_denial(root, invocation)
+        if denial:
+            return denial
         args = invocation.arguments
         if not args:
             continue
@@ -92,16 +94,21 @@ def git_denial(event: dict, root: Path, host: str, command: str, cwd: Path) -> s
                 arg != "-f" or args[0] == "config") else (
                     arg.split("=", 1)[1] if arg.startswith(("--output=", "--file=")) else "")
             if raw:
-                target = (invocation.root / raw).resolve()
+                base = invocation.working_directory or invocation.root
+                target = (base / raw).resolve()
                 if paths.target_in_injected_policy(target):
                     return "중앙 정책 스냅샷을 Git의 파일 출력 대상으로 사용할 수 없습니다."
-                context = paths.repository_target(root, raw, invocation.root)
-                if context:
+                context = paths.repository_target(root, raw, base)
+                if context is None:
+                    return boundary.denial(target)
+                if context and not branch.git_arguments_are_read_only(args):
                     denial = protected_path(*context, host, event)
                     if denial:
                         return denial
                     if paths.is_managed(context[1], set(), config.MANAGED_POLICY_ROOTS):
                         return "관리 정책 파일은 중앙 원본에서 수정하세요."
+        if branch.git_arguments_are_read_only(args):
+            continue
         # stage/commit은 실제 포함할 변경만 검사한다. 다른 host의 dirty 파일이
         # worktree에 있다는 이유만으로 관련 없는 source commit을 막지 않는다.
         affected: tuple[str, ...] = ()
@@ -165,13 +172,19 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
     data = event.get("tool_input") or {}
     command = str(data.get("command") or "")
     shell = tool in config.SHELL_TOOLS
-    cwd = paths.shell_working_directory(root, data)
+    event_cwd = Path(str(event.get("cwd") or root))
+    cwd = paths.shell_working_directory(event_cwd, data)
     if shell and paths.unsupported_workflow_invocation(command, root):
         protocol.emit_denial(host, "이전 branch workflow로 Git 승인을 우회할 수 없습니다. 일반 Git 명령을 사용하세요.")
         return
     if shell and paths.trusted_branch_workflow_action(command, root):
         protocol.emit_denial(host, "V4에서는 branch workflow 계약을 사용하지 않습니다. 일반 Git 명령의 대상·영향을 보고하고 승인받으세요.")
         return
+    if shell:
+        denial = boundary.command_denial(root, command, cwd)
+        if denial:
+            protocol.emit_denial(host, denial)
+            return
     denied = paths.denied_targets(event, root)
     if denied:
         protocol.emit_denial(host, paths.denial_message(denied))
