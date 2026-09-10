@@ -395,6 +395,13 @@ def command_digest(command: str) -> str:
 
 def operation_fingerprint(root: Path, command: str) -> str:
     """사용자가 확인한 작업 위치, 명령, ref와 실제 변경 내용을 함께 고정한다."""
+    if branch_guard.SHARED_GIT_ACCESS and "git_operations.py" in command:
+        operations = load_runtime_module("git_operations")
+        arguments = operations.invocation(command)
+        if arguments and len(arguments) == 2 and arguments[0] == "execute":
+            operation = operations.load(root, arguments[1])
+            operations.validate(root, operation)
+            return command_digest(json.dumps([str(root.resolve()), command, operation["fingerprint"]]))
     invocations = branch_guard.git_invocations(root, command, root) or ()
     snapshots = []
     for invocation in invocations:
@@ -404,7 +411,7 @@ def operation_fingerprint(root: Path, command: str) -> str:
         snapshots.append([str(target), branch_guard.current_branch(target), branch_guard.head(target)])
         selected: tuple[str, ...] = ()
         if args[0] == "add":
-            files = branch_guard._git(target, "ls-files", "-c", "-o", "--exclude-standard", "-z", "--",
+            files = branch_guard._git(invocation.working_directory or target, "ls-files", "--full-name", "-c", "-o", "--exclude-standard", "-z", "--",
                                       *branch_guard._pathspecs_after_separator(args))
             if files.returncode:
                 raise RuntimeError("승인할 stage 경로를 확인할 수 없습니다.")
@@ -413,7 +420,13 @@ def operation_fingerprint(root: Path, command: str) -> str:
             # commit은 index의 실제 내용을 고정한다. 타 세션의 unstaged
             # 로그 갱신은 이 작업의 재승인 사유가 아니다.
             snapshots.append(["index", branch_guard._output(target, "diff", "--cached", "--binary")])
-            if any(value in {"--all", "--only", "--include"} or re.fullmatch(r"-[A-Za-z]*[aio][A-Za-z]*", value)
+            specs = load_runtime_module("shared_git").commit_paths(args) if branch_guard.SHARED_GIT_ACCESS else ()
+            if specs:
+                files = branch_guard._git(invocation.working_directory or target, "ls-files", "--full-name", "-z", "--", *specs)
+                if files.returncode:
+                    raise RuntimeError("commit 승인 경로를 확인할 수 없습니다.")
+                selected = tuple(filter(None, files.stdout.split("\0")))
+            elif any(value in {"--all", "--only", "--include"} or re.fullmatch(r"-[A-Za-z]*[aio][A-Za-z]*", value)
                    for value in args[1:]):
                 selected = branch_guard.changed_paths(target)
         else:
@@ -421,6 +434,10 @@ def operation_fingerprint(root: Path, command: str) -> str:
                              if not name.startswith(ARTIFACT_SESSIONS_PREFIXES))
             for value in args[1:]:
                 if not value.startswith("-"):
+                    if args[0] == "push" and ":" in value:
+                        # source:destination is a refspec, not a revision. Bind
+                        # the pushed source even when HEAD is another branch.
+                        value = value.lstrip("+").split(":", 1)[0]
                     resolved = branch_guard._output(target, "rev-parse", "--verify", "--end-of-options", value + "^{object}")
                     if resolved:
                         snapshots.append([value, resolved])
@@ -479,8 +496,8 @@ def record_user_prompt(event: dict[str, Any], root: Path, host: str) -> None:
     if branch_guard.SHARED_GIT_ACCESS:
         path = approval_state_path(event, root, host)
         pending = load_approval_state(path)
-        explicit = prompt.strip() == COMMAND_APPROVAL_PHRASE or is_implementation_approval(prompt)
-        if pending and explicit and not DENIAL_WORD_PATTERN.search(prompt):
+        explicit = is_implementation_approval(prompt)
+        if pending and prompt.strip() == COMMAND_APPROVAL_PHRASE and not DENIAL_WORD_PATTERN.search(prompt):
             pending["approved"] = True
             pending["created_at"] = time.time()
             write_approval_state(path, pending)

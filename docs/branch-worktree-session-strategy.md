@@ -4,7 +4,7 @@
 
 - 기준일: 2026-09-03
 - 대상: `user-ui`, `admin-ui`와 중앙 `asan-agent-policy`
-- 상태: 중앙 원본 구현. 중앙 launcher로 시작한 새 inject 세션부터 유효
+- 상태: 이전 V3 bundle의 설계 기록. 새 세션에는 적용하지 않으며 [현재 관계·완료 정책](branch-relations-2026-09-10.md)을 따른다.
 - 역할 원칙: host와 role은 독립이다. 특정 host를 UI·Logic·오케스트레이션 전담으로 고정하지 않는다.
 
 ## 1. 기존 상황

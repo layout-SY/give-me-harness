@@ -14,6 +14,6 @@ handoff는 작업 연속성을 위한 상태 기록이며 구현 승인이나 Gi
 
 ## Git과 동시 작업
 
-모든 세션은 프로젝트의 모든 branch/worktree에서 사용자 승인 후 Git 변경을 실행할 수 있다. contributor, 다른 host, 자식·부모 관계로 차단하지 않는다. 세션 독점 Git claim과 CLOSED 해제 절차는 없다. 같은 worktree의 Git 변경은 순차 실행하고 다른 작업의 변경을 덮어쓰거나 임의로 commit하지 않는다. 동시 소스 수정에는 별도 worktree를 권장한다.
+모든 세션은 프로젝트의 모든 branch/worktree에서 사용자 승인 후 Git 변경을 실행할 수 있다. contributor·host·assignment로 실행자를 제한하지 않는다. 완료 통합은 미처리 하위 작업이 없는 자식에서 직접 부모로 수행하며 형제 검토와 승인을 받는다. 세션 독점 Git claim과 CLOSED 해제 절차는 없다. 보호 실행기의 짧은 Git lock을 사용하며 병렬 구현에는 별도 linked worktree를 사용한다. 다른 작업의 변경을 덮어쓰거나 임의로 commit하지 않는다.
 
 새 정책 적용 시 현재 세션을 handoff하고 새 inject assignment를 시작한다. Git 소유권 이전 명령은 필요하지 않으며, 과거 assignment를 resume하면 원래 bundle을 사용한다.

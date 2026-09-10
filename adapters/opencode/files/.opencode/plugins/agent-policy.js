@@ -130,6 +130,8 @@ export const AgentPolicyPlugin = async ({ client, directory }) => {
         let decision
         try { decision = JSON.parse(verdict.stdout) } catch { throw new Error("중앙 guard의 판정 형식이 올바르지 않습니다.") }
         if (decision?.decision !== "allow") throw new Error("중앙 guard가 허용 판정을 반환하지 않았습니다.")
+        const notice = decision?.hookSpecificOutput?.additionalContext
+        if (notice) await showNotification(client, directory, "작업 계열 안내", notice)
       }
       if (verdict.status !== 0 || verdict.error) {
         throw new Error(verdict.stderr?.trim() || "중앙 관리 파일 수정이 차단되었습니다.")

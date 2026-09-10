@@ -24,6 +24,26 @@ branch = config.branch_guard
 state = config.runtime_state
 
 
+def commit_paths(args: tuple[str, ...]) -> tuple[str, ...]:
+    if "--" in args:
+        return branch._pathspecs_after_separator(args)
+    options = {"-m", "--message", "-F", "--file", "--author", "--date", "--cleanup", "--trailer",
+               "-C", "--reuse-message", "-c", "--reedit-message", "--fixup", "--squash", "-t", "--template", "--untracked-files"}
+    result, index = [], 1
+    while index < len(args):
+        value = args[index]
+        if value in options:
+            index += 2
+        elif not value.startswith("-"):
+            result.append(value)
+            index += 1
+        elif value.startswith("-") and not value.startswith("--") and len(value) > 1 and value[-1] in "mFCct" and not any(char in "mFCct" for char in value[1:-1]):
+            index += 2
+        else:
+            index += 1
+    return tuple(result)
+
+
 def protected_path(root: Path, relative: str, host: str, event: dict) -> str | None:
     """소스 위치와 독립된 host/session 경계. Git 병합은 기존 기록 전달만 허용한다."""
     parts = Path(relative).parts
@@ -109,6 +129,9 @@ def git_denial(event: dict, root: Path, host: str, command: str, cwd: Path) -> s
                         return "관리 정책 파일은 중앙 원본에서 수정하세요."
         if branch.git_arguments_are_read_only(args):
             continue
+        denial = _loader.load("branch_relations").integration_denial(invocation.root, args)
+        if denial:
+            return denial
         # stage/commit은 실제 포함할 변경만 검사한다. 다른 host의 dirty 파일이
         # worktree에 있다는 이유만으로 관련 없는 source commit을 막지 않는다.
         affected: tuple[str, ...] = ()
@@ -117,25 +140,50 @@ def git_denial(event: dict, root: Path, host: str, command: str, cwd: Path) -> s
             if not explicit:
                 return "commit할 파일을 확인할 수 있도록 git add -- <경로>를 명시하세요."
             changed = branch.changed_paths(invocation.root)
-            matching = branch._git(invocation.root, "ls-files", "-c", "-o", "--exclude-standard", "-z", "--", *explicit)
+            matching = branch._git(invocation.working_directory or invocation.root, "ls-files", "--full-name", "-c", "-o", "--exclude-standard", "-z", "--", *explicit)
             if matching.returncode:
                 return "stage할 Git 경로를 확인할 수 없습니다."
             selected = set(matching.stdout.split("\0"))
             # 삭제한 파일도 ls-files의 cached 목록에 남으므로 검증한다.
             affected = tuple(name for name in changed if name in selected)
             for value in explicit:
-                context = paths.repository_target(root, value, invocation.root)
+                context = paths.repository_target(root, value, invocation.working_directory or invocation.root)
                 if context:
                     denial = protected_path(*context, host, event)
                     if denial:
                         return denial
         elif args[0] == "commit":
             affected = branch.staged_paths(invocation.root)
-            if any(value in {"--all", "--only", "--include"} or re.fullmatch(r"-[A-Za-z]*[aio][A-Za-z]*", value)
+            specs = commit_paths(args)
+            if specs:
+                selected = branch._git(invocation.working_directory or invocation.root, "ls-files", "--full-name", "-z", "--", *specs)
+                if selected.returncode:
+                    return "commit에 포함할 파일을 확인할 수 없습니다."
+                affected = tuple(filter(None, selected.stdout.split("\0")))
+                if "--include" in args or "-i" in args:
+                    affected = tuple(set(affected) | set(branch.staged_paths(invocation.root)))
+            elif any(value in {"--all", "--only", "--include"} or re.fullmatch(r"-[A-Za-z]*[aio][A-Za-z]*", value)
                    for value in args[1:]):
                 affected = tuple(set(affected) | set(branch.changed_paths(invocation.root)))
-        elif args[0] in {"restore", "checkout"} and "--" in args:
-            selected = branch._git(invocation.root, "ls-files", "-z", "--", *branch._pathspecs_after_separator(args))
+        elif args[0] == "restore" or args[0] == "checkout" and "--" in args:
+            # restore always restores paths, including its ordinary no-- form.
+            # Resolve option values separately so --source is not a pathspec.
+            specs = branch._pathspecs_after_separator(args)
+            if "--" not in args:
+                values, skip = [], False
+                for value in args[1:]:
+                    if skip:
+                        skip = False
+                    elif value in {"-s", "--source", "--pathspec-from-file"}:
+                        if value == "--pathspec-from-file":
+                            return "복원할 경로는 파일 간접 지정 대신 명시하세요."
+                        skip = True
+                    elif value.startswith("--pathspec-from-file="):
+                        return "복원할 경로는 파일 간접 지정 대신 명시하세요."
+                    elif not value.startswith("-"):
+                        values.append(value)
+                specs = tuple(values)
+            selected = branch._git(invocation.working_directory or invocation.root, "ls-files", "--full-name", "-z", "--", *specs)
             if selected.returncode:
                 return "복원할 Git 경로를 확인할 수 없습니다."
             affected = tuple(filter(None, selected.stdout.split("\0")))
@@ -158,6 +206,11 @@ def git_denial(event: dict, root: Path, host: str, command: str, cwd: Path) -> s
                     return "변경할 경로를 확인할 수 없습니다."
                 selected = set(result.stdout.split("\0"))
                 affected = tuple(name for name in affected if name in selected)
+        elif args[0] == "checkout":
+            # Without --, an existing tracked path can still be restored.
+            values = tuple(arg for arg in args[1:] if not arg.startswith("-"))
+            selected = branch._git(invocation.working_directory or invocation.root, "ls-files", "--full-name", "-z", "--", *values)
+            affected = tuple(filter(None, selected.stdout.split("\0"))) if values else ()
         if branch.GIT_STATUS_UNAVAILABLE in affected:
             return "Git 변경 상태를 확인할 수 없습니다."
         for relative in affected:
@@ -174,6 +227,61 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
     shell = tool in config.SHELL_TOOLS
     event_cwd = Path(str(event.get("cwd") or root))
     cwd = paths.shell_working_directory(event_cwd, data)
+    operations = _loader.load("git_operations")
+    if shell:
+        invocation = operations.invocation(command)
+        if invocation is not None:
+            denial = boundary.directory_denial(root, cwd)
+            if denial:
+                protocol.emit_denial(host, denial)
+                return
+            if invocation[0] in {"execute", "recover"}:
+                if len(invocation) != 2:
+                    protocol.emit_denial(host, "실행할 operation ID를 정확히 지정하세요.")
+                    return
+                operation = operations.load(root, invocation[1])
+                if invocation[0] == "recover":
+                    if not operation.get("authorized") or operation["kind"] != "completion":
+                        protocol.emit_denial(host, "승인받아 시작한 동일 완료 작업만 복구할 수 있습니다.")
+                    return
+                if cwd.resolve() != Path(operation["cwd"]):
+                    protocol.emit_denial(host, "승인 대상의 실제 실행 위치와 다릅니다. 해당 workdir에서 실행하세요.")
+                    return
+                operations.validate(root, operation)
+                if operation["kind"] == "git":
+                    denial = git_denial(event, root, host, operation["command"], cwd)
+                    if denial:
+                        protocol.emit_denial(host, denial)
+                        return
+                message = "Git 작업 승인\n" + operation.get("command", "") + "\n작업 위치: " + str(cwd)
+                context_path = state.session_path(branch.git_common_directory(root), host, paths.event_session_id(event), "branch-context")
+                notice = _loader.load("branch_relations").transition(root, context_path, cwd) if context_path else ""
+                if notice:
+                    message += "\n" + notice
+                if operation["kind"] == "completion":
+                    evidence = operation["evidence"]
+                    message += f"\n{evidence['source']} → {evidence['target']} ({evidence['strategy']})\n검증: {evidence['verification']}\n로컬 정리: {evidence['cleanup']}\n"
+                    message += f"source: {evidence['source_head']}\ntarget: {evidence['target_head']}\n"
+                    if evidence["cleanup"]:
+                        message += f"재생성 가능한 산출물 정리 범위: {evidence['generated_cleanup_roots']}\n"
+                    message += "\n".join(f"{key}: {operation['report'][key]}" for key in operations.review.REPORT_FIELDS)
+                elif operation["kind"] == "relation":
+                    message += f"\n관계 변경: {operation['action']} {operation['name']} → {operation.get('parent') or operation.get('new_name') or ''}"
+                elif operation["kind"] == "write-recovery":
+                    message += f"\n결과 미확인 도구 정리: {operation['write_id']}\n종료 확인 근거: {operation['reason']}"
+                if host == "claude":
+                    operations.grant(root, operation, host, event)
+                    protocol.emit_operation_approval(host, message + "\n호스트 권한 요청에서 승인하세요.")
+                elif approval.operation_allowed(event, cwd, host, command):
+                    operations.grant(root, operation, host, event)
+                    if notice:
+                        protocol.emit_notice(host, notice)
+                else:
+                    protocol.emit_operation_approval(host, message + "\n명령 실행 승인으로 답하세요. 구현 승인은 별개입니다.")
+                return
+            if invocation[0] not in {"prepare", "review", "complete", "relation", "show", "graph", "write-recovery"}:
+                protocol.emit_denial(host, "지원하지 않는 보호 실행기 동작입니다.")
+            return
     if shell and paths.unsupported_workflow_invocation(command, root):
         protocol.emit_denial(host, "이전 branch workflow로 Git 승인을 우회할 수 없습니다. 일반 Git 명령을 사용하세요.")
         return
@@ -238,11 +346,23 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
             return
     categories = paths.protected_operation_categories(command) if shell else ()
     if categories:
-        if host != "claude" and approval.operation_allowed(event, cwd, host, command):
-            return
-        message = f"{', '.join(categories)} 변경 실행 전에 사용자 승인이 필요합니다.\n작업 위치: {cwd}\n명령: {command}\n"
-        message += ("호스트 권한 요청에서 승인하세요." if host == "claude" else
-                    "이 작업 단위의 대상과 영향을 확인한 뒤 진행 또는 명령 실행 승인으로 답하세요. 승인은 동일 위치·상태·명령에 한 번만 사용합니다.")
-        protocol.emit_operation_approval(host, message)
+        operation = operations.prepare_git(root, cwd, command, host, event)
+        # PreToolUse cannot hold a lock across native execution. Route through
+        # the bundled runner instead of claiming this check closes that race.
+        protocol.emit_denial(host, "Git 변경은 승인 후 실제 실행 직전에 재검사하는 보호 실행기를 사용하세요.\n"
+            + "작업 위치: " + str(cwd) + "\n보호 실행: " + operations.command(operation))
         return
     artifacts.reserve_binding(event, root, host)
+    if contexts:
+        operations.reserve_write(root, event, host, [target for target, _ in contexts])
+    elif shell and not branch._git_commands(command):
+        reads = {"cat", "head", "tail", "sed", "rg", "grep", "ls", "pwd", "find", "wc", "which", "type", "ps", "file"}
+        commands = branch.shell_command_contexts(command, cwd) or ()
+        if any(Path(words[0]).name not in reads for _, words in commands):
+            operations.reserve_write(root, event, host, [location for location, _ in commands])
+    common = branch.git_common_directory(root)
+    context_path = state.session_path(common, host, paths.event_session_id(event), "branch-context")
+    if context_path:
+        notice = _loader.load("branch_relations").transition(root, context_path, contexts[0][0] if contexts else cwd)
+        if notice:
+            protocol.emit_notice(host, notice)

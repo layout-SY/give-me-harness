@@ -168,6 +168,7 @@ const source = fs.readFileSync(process.argv[1], "utf8").replace(
   /import .* from "node:child_process"/, "const { spawnSync, execFile } = globalThis.fakeProcess");
 for (const [index, [status, stdout, expectedBlocked]] of [
   [0, '', false], [0, '{"decision":"allow"}', false], [0, '{}', true], [0, 'invalid-json', true],
+  [0, '{"decision":"allow","hookSpecificOutput":{"additionalContext":"family notice"}}', false],
   [1, '', true], [2, '', true], [null, '', true],
 ].entries()) {
   globalThis.fakeProcess = {
@@ -179,11 +180,13 @@ for (const [index, [status, stdout, expectedBlocked]] of [
     }
   };
   const {AgentPolicyPlugin} = await import('data:text/javascript,' + encodeURIComponent(source) + '#' + index);
-  const plugin = await AgentPolicyPlugin({directory: '/tmp', client: {app: {log: async () => {}}, tui: {showToast: async () => {}}}});
+  let notices = [];
+  const plugin = await AgentPolicyPlugin({directory: '/tmp', client: {app: {log: async () => {}}, tui: {showToast: async (value) => { notices.push(value.body.message); }}}});
   let blocked = false;
   try { await plugin['tool.execute.before']({tool: 'write', sessionID: 'test'}, {args: {file_path: 'src/a'}}); }
   catch { blocked = true; }
   if (blocked !== expectedBlocked) throw new Error(`status=${status}, stdout=${stdout}, blocked=${blocked}`);
+  if (stdout.includes('family notice') && !notices.includes('family notice')) throw new Error('notice was not displayed');
 }
 '''
         result = subprocess.run(["node", "--input-type=module", "-e", script, str(plugin)],

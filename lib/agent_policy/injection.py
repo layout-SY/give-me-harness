@@ -127,6 +127,25 @@ class InjectionLaunch:
     system_prompt: Path
     command: tuple[str, ...]
     environment: dict[str, str]
+    policy_comparison: dict | None = None
+
+
+def compare_bundle_policy(project: ProjectConfig, bundle: Path) -> dict:
+    """Describe drift without replacing an immutable resumed bundle."""
+    try:
+        manifest = json.loads((bundle / BUNDLE_MANIFEST).read_text())
+        previous = json.loads((bundle / "policy/.agent-policy/common/contracts/runtime-policy.json").read_text())
+    except (OSError, ValueError):
+        return {"status": "unknown", "message": "원래 bundle의 정책 비교 정보를 읽을 수 없습니다."}
+    current = role_profiles_module.RUNTIME_CONTRACT
+    current_digest = source_digest(project)
+    previous_git = previous.get("git", {})
+    current_git = current.get("git", {})
+    return {"status": "same" if manifest.get("source_digest") == current_digest else "different",
+            "original_source_digest": manifest.get("source_digest"), "current_source_digest": current_digest,
+            "original_version": previous.get("version"), "current_version": current.get("version"),
+            "original_integration": previous_git.get("integration"), "current_integration": current_git.get("integration"),
+            "message": "resume은 원래 bundle을 유지합니다. 새 관계·보호 실행 정책은 handoff 후 새 inject assignment로 적용하세요."}
 
 
 def is_consumer_policy_path(relative: str) -> bool:
@@ -1037,4 +1056,5 @@ def resume_injection(project: ProjectConfig, host: str, role: str, assignment: s
             raise PolicyError("원래 Codex home의 정책 파일 검증에 실패했습니다.")
     environment = dict(record["environment"])
     environment[INJECT_PROJECT_PATH_ENV] = str(project.path.resolve())
-    return InjectionLaunch(project, host, role, bundle, Path(record["system_prompt"]), tuple(command), environment)
+    return InjectionLaunch(project, host, role, bundle, Path(record["system_prompt"]), tuple(command), environment,
+                           compare_bundle_policy(project, bundle))

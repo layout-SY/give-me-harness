@@ -8,7 +8,7 @@ import shlex
 from pathlib import Path
 
 from .core import PolicyError, ProjectConfig, atomic_write
-from .injection import bundle_diagnostics
+from .injection import bundle_diagnostics, compare_bundle_policy
 from .recovery import common_directory, git, repository_state
 from .runtime import load_runtime
 
@@ -102,5 +102,6 @@ def list_sessions(project: ProjectConfig, host: str | None = None, assignment: s
                      "handed_off_to": record.get("handed_off_to"), "codex_home": home,
                      "transcripts": sorted(transcripts), "integration_reservations": receipts,
                      "bundle": bundle_diagnostics(Path(record["bundle_root"]), record["bundle_digest"]),
+                     "policy_comparison": compare_bundle_policy(project, Path(record["bundle_root"])),
                      "resume_command": shlex.join(command) if native and not record.get("handed_off_to") else ""})
     return rows

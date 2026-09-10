@@ -63,8 +63,19 @@ class SharedGitAccessTests(unittest.TestCase):
         return result
 
     def pre(self, host, command, *, workdir=None, role="logic"):
-        return self.run_event(host, "pre-tool", {"tool_name": "Bash", "tool_input": {
+        result = self.run_event(host, "pre-tool", {"tool_name": "Bash", "tool_input": {
             "command": command, "workdir": str(workdir or self.root)}}, role=role)
+        # Native raw commands are now redirected to the actual execution lock.
+        # Follow the emitted exact command, as a consumer agent does; the raw
+        # denial itself is covered separately in test_relation_operations.
+        output = result.stdout + result.stderr
+        if result.stdout.startswith("{"):
+            output = json.loads(result.stdout).get("hookSpecificOutput", {}).get("permissionDecisionReason", output)
+        if "보호 실행: " in output:
+            protected = output.split("보호 실행: ", 1)[1].strip()
+            return self.run_event(host, "pre-tool", {"tool_name": "Bash", "tool_input": {
+                "command": protected, "workdir": str(workdir or self.root)}}, role=role)
+        return result
 
     def assert_allowed(self, result):
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -108,9 +119,9 @@ class SharedGitAccessTests(unittest.TestCase):
                     self.assert_allowed(self.pre(host, command, workdir=self.worktree))
 
     def test_creation_merge_and_former_user_only_commands_ask(self):
-        for command in ("git switch -c plain-branch", "git branch -d old", "git merge --ff-only sy-main",
-                        "git worktree add /tmp/new-worktree", "git push origin HEAD", "git reset --hard HEAD",
-                        "git clean -fd", "git update-ref refs/heads/local HEAD", "git fetch origin",
+        for command in ("git switch -c plain-branch", "git branch -d old",
+                        "git worktree add /tmp/new-worktree", "git push origin HEAD",
+                        "git clean -fd", "git fetch origin",
                         "git restore -- src/app.ts", "git stash push", "git config user.name Name"):
             with self.subTest(command=command):
                 self.assert_asks(self.pre("claude", command), "claude")
@@ -118,7 +129,7 @@ class SharedGitAccessTests(unittest.TestCase):
     def test_codex_batch_approval_is_single_use_and_bound_to_worktree(self):
         command = "git add -- src/app.ts && git commit -m '작업 단위'"
         self.assert_asks(self.pre("codex", command, workdir=self.worktree), "codex")
-        self.run_event("codex", "user-prompt", {"prompt": "진행"})
+        self.run_event("codex", "user-prompt", {"prompt": "명령 실행 승인"})
         self.assert_allowed(self.pre("codex", command, workdir=self.worktree))
         self.assert_asks(self.pre("codex", command, workdir=self.worktree), "codex")
         self.run_event("codex", "user-prompt", {"prompt": "명령 실행 승인"})
@@ -137,7 +148,7 @@ class SharedGitAccessTests(unittest.TestCase):
                 "file_path": str(self.worktree / f".{other}/logs/sessions/someone/handoff.md"), "content": "변경"}})
             self.assertIn("읽기 전용", denied.stdout + denied.stderr)
 
-    def test_approved_merge_really_transfers_child_and_committed_foreign_logs(self):
+    def test_unknown_existing_branch_needs_relation_only_for_completion(self):
         log = self.worktree / ".claude/logs/sessions/child-session/handoff.md"
         log.parent.mkdir(parents=True)
         log.write_text("자식 담당자의 실제 인계 기록\n")
@@ -146,19 +157,17 @@ class SharedGitAccessTests(unittest.TestCase):
         self.git("commit", "-qm", "child", root=self.worktree)
         source = self.git("rev-parse", "HEAD", root=self.worktree)
         command = "git merge --ff-only existing-without-contract"
-        self.assert_asks(self.pre("codex", command), "codex")
-        self.run_event("codex", "user-prompt", {"prompt": "진행"})
-        self.assert_allowed(self.pre("codex", command))
-        self.git("merge", "--ff-only", "existing-without-contract")
-        self.assertEqual(self.git("rev-parse", "HEAD"), source)
-        self.assertEqual((self.root / log.relative_to(self.worktree)).read_bytes(), log.read_bytes())
-        self.assertEqual(self.git("status", "--porcelain"), "")
+        denied = self.pre("codex", command)
+        self.assertIn("직접 부모 관계", denied.stdout + denied.stderr)
+        self.assert_allowed(self.pre("codex", "git status", workdir=self.worktree))
+        self.assert_asks(self.pre("codex", "git commit --allow-empty -m next", workdir=self.worktree), "codex")
+        self.assertEqual(self.git("rev-parse", "HEAD", root=self.worktree), source)
         self.assertFalse(list(self.state.glob("repositories/*/claims/*.json")))
 
     def test_state_change_revokes_pending_git_approval_without_affecting_source_approval(self):
         command = "git add -- src/app.ts && git commit -m 'reviewed'"
         self.assert_asks(self.pre("codex", command), "codex")
-        self.run_event("codex", "user-prompt", {"prompt": "승인"})
+        self.run_event("codex", "user-prompt", {"prompt": "명령 실행 승인"})
         (self.root / "src/app.ts").write_text("export const value = 999;\n")
         self.assert_asks(self.pre("codex", command), "codex")
 
@@ -169,7 +178,7 @@ class SharedGitAccessTests(unittest.TestCase):
         log.parent.mkdir(parents=True)
         log.write_text("다른 작업 진행 중\n")
         self.assert_asks(self.pre("codex", command), "codex")
-        self.run_event("codex", "user-prompt", {"prompt": "진행"})
+        self.run_event("codex", "user-prompt", {"prompt": "명령 실행 승인"})
         log.write_text("다른 작업 진행 내용 추가\n")
         self.assert_allowed(self.pre("codex", command))
 
@@ -234,7 +243,7 @@ class SharedGitAccessTests(unittest.TestCase):
     def test_read_options_that_write_and_opencode_approval_are_not_bypasses(self):
         command = "git diff --output=report.txt"
         self.assert_asks(self.pre("opencode", command), "opencode")
-        self.run_event("opencode", "user-prompt", {"prompt": "진행"})
+        self.run_event("opencode", "user-prompt", {"prompt": "명령 실행 승인"})
         self.assert_allowed(self.pre("opencode", command))
         self.assert_asks(self.pre("opencode", command), "opencode")
 
@@ -253,6 +262,8 @@ class SharedGitAccessTests(unittest.TestCase):
         fake_home = self.base / "source-codex-home"
         fake_home.mkdir()
         (fake_home / "config.toml").write_text("")
+        self.git("branch", "feature", "sy-main")
+        self.git("branch", "child", "feature")
         for host in ("codex", "claude", "opencode"):
             with self.subTest(host=host):
                 launch = prepare_injection(project, host, "logic", build_root=self.base / "launch-build",
@@ -268,14 +279,48 @@ class SharedGitAccessTests(unittest.TestCase):
                     command = [sys.executable, "-I", str(runtime), "pre-tool", host]
                     plugin = (launch.bundle_root / "opencode-home/plugins/agent-policy.js").read_text()
                     self.assertIn(str(runtime), plugin)
+                common = Path(self.git("rev-parse", "--absolute-git-dir")).resolve()
+                directory = Path(launch.environment["ASAN_AGENT_POLICY_STATE_ROOT"]) / "repositories" / hashlib.sha256(str(common).encode()).hexdigest() / "branch-relations/v1"
+                directory.mkdir(parents=True, exist_ok=True)
+                head = self.git("rev-parse", "HEAD")
+                nodes = {name: {"id": name, "name": name, "parent": parent, "fork_commit": head,
+                    "purpose": "native test", "revision": 1, "deleted": False, "resolution": None}
+                    for name, parent in (("sy-main", None), ("feature", "sy-main"), ("child", "feature"))}
+                (directory / "graph.json").write_text(json.dumps({"version": 1, "revision": 1, "nodes": nodes}))
                 event = {"cwd": str(self.root), "session_id": f"native-{host}",
                          "tool_name": "exec_command" if host == "codex" else "bash",
-                         "tool_input": {"cmd" if host == "codex" else "command": "git merge --ff-only existing-without-contract",
+                         "tool_input": {"cmd" if host == "codex" else "command": "git commit --allow-empty -m native",
                                         "workdir": str(self.root)}}
                 env = {k: v for k, v in os.environ.items() if not k.startswith("ASAN_")}
+                invalid = json.loads(json.dumps(event))
+                invalid["tool_input"]["cmd" if host == "codex" else "command"] = "git merge --ff-only child"
+                denied = subprocess.run(command, input=json.dumps(invalid), cwd=self.root,
+                    env={**env, **launch.environment}, text=True, capture_output=True)
+                self.assertIn("직접 부모", denied.stdout + denied.stderr)
+                result = subprocess.run(command, input=json.dumps(event), cwd=self.root,
+                    env={**env, **launch.environment}, text=True, capture_output=True)
+                output = result.stdout + result.stderr
+                if result.stdout.startswith("{"):
+                    output = json.loads(result.stdout)["hookSpecificOutput"]["permissionDecisionReason"]
+                self.assertIn("보호 실행: ", output)
+                event["tool_input"]["cmd" if host == "codex" else "command"] = output.split("보호 실행: ", 1)[1].strip()
                 result = subprocess.run(command, input=json.dumps(event), cwd=self.root,
                     env={**env, **launch.environment}, text=True, capture_output=True)
                 self.assert_asks(result, host)
+                if host != "claude":
+                    approved = subprocess.run([*command[:-2], "user-prompt", host],
+                        input=json.dumps({"cwd": str(self.root), "session_id": f"native-{host}", "prompt": "명령 실행 승인"}),
+                        cwd=self.root, env={**env, **launch.environment}, text=True, capture_output=True)
+                    self.assertEqual(approved.returncode, 0, approved.stderr)
+                    allowed = subprocess.run(command, input=json.dumps(event), cwd=self.root,
+                        env={**env, **launch.environment}, text=True, capture_output=True)
+                    self.assert_allowed(allowed)
+                # Simulate acceptance of Claude's native ask; other hosts consumed
+                # the explicit prompt above. Execute the actual bundled runner.
+                executed = subprocess.run(shlex.split(event["tool_input"]["cmd" if host == "codex" else "command"]),
+                    cwd=self.root, env={**env, **launch.environment}, text=True, capture_output=True)
+                self.assertEqual(executed.returncode, 0, executed.stderr)
+                self.assertEqual(self.git("log", "-1", "--format=%s"), "native")
 
     def test_project_boundary_precedes_read_and_mutation_approval_for_all_hosts(self):
         other = self.base / "admin-ui"
@@ -339,7 +384,7 @@ class SharedGitAccessTests(unittest.TestCase):
             self.assert_asks(self.pre(host, f"git worktree add {self.base}/new-linked"), host)
         command = f"cd {self.worktree} && git add -- src/app.ts && git commit -m reviewed"
         self.assert_asks(self.pre("codex", command), "codex")
-        self.run_event("codex", "user-prompt", {"prompt": "진행"})
+        self.run_event("codex", "user-prompt", {"prompt": "명령 실행 승인"})
         self.assert_allowed(self.pre("codex", command))
 
     def test_approval_cannot_override_project_boundary_or_changed_local_remote(self):

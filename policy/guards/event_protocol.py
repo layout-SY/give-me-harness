@@ -143,3 +143,9 @@ def emit_session_context(host: str, message: str) -> None:
         )
         return
     print(message)
+
+
+def emit_notice(host: str, message: str) -> None:
+    """A context hint is never a permission decision or a recurring blocker."""
+    print(json.dumps({"decision": "allow", "hookSpecificOutput": {
+        "hookEventName": "PreToolUse", "additionalContext": message}}, ensure_ascii=False))

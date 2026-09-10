@@ -74,7 +74,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--branch", help="worktree에서 확인해야 할 현재 branch 이름")
     start.add_argument(
         "--task",
-        help="현재 세션에 배정할 승인된 task branch. 현재 worktree branch와 일치해야 합니다.",
+        help="현재 작업을 설명하는 문구. branch/worktree 소유권이나 접근 범위를 부여하지 않습니다.",
     )
     start.add_argument(
         "--responsibility",
@@ -381,6 +381,8 @@ def run_start(
         session_dir=selected_session_dir,
         resume_assignment=resume_assignment,
     )
+    if launch.policy_comparison:
+        print("policy-comparison: " + json.dumps(launch.policy_comparison, ensure_ascii=False), flush=True)
     if print_only:
         print("mode: inject")
         print(f"role: {launch.role}")

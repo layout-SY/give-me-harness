@@ -918,6 +918,7 @@ class InjectionTests(unittest.TestCase):
             patch("agent_policy.cli.prepare_injection") as prepare,
             redirect_stdout(StringIO()),
         ):
+            prepare.return_value.policy_comparison = None
             result = run_start("user-ui", "codex", None, True, role="logic", task="새 작업 설명")
         self.assertEqual(result, 0)
         prepare.assert_called_once()
@@ -1057,6 +1058,7 @@ class InjectionTests(unittest.TestCase):
             patch("agent_policy.cli.prepare_injection") as prepare,
             redirect_stdout(StringIO()),
         ):
+            prepare.return_value.policy_comparison = None
             result = run_start("user-ui", "codex", None, True, role="logic", task=branch)
         self.assertEqual(result, 0)
         prepare.assert_called_once()

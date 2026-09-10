@@ -399,6 +399,8 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
     if mode == "post-tool":
         complete_binding(event, repository_root(event), host)
         record_post_tool(event, repository_root(event), host)
+        if branch_guard.SHARED_GIT_ACCESS:
+            load_runtime_module("git_operations").complete_write(repository_root(event), event, host)
         return
     if mode != "pre-tool":
         raise SystemExit("지원하지 않는 guard mode입니다.")

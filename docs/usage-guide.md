@@ -1,6 +1,6 @@
 # asan-agent-policy 사용 가이드
 
-이 문서는 중앙 정책으로 Codex, Claude Code, OpenCode 세션을 시작하고, 승인된 작업 branch와 worktree에서 구현한 뒤 검증·병합·종료하는 실제 사용 절차를 설명한다.
+이 문서는 **이전 V3 bundle의 운영 기록**이다. 새 세션에는 아래의 소유권·scope·SHA·CLOSED 절차를 적용하지 않는다. 현재 절차는 [세션 독립 브랜치 관계와 완료 통합](branch-relations-2026-09-10.md)을 따른다.
 
 정책의 설계 근거와 상세 상태 전이는 [브랜치·worktree·세션 운영 전략 V3](branch-worktree-session-strategy.md), 역할별 세부 책임은 중앙 bundle에 렌더되는 task-role-routing과 git-branch-strategy 스킬을 정본으로 삼는다.
 

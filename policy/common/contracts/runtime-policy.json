@@ -71,7 +71,19 @@
       "{{TEST_COMMAND}}",
       "{{BUILD_COMMAND}}"
     ],
-    "access": "shared-project"
+    "access": "shared-project",
+    "integration": {
+      "schema": 1,
+      "relationships": "session-independent-identities",
+      "completion": "direct-parent-after-children",
+      "strategies": ["ff-only", "merge"],
+      "execution": "bundled-git-operations",
+      "sibling_review": "evidence-and-agent-report",
+      "family_movement": "notice-only",
+      "cleanup": "approved-local-linked-worktree-only",
+      "generated_cleanup_roots": ["node_modules/", "dist/"],
+      "git_prompt_approval": "명령 실행 승인"
+    }
   },
   "capabilities": {
     "source_write": [
