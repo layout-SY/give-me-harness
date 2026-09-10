@@ -1,0 +1,265 @@
+{
+  "baseline_commit": "e844e6a8f086117996026f5f7d9f0a7bbceb8f5b",
+  "source_digests": {
+    "admin-ui": "2e276e13b3c6b928c5e8acd5c17d03d4cff652782ab3fae2ac07fc2489d67acc",
+    "user-ui": "cd871b8ca17126781561a84981d172df952faccbb7c172bfb787531baed9daa2"
+  },
+  "tested_source_files": {
+    "adapters/opencode/files/.opencode/plugins/agent-policy.js": "7bf03b10ade00184adc4298cda9aaf4675ec81caebb527ab75ef7cc0806de7ad",
+    "lib/agent_policy/cli.py": "a938cf2df40654cf7500f2e0a40cc2f92fe60f12f747978d30df39259c627668",
+    "lib/agent_policy/injection.py": "9f8a9fcadb127c366e5f99b7e03dfc41856bb1f536a7ed829ebf717baf92dc98",
+    "lib/agent_policy/sessions.py": "a3ea3b6df0c3864e29615c5d9936dd355ecd0ff4c9b0569d666a32a0aa4673f6",
+    "policy/common/AGENT_POLICY.template.md": "3e52c72cf289f1e2ff6698e513ad95cf535d1fa6f525659dfb121ca5d360eb10",
+    "policy/common/contracts/runtime-policy.json": "c04af25d9ff27ef2b660a94ab94d1d4839e4f232812e4081eac3e5f9ec60fb61",
+    "policy/common/skills/policy/git-branch-strategy/SKILL.md": "d86670fd10e2e8408d9a775869d742e9002616057f3cf1ae5a6cd418b13cb053",
+    "policy/common/skills/policy/task-role-routing/SKILL.md": "71f87c5b4a8378f2542885cb166ee326ef3accf6bb9f8c6f52a48b5c95a65d1e",
+    "policy/common/skills/policy/task-role-routing/references/handoff-and-ownership.md": "a9e4be7748c022a0d5185ef74cf466d4ac361286ffd27d9fd82696c3e9768208",
+    "policy/common/skills/policy/task-role-routing/references/logic.md": "c11bbd4100fa8f8d432b058c20b406c459f0b28619405b20a120e4f9aa202582",
+    "policy/common/skills/policy/task-role-routing/references/orchestration.md": "50ddfc3e6e551f4c4bcf506f9be41833df9c87ed0a0836c729088b72ce23ae0f",
+    "policy/common/skills/policy/task-role-routing/references/pipeline-roles.md": "be7ed94db154b4c1247a0f72cec1af5c67015f4b640748acdf42836f251cc9c8",
+    "policy/common/skills/policy/task-role-routing/references/ui.md": "f6ecc9174501528d3a6f7a8e4a0add89e9e1d8a342c92488260c4464bec62d6e",
+    "policy/common/skills/policy/task-role-routing/references/workflows.md": "cff0463e05870d0fea6117a14e70f651dcdea1e1c1fb3780eb5e2572e106a610",
+    "policy/guards/approval_policy.py": "2dc53cc9e4723f05fb3081ee8611e874388c3eff7b358935cd97dd35b95c9948",
+    "policy/guards/branch_relations.py": "86f2e0a9aa65254fce3b4b8c226dd87baac80cea8f32c9b11280ead8f2ad019b",
+    "policy/guards/event_protocol.py": "679533a5deb938c012d8171c1bcb9398a80c87b3a06ea646b9b4e499c2b6607f",
+    "policy/guards/git_operations.py": "4288ad037dd3e0544c2b5ae3cf4fbdc9e7b49b09e1b7eef27df2882078ffa4ce",
+    "policy/guards/integration_review.py": "6511ca214e16797a534b18353f32fdd472e6f9cff766f2dda12d2a11296b43b3",
+    "policy/guards/managed_policy_guard.py": "e0cf4782e37c7a8b0964a05400f9e8b6d60f480d7edf2e579a662b1f2ff89353",
+    "policy/guards/shared_git.py": "b7d595f33632130b341e047b8b1af631a1f7ab04598de930e279da7e8fea7e2d",
+    "tests/test_injection.py": "6fa06e1fc23fa6e527cc3d981b407f928ce0ea82fa6f9b8fb372d3020912f9e6",
+    "tests/test_relation_operations.py": "b30283e69f9514dcbf419f9664c253f946f9c0cb8df1729cc75c8b56c016c795",
+    "tests/test_remediation.py": "b6439f2e6d6889efaeecd8a9e882fb2e6171e6e8671fc61dfe057339cf8e8a2a",
+    "tests/test_shared_git_access.py": "92412253f908048976efacd6605de50c0c13f4878f65e81ed2414cdc79f128cf"
+  },
+  "policy_version": 4,
+  "relation_schema": 1,
+  "implementation_commit": "42a43ef0c12ef2179438a43761f77406aeda3294",
+  "full_suite": {
+    "log": "/private/tmp/asan-relations-full-accepted.log",
+    "sha256": "1515e668028c24a4fca9ad75f5adcab7416fea0dc193c8603b43b2dfd530f114",
+    "test_count": 285,
+    "duration_seconds": 1255.952,
+    "passed": true,
+    "result": "OK",
+    "command": "python3 -m unittest discover -s tests -v",
+    "committed_log": "docs/operations/2026-09-10-branch-relations-unittest.log",
+    "exit_code": 0
+  },
+  "audit": {
+    "command": "bin/agent-policy audit",
+    "exit_code": 0,
+    "sha256": "60827a79bb380fe450f7be8bd8d0bdcfa0453a449cd4de5a7a833e86e52a92a4",
+    "output": [
+      "[central-contract] PASS",
+      "[admin-ui] PASS (267 bundle files)",
+      "[user-ui] PASS (197 bundle files)"
+    ]
+  },
+  "before_after_regressions": [
+    {
+      "case": "초기 직접 부모·미처리 자식·구현/Git 승인 분리·push/로그 보호",
+      "before": {
+        "log": "/private/tmp/asan-relations-before.log",
+        "sha256": "db3e0ec0a242728e021c36abf813ba8d34ad0143fd59f00d01c6f85f069806ad",
+        "test_count": 4,
+        "duration_seconds": 3.085,
+        "passed": false,
+        "result": "FAILED (failures=5)"
+      },
+      "after": {
+        "log": "/private/tmp/asan-relations-full-accepted.log",
+        "sha256": "1515e668028c24a4fca9ad75f5adcab7416fea0dc193c8603b43b2dfd530f114",
+        "test_count": 285,
+        "duration_seconds": 1255.952,
+        "passed": true,
+        "result": "OK"
+      }
+    },
+    {
+      "case": "ignored 로컬 파일 정리 보류",
+      "before": {
+        "log": "/private/tmp/asan-ignored-before.log",
+        "sha256": "67ab8667d4818e2e19ac838b7d514486fe784a33b4c95463937b4318fe37268b",
+        "test_count": 1,
+        "duration_seconds": 6.885,
+        "passed": false,
+        "result": "FAILED (failures=1)"
+      },
+      "after": {
+        "log": "/private/tmp/asan-ignored-after.log",
+        "sha256": "e868eaae46ffadfd2d95b13fd6845ddc348a15430c256894731bcc315c638877",
+        "test_count": 1,
+        "duration_seconds": 5.915,
+        "passed": true,
+        "result": "OK"
+      }
+    },
+    {
+      "case": "완료·삭제한 부모 아래 보존된 자식의 새 작업",
+      "before": {
+        "log": "/private/tmp/asan-descendants-before.log",
+        "sha256": "1a6d3ae8352b82f6794be7eb39ec83f8e4ea48a0f1091d9efdfa34c0662ba171",
+        "test_count": 1,
+        "duration_seconds": 0.427,
+        "passed": false,
+        "result": "FAILED (failures=1)"
+      },
+      "after": {
+        "log": "/private/tmp/asan-descendants-after.log",
+        "sha256": "91fe29d15e7e3cdfb13db1f7d7251d68b9221bd2046d01650613e4e06964241a",
+        "test_count": 1,
+        "duration_seconds": 0.627,
+        "passed": true,
+        "result": "OK"
+      }
+    },
+    {
+      "case": "보존 브랜치에서 추가 작업 완료",
+      "before": {
+        "log": "/private/tmp/asan-retained-before.log",
+        "sha256": "6d592a6a5c41c6888dd5828d2131780de99dda7c57fb28fc1bbf7a4836e90434",
+        "test_count": 1,
+        "duration_seconds": 8.234,
+        "passed": false,
+        "result": "FAILED (errors=1)"
+      },
+      "after": {
+        "log": "/private/tmp/asan-retained-after.log",
+        "sha256": "b35c4b3f654c260dba6c798d317bd15154bff81f99082c39ec43ebf809aa0e13",
+        "test_count": 1,
+        "duration_seconds": 9.341,
+        "passed": true,
+        "result": "OK"
+      }
+    },
+    {
+      "case": "부모 변경 후 이전 병합 근거 보존",
+      "before": {
+        "log": "/private/tmp/asan-reparent-history-before.log",
+        "sha256": "107a22604db2cfa8956407bfa23c7c18ab252bcad39f756d1d785bd969194cb8",
+        "test_count": 1,
+        "duration_seconds": 6.328,
+        "passed": false,
+        "result": "FAILED (failures=1)"
+      },
+      "after": {
+        "log": "/private/tmp/asan-reparent-history-after.log",
+        "sha256": "bcf519501f6537f5775d44f7c9f92033786631e9fb934d5bc9a41209c8d37ec7",
+        "test_count": 1,
+        "duration_seconds": 6.539,
+        "passed": true,
+        "result": "OK"
+      }
+    },
+    {
+      "case": "reset 구분자·붙임 force 옵션 우회",
+      "before": {
+        "log": "/private/tmp/asan-ref-options-before.log",
+        "sha256": "b51a988be11a2f1a3fb817cb5fdfc2709339b2f09643d0b0552bfa4e9d25d1a7",
+        "test_count": 1,
+        "duration_seconds": 0.619,
+        "passed": false,
+        "result": "FAILED (failures=3)"
+      },
+      "after": {
+        "log": "/private/tmp/asan-ref-options-after.log",
+        "sha256": "cf3bf0619d9a2b08ca654ef2e2adb21b67067e156381472c889a274ed0ea5a70",
+        "test_count": 1,
+        "duration_seconds": 0.752,
+        "passed": true,
+        "result": "OK"
+      }
+    },
+    {
+      "case": "다른 branch가 checkout된 target의 잘못된 검증",
+      "before": {
+        "log": "/private/tmp/asan-target-verification-before.log",
+        "sha256": "a589d72966dd76d88df171ce90c4bfd149573c3585ddcd2abacb624cd0f7e74c",
+        "test_count": 1,
+        "duration_seconds": 3.764,
+        "passed": false,
+        "result": "FAILED (failures=1)"
+      },
+      "after": {
+        "log": "/private/tmp/asan-target-verification-after.log",
+        "sha256": "14d6541ab1b2d2612fe6643820bf82e017e63e9563b31d75d4e1babad8dceaa8",
+        "test_count": 1,
+        "duration_seconds": 2.632,
+        "passed": true,
+        "result": "OK"
+      }
+    },
+    {
+      "case": "launcher 비교 필드의 테스트 대역 호환",
+      "before": {
+        "log": "/private/tmp/asan-launch-comparison-failure.log",
+        "sha256": "ab811a80db2b8360a6c97d850561c05888c48bb64a62c85eca0c8e262ef7a0df",
+        "test_count": 2,
+        "duration_seconds": 2.888,
+        "passed": false,
+        "result": "FAILED (errors=2)"
+      },
+      "after": {
+        "log": "/private/tmp/asan-launch-comparison-after.log",
+        "sha256": "e03056b3d523297fbd6181144384a52f9c454a204cfcf2c373a3615f3f8abbd2",
+        "test_count": 2,
+        "duration_seconds": 3.092,
+        "passed": true,
+        "result": "OK"
+      }
+    }
+  ],
+  "additional_checks": [
+    {
+      "log": "/private/tmp/asan-relations-targeted-final.log",
+      "sha256": "f76bb4c4e138ef48646c7de87ab9d12497ad48ce3977e8acfed07c90f9e483f8",
+      "test_count": 29,
+      "duration_seconds": 84.292,
+      "passed": true,
+      "result": "OK"
+    },
+    {
+      "log": "/private/tmp/asan-native-executor.log",
+      "sha256": "db22175546502a2d37deb8843e25de1480df3ea96c1cd919ce425a897c4dc2c9",
+      "test_count": 1,
+      "duration_seconds": 10.438,
+      "passed": true,
+      "result": "OK"
+    },
+    {
+      "log": "/private/tmp/asan-opencode-notice.log",
+      "sha256": "5a9f53d92530fffe0d30b1bcadaaaf415faf64c0ea84802b87159b57b0cd310e",
+      "test_count": 1,
+      "duration_seconds": 0.072,
+      "passed": true,
+      "result": "OK"
+    },
+    {
+      "log": "/private/tmp/asan-relations-rendering-final.log",
+      "sha256": "0a18a09fbeb091be3e5d05b8a0fb2874a0eb030179adb6c775910f3be445daa9",
+      "test_count": 23,
+      "duration_seconds": 0.838,
+      "passed": true,
+      "result": "OK"
+    }
+  ],
+  "superseded_full_run": {
+    "log": "/private/tmp/asan-relations-full-final.log",
+    "sha256": "a2cdf6d594c7d1a073293397a00cd3fdc860191625e3936acd57cd0f5406da90",
+    "test_count": 281,
+    "duration_seconds": 1263.033,
+    "passed": false,
+    "result": "FAILED (errors=2)"
+  },
+  "interrupted_runs": [
+    "asan-relations-full.log",
+    "asan-relations-full-verified.log"
+  ],
+  "consumer_changes": "정책 사본·설정·세션·branch·worktree 수정이나 중앙 로그 stage/commit 없음",
+  "limitations": [
+    "의미·타입·API 충돌은 에이전트 검토이며 수집기만으로 증명하지 않음",
+    "외부 터미널·원격 변경은 하네스 lock에 참여하지 않음",
+    "초기 완료 방식은 ff-only·일반 merge",
+    "새 정책 적용은 기존 작업 확인·handoff 후 새 inject 세션"
+  ]
+}
