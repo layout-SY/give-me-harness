@@ -1,0 +1,367 @@
+{
+  "captured_at": "2026-09-17T05:19:02.864548+00:00",
+  "rows": [
+    {
+      "assignment": "d0a30c3b095f43cea810258ab2256bea",
+      "host": "codex",
+      "project": "admin-ui",
+      "root": "/Users/okand/SynologyDrive/asan-metaverse-admin-ui/.codex/logs/sessions/usage-api",
+      "bundle": "/Users/okand/SynologyDrive/asan-agent-policy/state/bundles/admin-ui/codex-logic-1b3bf4886899fa0fcf81fab5ef8ce3907bfbe7af1e8864bc6a0db28924b76a5f",
+      "artifacts_contract": {
+        "required": ["plan.md", "final-summary.md"],
+        "handoff": "handoff.md",
+        "unknown_directory": "unknown",
+        "responsibilities": ["owner", "contributor"],
+        "optional": [
+          "exploration.md",
+          "implementation-log.md",
+          "grill-me-review.md",
+          "review-log.md",
+          "evaluation-log.md",
+          "portfolio-log.md"
+        ]
+      },
+      "files": {
+        "final-summary.md": {
+          "bytes": 5750,
+          "sha256": "c558d1a2b7cd6da785bbb8c89e25c1f2c1131b28855a9d2e76ff5b675aec7b1b",
+          "headings": [
+            "# 이용 내역 API 구현 결과",
+            "## 실제 변경",
+            "## 검증 결과",
+            "## 사용과 남은 범위",
+            "## 후속 커밋"
+          ]
+        },
+        "plan.md": {
+          "bytes": 5224,
+          "sha256": "c7182a969fc4f5e870a7e807cf3053a408c857070c2bcd26b44d8bf66928a13e",
+          "headings": [
+            "# 이용 내역 API 연결",
+            "## 범위와 확정 결정",
+            "## 재사용 근거와 예상 변경",
+            "## 작업과 검증",
+            "## 현재 실행 상태",
+            "## 적용 스킬"
+          ]
+        }
+      }
+    },
+    {
+      "assignment": "75be0ed635074038972649356114c2a8",
+      "host": "codex",
+      "project": "admin-ui",
+      "root": "/private/tmp/asan-metaverse-admin-ui-video-api/.codex/logs/sessions/video-api",
+      "bundle": "/Users/okand/SynologyDrive/asan-agent-policy/state/bundles/admin-ui/codex-logic-1b3bf4886899fa0fcf81fab5ef8ce3907bfbe7af1e8864bc6a0db28924b76a5f",
+      "artifacts_contract": {
+        "required": ["plan.md", "final-summary.md"],
+        "handoff": "handoff.md",
+        "unknown_directory": "unknown",
+        "responsibilities": ["owner", "contributor"],
+        "optional": [
+          "exploration.md",
+          "implementation-log.md",
+          "grill-me-review.md",
+          "review-log.md",
+          "evaluation-log.md",
+          "portfolio-log.md"
+        ]
+      },
+      "files": {
+        "final-summary.md": {
+          "bytes": 4702,
+          "sha256": "60f935d52e3529a90c89d8202770cfc24cb4bbc879981ee5ffa52d938c0907e6",
+          "headings": [
+            "# 영상 API 작업 결과",
+            "## 실제 변경",
+            "## 검증",
+            "## 사용 진입점·제한",
+            "## 실행 중 승인 훅 이력"
+          ]
+        },
+        "handoff.md": {
+          "bytes": 4857,
+          "sha256": "8d7568a3418b233a75ad71cb5a73c9d82839e47311e25a8f2fc790e696b7355d",
+          "headings": [
+            "# 영상 API 구현 완료 인계",
+            "## 현재 및 인계 대상 위치",
+            "## 변경과 승인",
+            "## 완료한 Logic 작업과 연결 계약",
+            "## 후속 범위",
+            "## 해결된 승인 훅 차단 이력",
+            "## 확인 명령과 결과"
+          ]
+        },
+        "plan.md": {
+          "bytes": 4332,
+          "sha256": "112e8521641c1b06d2175be61bdbcbebc5b2d2398ef6e28d6192c19171e2a43f",
+          "headings": [
+            "# 영상·플레이리스트 API 구현 계획",
+            "## 확정 계약",
+            "## 탐색·재사용 근거",
+            "## 수행 순서·예상 변경",
+            "## Git 상태",
+            "## 완료 확인"
+          ]
+        }
+      }
+    },
+    {
+      "assignment": "91a69efa92154f2ea840e5bccc56d980",
+      "host": "claude",
+      "project": "admin-ui",
+      "root": "/Users/okand/SynologyDrive/asan-metaverse-admin-ui/.claude/logs/sessions/2026-09-14-ui-91a69efa",
+      "bundle": "/Users/okand/SynologyDrive/asan-agent-policy/build/admin-ui/claude-ui-87e67a0e2e1b6be2",
+      "artifacts_contract": {
+        "required": ["plan.md", "final-summary.md"],
+        "handoff": "handoff.md",
+        "unknown_directory": "unknown",
+        "responsibilities": ["owner", "contributor"],
+        "optional": [
+          "exploration.md",
+          "implementation-log.md",
+          "grill-me-review.md",
+          "review-log.md",
+          "evaluation-log.md",
+          "portfolio-log.md"
+        ]
+      },
+      "files": {
+        "final-summary.md": {
+          "bytes": 5412,
+          "sha256": "a87a75e7143a0bf030449f987e72816b61f5449847b00632fb260ef8cb563db2",
+          "headings": [
+            "# 최종 요약",
+            "## 제공 사항",
+            "## 변경 이유",
+            "## 재사용한 자산",
+            "## 영향 영역",
+            "## 제외 사항",
+            "## 검증",
+            "## 산출물",
+            "## 알려진 제한",
+            "## 다음 단계"
+          ]
+        },
+        "handoff.md": {
+          "bytes": 11659,
+          "sha256": "a4c6e9edc495517375c5ad48c8c6c3475f6ca5229c2bb1804a69b2e2ab709439",
+          "headings": [
+            "# 인계",
+            "## Assignment 이동",
+            "## 역할 라우팅",
+            "## 목표 및 현재 상태",
+            "## 완료된 작업",
+            "## 대기 중인 작업",
+            "## 결정 사항 및 제약 조건",
+            "## 보내는 작업의 위치와 변경 상태",
+            "## 인계 대상 작업 공간",
+            "### 작업 공간: vo-admin-ui",
+            "## 역할별 상세 작업",
+            "### 역할·하위 작업: Logic · 가상오피스 관리자 데이터 연결",
+            "## 협업 순서와 Git 통합",
+            "## 관련 경로와 스킬",
+            "## 명령어 및 결과",
+            "## 실행하지 않은 검증",
+            "## 다음 조치"
+          ]
+        },
+        "plan.md": {
+          "bytes": 3365,
+          "sha256": "0322f40e0f699737cfa13aff5570214e83d6832e82b9f63ea423b5f4cd6899d7",
+          "headings": [
+            "# 계획",
+            "## 목표",
+            "## 작업 유형",
+            "## 범위",
+            "## 제외 사항",
+            "## 제약 조건 (사용자 확정)",
+            "## 스킬 및 역할",
+            "## 검증",
+            "## 위험 요소 및 결정 사항",
+            "## 승인"
+          ]
+        }
+      }
+    },
+    {
+      "assignment": "bf0bc87a61e141e2ad8fdd189b831ea1",
+      "host": "codex",
+      "project": "admin-ui",
+      "root": "/private/tmp/asan-metaverse-admin-ui-event-api/.codex/logs/sessions/event-attendance-roulette-api",
+      "bundle": "/Users/okand/SynologyDrive/asan-agent-policy/state/bundles/admin-ui/codex-logic-1b3bf4886899fa0fcf81fab5ef8ce3907bfbe7af1e8864bc6a0db28924b76a5f",
+      "artifacts_contract": {
+        "required": ["plan.md", "final-summary.md"],
+        "handoff": "handoff.md",
+        "unknown_directory": "unknown",
+        "responsibilities": ["owner", "contributor"],
+        "optional": [
+          "exploration.md",
+          "implementation-log.md",
+          "grill-me-review.md",
+          "review-log.md",
+          "evaluation-log.md",
+          "portfolio-log.md"
+        ]
+      },
+      "files": {
+        "final-summary.md": {
+          "bytes": 5691,
+          "sha256": "db4e53a530f826c91ee6b8ae4fc4e61229d6a441dd9abd6a8c70ea9cb270d089",
+          "headings": [
+            "# 출석·룰렛 API 구현 결과",
+            "## 제공 사항",
+            "## 변경 이유와 실제 동작",
+            "## 재사용한 자산",
+            "## 검증",
+            "## 작업 위치와 변경 상태",
+            "## 산출물과 다음 단계",
+            "## 실행 환경 기록"
+          ]
+        },
+        "handoff.md": {
+          "bytes": 14574,
+          "sha256": "681f661d6cd9c29c17f7c98a79f0964baa802f7524e96a329894688ff56d24ad",
+          "headings": [
+            "# 출석·룰렛 API UI 연결 인계",
+            "## 목표와 현재 상태",
+            "## 역할·위치",
+            "## 공개 API와 hook",
+            "## 조회와 상태",
+            "## 등록·기본 정보 수정",
+            "## 설정과 이미지",
+            "## 캐시와 취소",
+            "## 직접 API를 사용할 때",
+            "## 다음 UI 작업",
+            "## 변경 상태·통합",
+            "## 검증 기록",
+            "## 관련 스킬"
+          ]
+        },
+        "plan.md": {
+          "bytes": 3941,
+          "sha256": "b823ecf9e9c37e88de91099f12a95b2a5e5196785724e1cf03f19c0eeb0064ea",
+          "headings": [
+            "# 출석·룰렛 API 구현 계획",
+            "## 목표와 승인",
+            "## 작업 위치와 범위",
+            "## 확정 계약",
+            "## 재사용 근거와 스킬",
+            "## 실행 순서와 검증",
+            "## 제한"
+          ]
+        }
+      }
+    },
+    {
+      "assignment": "88f1e0789de04dacafacbbccdfab8836",
+      "host": "claude",
+      "project": "user-ui",
+      "root": "/Users/okand/SynologyDrive/asan-metaverse-user-ui/.claude/logs/sessions/전역-모달-팝업-계약-통일",
+      "bundle": "/Users/okand/SynologyDrive/asan-agent-policy/state/bundles/user-ui/claude-ui-ef3806a84f3296cfce00c98d4a1568f50078e1cd6da45c99e7b11c016c7fe2a1",
+      "artifacts_contract": {
+        "required": ["plan.md", "final-summary.md"],
+        "handoff": "handoff.md",
+        "unknown_directory": "unknown",
+        "responsibilities": ["owner", "contributor"],
+        "optional": [
+          "exploration.md",
+          "implementation-log.md",
+          "grill-me-review.md",
+          "review-log.md",
+          "evaluation-log.md",
+          "portfolio-log.md"
+        ]
+      },
+      "files": {
+        "final-summary.md": {
+          "bytes": 6173,
+          "sha256": "6c4e5b01ff488011ab4ad652d3af253e2b168b7cf7ae6bbccdcd930b64c64d62",
+          "headings": [
+            "# 전역 모달 팝업 계약 통일 결과",
+            "## 실제 변경",
+            "## 검증 결과",
+            "## 병합",
+            "## 형제 병합 후속 확인",
+            "## 정리",
+            "## 남은 사항"
+          ]
+        },
+        "plan.md": {
+          "bytes": 2179,
+          "sha256": "91af61114566bf980d199e4f7794de234f42449683d92001ccb01b65295cbbf4",
+          "headings": [
+            "# 전역 모달 팝업 계약 통일 계획",
+            "## 조사 결과",
+            "## 사용자 확정 사항",
+            "## 변경 범위",
+            "## 검증"
+          ]
+        }
+      }
+    },
+    {
+      "assignment": "2a4aa4cfd2c4457a88f62aca70458599",
+      "host": "codex",
+      "project": "user-ui",
+      "root": "/Users/okand/SynologyDrive/asan-metaverse-user-ui/.codex/logs/sessions/reservation-media-check",
+      "bundle": "/Users/okand/SynologyDrive/asan-agent-policy/state/bundles/user-ui/codex-logic-fd74fbace48b011b4f6a6d6529c70d59d2516cd93691d3ab78fd39bf1e517dfb",
+      "artifacts_contract": {
+        "required": ["plan.md", "final-summary.md"],
+        "handoff": "handoff.md",
+        "unknown_directory": "unknown",
+        "responsibilities": ["owner", "contributor"],
+        "optional": [
+          "exploration.md",
+          "implementation-log.md",
+          "grill-me-review.md",
+          "review-log.md",
+          "evaluation-log.md",
+          "portfolio-log.md"
+        ]
+      },
+      "files": {
+        "final-summary.md": {
+          "bytes": 5989,
+          "sha256": "936c94a6cd95fbc82422409305bf35f32e4b65a020dc94396eb047805e4453f3",
+          "headings": [
+            "# 예약 회의 Logic 수정 결과",
+            "## 실제 변경",
+            "## 검증 결과와 한계",
+            "## UI 미완료 항목",
+            "## 작업 위치와 다른 변경 보존"
+          ]
+        },
+        "handoff.md": {
+          "bytes": 13428,
+          "sha256": "19211db88fc3ad5da8db39eb6b00cce8242b6c1f20d5bbf3b84112a71c0c6cdf",
+          "headings": [
+            "# 예약 회의 UI 인계",
+            "## 역할과 사용자 결정",
+            "## 보내는 위치와 인계 대상 작업 공간",
+            "### 작업 공간: reservation-shared",
+            "## 확인된 데이터·callback 계약",
+            "## UI 역할의 구체적인 작업",
+            "### 영상 크기와 격자",
+            "### 화자 파란 테두리",
+            "### 작은 한 줄 회의 컨트롤",
+            "### 장치 점검 안내 문구",
+            "## 검증과 완료 기준",
+            "## 협업·통합과 다음 조치"
+          ]
+        },
+        "plan.md": {
+          "bytes": 3222,
+          "sha256": "ba8a76b547211596e17fa571a6576445c63f572685a3418bd9d1e6330cda63f4",
+          "headings": [
+            "# 예약 회의 렌더링·장치 권한 수정 계획",
+            "## 승인과 작업 위치",
+            "## 확인한 근거와 선택",
+            "## 작업 순서와 완료 기준",
+            "## 적용 스킬"
+          ]
+        }
+      }
+    }
+  ]
+}

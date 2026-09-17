@@ -1,0 +1,2051 @@
+{
+  "capturedAt": "2026-09-17T04:01:21.811Z",
+  "method": "TypeScript AST, runtime imports/exports and literal dynamic imports from src/main.tsx; conservative module reachability, not execution proof.",
+  "snapshots": [
+    {
+      "project": "U",
+      "root": "/Users/okand/SynologyDrive/asan-metaverse-user-ui",
+      "head": "71ba983e87e302578924d3be55936d729079cca0",
+      "apiFiles": 14
+    },
+    {
+      "project": "A",
+      "root": "/Users/okand/SynologyDrive/asan-metaverse-admin-ui",
+      "head": "604e4dc46900edbedd0dc0369784b7a76f1ab83d",
+      "apiFiles": 44
+    },
+    {
+      "project": "V",
+      "root": "/private/tmp/asan-metaverse-admin-ui-video-api",
+      "head": "57bbb3ce5f6c1472ab59d5631921b50faf1c2bfe",
+      "apiFiles": 45
+    },
+    {
+      "project": "E",
+      "root": "/private/tmp/asan-metaverse-admin-ui-event-api",
+      "head": "f3627abcd440709ccec1b98a6b37238fcf6936e2",
+      "apiFiles": 43
+    }
+  ],
+  "rows": [
+    {
+      "project": "U",
+      "path": "src/features/auth/api/auth.api.ts",
+      "transport": "Axios",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 7,
+          "text": "const LOGIN_ENDPOINT = \"/auth/login\";"
+        },
+        {
+          "line": 8,
+          "text": "const REFRESH_ENDPOINT = \"/auth/refresh\";"
+        },
+        {
+          "line": 63,
+          "text": "const response = await instance.post<unknown>(LOGIN_ENDPOINT, parsedRequest, signal ? { signal } : undefined);"
+        },
+        {
+          "line": 69,
+          "text": "const response = await instance.post<unknown>(REFRESH_ENDPOINT, parsedRequest, signal ? { signal } : undefined);"
+        }
+      ],
+      "sha256": "112cce587943d3db965beff1c74cb05091aacae65a2e6fd767584b9c6a48b75f"
+    },
+    {
+      "project": "U",
+      "path": "src/features/citizen-participation/api/banner/banner.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 5,
+          "text": "const RESOURCE = \"/citizen\";"
+        },
+        {
+          "line": 9,
+          "text": "client.get<readonly BannerDto[]>(`${RESOURCE}/banners`, withAbortSignal(signal)),"
+        }
+      ],
+      "sha256": "e9409e63139139dfa8fe660461e01f053c854c851842d01c14f2e96ac1aded01"
+    },
+    {
+      "project": "U",
+      "path": "src/features/citizen-participation/api/comment/comment.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 13,
+          "text": "const RESOURCE = \"/citizen\";"
+        },
+        {
+          "line": 23,
+          "text": "client.get<CommentListResponseDto>("
+        },
+        {
+          "line": 24,
+          "text": "`${RESOURCE}/${collection}/${encodeURIComponent(contentId)}/comments`,"
+        },
+        {
+          "line": 34,
+          "text": "client.post<MutationResponseDto, CommentRequestDto>("
+        },
+        {
+          "line": 35,
+          "text": "`${RESOURCE}/${collection}/${encodeURIComponent(contentId)}/comments`,"
+        },
+        {
+          "line": 46,
+          "text": "client.post<CommentLikeResponseDto>("
+        },
+        {
+          "line": 47,
+          "text": "`${RESOURCE}/${collection}/${encodeURIComponent(contentId)}/comments/${encodeURIComponent(commentId)}/likes`,"
+        }
+      ],
+      "sha256": "1bea0a1ce6b6e57604b5884f85e0833542db95042f95463f5a10ac0c8a1c6c19"
+    },
+    {
+      "project": "U",
+      "path": "src/features/citizen-participation/api/discussion/discussion.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 13,
+          "text": "const RESOURCE = \"/citizen/discussions\";"
+        },
+        {
+          "line": 28,
+          "text": "client.get<unknown>("
+        },
+        {
+          "line": 29,
+          "text": "RESOURCE,"
+        },
+        {
+          "line": 37,
+          "text": "client.get<unknown>(`${RESOURCE}/${encodeURIComponent(discussionId)}`, withAbortSignal(signal))"
+        },
+        {
+          "line": 45,
+          "text": "client.post<unknown, DiscussionParticipationRequestDto>("
+        },
+        {
+          "line": 46,
+          "text": "`${RESOURCE}/${encodeURIComponent(discussionId)}/participations`,"
+        }
+      ],
+      "sha256": "cd61a2d0a5a5f699041526e190e29e5dd9c372fb42d9ce2702f67b87d10fc168"
+    },
+    {
+      "project": "U",
+      "path": "src/features/citizen-participation/api/me/me.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 7,
+          "text": "const RESOURCE = \"/citizen\";"
+        },
+        {
+          "line": 11,
+          "text": "client.get<MainResponseDto>(`${RESOURCE}/main`, withAbortSignal(signal)),"
+        },
+        {
+          "line": 14,
+          "text": "client.get<MeDto>(\"/me\", withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 17,
+          "text": "client.get<unknown>("
+        },
+        {
+          "line": 18,
+          "text": "`${RESOURCE}/me/activity`,"
+        }
+      ],
+      "sha256": "c77aff589f5205c36755e12e67d3bc7a1a4dca93b6f956a43378449f692839a1"
+    },
+    {
+      "project": "U",
+      "path": "src/features/citizen-participation/api/notice/notice.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 5,
+          "text": "const RESOURCE = \"/citizen\";"
+        },
+        {
+          "line": 9,
+          "text": "client.get<readonly NoticeDto[]>(`${RESOURCE}/notices`, withAbortSignal(signal)),"
+        }
+      ],
+      "sha256": "0d5d443df5e32ab2c42c1164945915e9e7f1448acd4e386b4283a08c8501102a"
+    },
+    {
+      "project": "U",
+      "path": "src/features/citizen-participation/api/policy/policy.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 10,
+          "text": "const RESOURCE = \"/citizen/policies\";"
+        },
+        {
+          "line": 25,
+          "text": "client.get<ContentListResponseDto>("
+        },
+        {
+          "line": 26,
+          "text": "RESOURCE,"
+        },
+        {
+          "line": 34,
+          "text": "client.get<ContentDetailDto>(`${RESOURCE}/${encodeURIComponent(policyId)}`, withAbortSignal(signal)),"
+        }
+      ],
+      "sha256": "20cbf657ba269476adcf13426afb51373e38c929932cd19c2dc293c2185a15c7"
+    },
+    {
+      "project": "U",
+      "path": "src/features/citizen-participation/api/proposal/proposal.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 18,
+          "text": "const RESOURCE = \"/citizen/proposals\";"
+        },
+        {
+          "line": 32,
+          "text": "client.get<GetProposalListResponseDto>("
+        },
+        {
+          "line": 33,
+          "text": "RESOURCE,"
+        },
+        {
+          "line": 41,
+          "text": "client.get<GetProposalDetailResponseDto>(`${RESOURCE}/${encodeURIComponent(proposalId)}`, withAbortSignal(signal)),"
+        },
+        {
+          "line": 46,
+          "text": "RESOURCE,"
+        }
+      ],
+      "sha256": "41710499cc153ace97ca6febc473777b9c3d96c1bee3488c98d9451622d508e5"
+    },
+    {
+      "project": "U",
+      "path": "src/features/citizen-participation/api/report/report.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 8,
+          "text": "const RESOURCE = \"/citizen\";"
+        },
+        {
+          "line": 17,
+          "text": "client.post<MutationResponseDto, ReportRequestDto>("
+        },
+        {
+          "line": 18,
+          "text": "`${RESOURCE}/${collection}/${encodeURIComponent(contentId)}/reports`,"
+        }
+      ],
+      "sha256": "b328305377eac537ac508d93fceba8a237ea81efdd07468403eedb951b4fc5b7"
+    },
+    {
+      "project": "U",
+      "path": "src/features/citizen-participation/api/survey/survey.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 12,
+          "text": "const RESOURCE = \"/citizen/surveys\";"
+        },
+        {
+          "line": 16,
+          "text": "client.get<ContentListResponseDto>(RESOURCE, withAbortSignal(signal, { params: query })),"
+        },
+        {
+          "line": 19,
+          "text": "client.get<ContentDetailDto>(`${RESOURCE}/${encodeURIComponent(surveyId)}`, withAbortSignal(signal)),"
+        },
+        {
+          "line": 22,
+          "text": "client.post<MutationResponseDto, SurveyAnswerRequestDto>("
+        },
+        {
+          "line": 23,
+          "text": "`${RESOURCE}/${encodeURIComponent(surveyId)}/responses`,"
+        }
+      ],
+      "sha256": "157627ebfc3932f35351fbdcce04b6396773476b1a71a288ed70e2ec311bd090"
+    },
+    {
+      "project": "U",
+      "path": "src/features/citizen-participation/api/vote/vote.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 21,
+          "text": "const RESOURCE = \"/citizen/votes\";"
+        },
+        {
+          "line": 45,
+          "text": "client.get<GetVoteListResponseDto>("
+        },
+        {
+          "line": 46,
+          "text": "RESOURCE,"
+        },
+        {
+          "line": 54,
+          "text": "client.get<GetVoteDetailResponseDto>(`${RESOURCE}/${encodeURIComponent(voteId)}`, withAbortSignal(signal)),"
+        },
+        {
+          "line": 57,
+          "text": "client.get<GetVoteCommentListResponseDto>("
+        },
+        {
+          "line": 58,
+          "text": "`${RESOURCE}/${encodeURIComponent(voteId)}/comments`,"
+        },
+        {
+          "line": 66,
+          "text": "`${RESOURCE}/${encodeURIComponent(voteId)}/comments/${encodeURIComponent(commentId)}`,"
+        },
+        {
+          "line": 74,
+          "text": "client.delete("
+        },
+        {
+          "line": 75,
+          "text": "`${RESOURCE}/${encodeURIComponent(voteId)}/comments/${encodeURIComponent(commentId)}`,"
+        },
+        {
+          "line": 80,
+          "text": "client.delete(`${RESOURCE}/${encodeURIComponent(voteId)}/comments/${encodeURIComponent(commentId)}/likes`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 87,
+          "text": ">(`${RESOURCE}/${encodeURIComponent(voteId)}/ballots`, { choice: request.choice }, withAbortSignal(signal, customConfig))"
+        }
+      ],
+      "sha256": "3a3c81ef23fc1c317d5b490934826ab5d17e0cecbca704a6e1aeb3b9ff9ac407"
+    },
+    {
+      "project": "U",
+      "path": "src/features/meeting-reservation/api/meetingReservation.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 38,
+          "text": "export const MEETING_RESERVATION_ENDPOINT = \"/meeting-reservations\";"
+        },
+        {
+          "line": 42,
+          "text": ".get<MeetingReservationListResponseDto>(MEETING_RESERVATION_ENDPOINT,"
+        },
+        {
+          "line": 48,
+          "text": "`${MEETING_RESERVATION_ENDPOINT}/${encodeURIComponent(reservationIdSchema.parse(reservationId))}`,"
+        },
+        {
+          "line": 53,
+          "text": ".get<MeetingReservationRestrictionResponseDto>(`${MEETING_RESERVATION_ENDPOINT}/restriction`, withAbortSignal(signal, customConfig))"
+        },
+        {
+          "line": 58,
+          "text": "`${MEETING_RESERVATION_ENDPOINT}/${encodeURIComponent(reservationIdSchema.parse(reservationId))}/cancel`,"
+        },
+        {
+          "line": 66,
+          "text": "`${MEETING_RESERVATION_ENDPOINT}/time-slots`,"
+        },
+        {
+          "line": 76,
+          "text": "`${MEETING_RESERVATION_ENDPOINT}/participants`,"
+        },
+        {
+          "line": 86,
+          "text": "MEETING_RESERVATION_ENDPOINT,"
+        }
+      ],
+      "sha256": "afdbc1e2bb12a8b7d1888192c057e2e9e7d545a45d9fa27e7963edafb1025f10"
+    },
+    {
+      "project": "U",
+      "path": "src/features/meeting/api/entry/meetingEntry.api.ts",
+      "transport": "fetch",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 16,
+          "text": "const response = await fetch(TEMP_MEETING_ENTRY_PATH, {"
+        }
+      ],
+      "sha256": "9dd872b4b5b0aacee8b64d67c5656863d7b56de3bf4424b9ced77cf2791f001c"
+    },
+    {
+      "project": "U",
+      "path": "src/features/meeting/api/http/meeting.api.ts",
+      "transport": "fetch",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 72,
+          "text": "httpResponse = await fetch(`${apiBaseUrl}${path}`, {"
+        }
+      ],
+      "sha256": "eebdb0e9ba3993fc0543edf881328c1c141c82dfccb61d98022e3d5a22c7b6a1"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/admin-settings/api/admin-settings.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 6,
+          "text": "const RESOURCE = \"/v1/admins\";"
+        },
+        {
+          "line": 10,
+          "text": "await instance.post(`${RESOURCE}`, payload, customConfig);"
+        },
+        {
+          "line": 14,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}`, { params, ...customConfig });"
+        },
+        {
+          "line": 21,
+          "text": "const resData = await instance.get<unknown, { data: GetAdminResponseDto }>(`${RESOURCE}/${adminId}`, { ...customConfig });"
+        },
+        {
+          "line": 28,
+          "text": "await instance.patch(`${RESOURCE}/${adminId}`, payload, customConfig);"
+        },
+        {
+          "line": 32,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/audit`, { params, ...customConfig });"
+        },
+        {
+          "line": 39,
+          "text": "const resData = await instance.get<unknown, { data: GetPoliciesResponseDto }>(`${RESOURCE}/policies`, { ...customConfig });"
+        },
+        {
+          "line": 46,
+          "text": "const resData = await instance.get<unknown, { data: { id: number; code: string }[] }>(`${RESOURCE}/roles`, { ...customConfig });"
+        },
+        {
+          "line": 53,
+          "text": "await instance.patch(`${RESOURCE}/${adminId}`, payload, customConfig);"
+        }
+      ],
+      "sha256": "1b7bc3e49cd527050b50af34a1f7540ce4872dfeb706a0e3d26d0dc953205a1e"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/auth/api/auth.api.ts",
+      "transport": "Axios",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 5,
+          "text": "const RESOURCE = \"/v1/auth\";"
+        },
+        {
+          "line": 9,
+          "text": "const response: unknown = await instance.post(\"/auth/login\", payload, { signal });"
+        },
+        {
+          "line": 13,
+          "text": "const response: unknown = await instance.post(`${RESOURCE}/token/reissue`, undefined, {"
+        },
+        {
+          "line": 20,
+          "text": "await instance.post(`${RESOURCE}/password`, payload);"
+        },
+        {
+          "line": 23,
+          "text": "await instance.post(`${RESOURCE}/password/email`, payload);"
+        }
+      ],
+      "sha256": "e3dad52956973cfd7473e5ab42b90c96c7f5fe8007b4046ca10e165f27689034"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-activity-log/api/cp-activity-log.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 10,
+          "text": "const RESOURCE = \"/v1/cp/activity-logs\";"
+        },
+        {
+          "line": 33,
+          "text": "normalizeAbort(client.get<unknown>(RESOURCE, withAbortSignal(signal, { ...customConfig, params }))),"
+        },
+        {
+          "line": 36,
+          "text": "normalizeAbort(client.get<unknown>(`${RESOURCE}/users/${userId}`, withAbortSignal(signal, customConfig))),"
+        }
+      ],
+      "sha256": "bb3735980980222305ba39f93cc21d127a54b2f208b4f87ac9ae8bcb8372550a"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-board/api/cp-board.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 10,
+          "text": "const RESOURCE = \"/v1/cp/boards\";"
+        },
+        {
+          "line": 42,
+          "text": "normalizeAbort(client.get<unknown>(RESOURCE, withAbortSignal(signal, { ...customConfig, params }))),"
+        },
+        {
+          "line": 45,
+          "text": "normalizeAbort(client.get<unknown>(`${RESOURCE}/${boardId}`, withAbortSignal(signal, customConfig))),"
+        },
+        {
+          "line": 48,
+          "text": "client.post<unknown, UpdateCpBoardProcessDto>(`${RESOURCE}/${boardId}/process`, payload, customConfig),"
+        },
+        {
+          "line": 51,
+          "text": "client.post<unknown, BulkHideCpBoardDto>(`${RESOURCE}/bulk-hide`, payload, customConfig),"
+        }
+      ],
+      "sha256": "144f5845bd45f1ad03a151c98c10c1dc530799da869af9a11a5137ca71ed11a0"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-comment/api/cp-comment.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 8,
+          "text": "const RESOURCE = \"/v1/cp/comments\";"
+        },
+        {
+          "line": 23,
+          "text": "client.get<unknown>(RESOURCE, withAbortSignal(signal, { ...customConfig, params })),"
+        },
+        {
+          "line": 26,
+          "text": "client.post<unknown, UpdateCpCommentProcessDto>(`${RESOURCE}/${commentId}/process`, payload, withAbortSignal(signal, customConfig)),"
+        }
+      ],
+      "sha256": "6f27da8d6d90d07409e51aa9d026606b435ac91bbbdcc443a43f647abd70180d"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-dashboard/api/cp-dashboard.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 6,
+          "text": "const RESOURCE = \"/v1/cp/dashboard\";"
+        },
+        {
+          "line": 11,
+          "text": "client.get<unknown>(`${RESOURCE}/overview`, withAbortSignal(signal, customConfig)),"
+        }
+      ],
+      "sha256": "0953ec7728ca518078cfc3f8d60bd0dac384574148fa716633d38ca9684e88e2"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-discussion/api/cp-discussion.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 8,
+          "text": "const RESOURCE = \"/v1/cp/discussions\";"
+        },
+        {
+          "line": 26,
+          "text": "client.get<unknown>(RESOURCE, withAbortSignal(signal, { ...customConfig, params })),"
+        },
+        {
+          "line": 29,
+          "text": "client.get<unknown>(`${RESOURCE}/${discussionId}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 32,
+          "text": "client.post<unknown, UpdateCpDiscussionProcessDto>(`${RESOURCE}/${discussionId}/process`, payload, withAbortSignal(signal, customConfig)),"
+        }
+      ],
+      "sha256": "643fa502c9781d0112d6ba1f05b045e508c77c04502bd40cd7f188e0cbb41887"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-main-display/api/cp-main-display.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 10,
+          "text": "const RESOURCE = \"/v1/cp/main-display\";"
+        },
+        {
+          "line": 31,
+          "text": "normalizeAbort(client.get<unknown>(RESOURCE, withAbortSignal(signal, customConfig))),"
+        },
+        {
+          "line": 34,
+          "text": "client.post<unknown, SaveCpMainDisplayDto>(`${RESOURCE}/save`, payload, customConfig),"
+        },
+        {
+          "line": 37,
+          "text": "client.post<unknown, SaveCpMainDisplayDto>(`${RESOURCE}/publish`, payload, customConfig),"
+        }
+      ],
+      "sha256": "82b3f24245e80dc330b36975d584c1b1ca522a599dccec46ccd779568512886b"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-notice/api/cp-notice.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 10,
+          "text": "const RESOURCE = \"/v1/cp/notices\";"
+        },
+        {
+          "line": 37,
+          "text": "normalizeAbort(client.get<unknown>(`${RESOURCE}/${noticeId}`, withAbortSignal(signal, customConfig))),"
+        },
+        {
+          "line": 40,
+          "text": "client.post<unknown, SaveCpNoticeDraftDto>(`${RESOURCE}/draft`, payload, customConfig),"
+        },
+        {
+          "line": 43,
+          "text": "client.post<unknown, PublishCpNoticeDto>(`${RESOURCE}/${noticeId}/publish`, payload, customConfig),"
+        }
+      ],
+      "sha256": "eccdea516df7702c593cd3b180724681376ad836b14846b03f30a383c8151f9f"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-operation-policy/api/cp-operation-policy.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 10,
+          "text": "const RESOURCE = \"/v1/cp/operation-policy\";"
+        },
+        {
+          "line": 31,
+          "text": "normalizeAbort(client.get<unknown>(RESOURCE, withAbortSignal(signal, customConfig))),"
+        },
+        {
+          "line": 34,
+          "text": "client.post<unknown, SaveCpOperationPolicyDto>(`${RESOURCE}/save`, payload, customConfig),"
+        },
+        {
+          "line": 37,
+          "text": "client.post<unknown, SaveCpOperationPolicyDto>(`${RESOURCE}/apply`, payload, customConfig),"
+        }
+      ],
+      "sha256": "90ed19e859d0e1b3b51b0adb4ee88e129f88518c3aa6bd6d436dc6762a726a08"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-policy/api/cp-policy.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 8,
+          "text": "const RESOURCE = \"/v1/cp/policies\";"
+        },
+        {
+          "line": 27,
+          "text": "client.get<unknown>(RESOURCE, withAbortSignal(signal, { ...customConfig, params })),"
+        },
+        {
+          "line": 30,
+          "text": "client.get<unknown>(`${RESOURCE}/${policyId}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 33,
+          "text": "client.post<unknown, UpdateCpPolicyProcessDto>(`${RESOURCE}/${policyId}/process`, payload, customConfig),"
+        }
+      ],
+      "sha256": "8b1097f56618992ac42eb040b1066a7fa00f1e8bacd2ca3d1b3c6672ac16745d"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-proposal/api/cp-proposal.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 13,
+          "text": "const CITIZEN_PROPOSALS_RESOURCE = \"/citizen/proposals\";"
+        },
+        {
+          "line": 14,
+          "text": "const PROCESS_RESOURCE = \"/v1/cp/proposals\";"
+        },
+        {
+          "line": 34,
+          "text": "client.get<CpProposalListApiResponseDto>("
+        },
+        {
+          "line": 35,
+          "text": "CITIZEN_PROPOSALS_RESOURCE,"
+        },
+        {
+          "line": 40,
+          "text": "client.get<CpProposalDetailApiResponseDto>(`${CITIZEN_PROPOSALS_RESOURCE}/${proposalId}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 43,
+          "text": "client.post<unknown, UpdateCpProposalProcessDto>(`${PROCESS_RESOURCE}/${proposalId}/process`, payload, withAbortSignal(signal, customConfig)),"
+        }
+      ],
+      "sha256": "59fcc0c7bc8461f03a264e79a9d31295971623ffbe596a927e93541a42813501"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-report/api/cp-report.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 10,
+          "text": "const RESOURCE = \"/v1/cp/reports\";"
+        },
+        {
+          "line": 38,
+          "text": "normalizeAbort(client.get<unknown>(RESOURCE, withAbortSignal(signal, { ...customConfig, params }))),"
+        },
+        {
+          "line": 41,
+          "text": "normalizeAbort(client.get<unknown>(`${RESOURCE}/${reportId}`, withAbortSignal(signal, customConfig))),"
+        },
+        {
+          "line": 44,
+          "text": "client.post<unknown, UpdateCpReportProcessDto>(`${RESOURCE}/${reportId}/process`, payload, customConfig),"
+        }
+      ],
+      "sha256": "932c2ce4a2df62382d31aada6f7542e3d7bd06416d225225944dd75c55187f30"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-reward/api/cp-reward.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 10,
+          "text": "const RESOURCE = \"/v1/cp/rewards\";"
+        },
+        {
+          "line": 40,
+          "text": "normalizeAbort(client.get<unknown>(`${RESOURCE}/targets`, withAbortSignal(signal, { ...customConfig, params }))),"
+        },
+        {
+          "line": 43,
+          "text": "client.post<unknown>(`${RESOURCE}/targets/${targetId}/pay`, undefined, customConfig),"
+        },
+        {
+          "line": 46,
+          "text": "normalizeAbort(client.get<unknown>(`${RESOURCE}/policy`, withAbortSignal(signal, customConfig))),"
+        },
+        {
+          "line": 49,
+          "text": "client.post<unknown, SaveCpRewardPolicyDto>(`${RESOURCE}/policy/save`, payload, customConfig),"
+        },
+        {
+          "line": 52,
+          "text": "client.post<unknown, SaveCpRewardPolicyDto>(`${RESOURCE}/policy/apply`, payload, customConfig),"
+        }
+      ],
+      "sha256": "5c70cfd90b2d6ea677a20116bfd205f1ed5c985236ccf00722b670692ec69708"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-survey/api/cp-survey.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 10,
+          "text": "const RESOURCE = \"/v1/cp/surveys\";"
+        },
+        {
+          "line": 38,
+          "text": "normalizeAbort(client.get<unknown>(RESOURCE, withAbortSignal(signal, { ...customConfig, params }))),"
+        },
+        {
+          "line": 41,
+          "text": "normalizeAbort(client.get<unknown>(`${RESOURCE}/${surveyId}`, withAbortSignal(signal, customConfig))),"
+        },
+        {
+          "line": 44,
+          "text": "client.post<unknown, UpdateCpSurveyProcessDto>(`${RESOURCE}/${surveyId}/process`, payload, customConfig),"
+        }
+      ],
+      "sha256": "99829154f728f25bbad65d534f55cfdf926153b2fb6b03efd429f8728d317930"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/cp-vote/api/cp-vote.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 8,
+          "text": "const RESOURCE = \"/citizen/votes\";"
+        },
+        {
+          "line": 22,
+          "text": "client.get<CpVoteListApiResponseDto>(RESOURCE, withAbortSignal(signal, { ...customConfig, params, paramsSerializer: { indexes: null } })),"
+        },
+        {
+          "line": 25,
+          "text": "client.get<CpVoteDetailApiResponseDto>(`${RESOURCE}/${voteId}`, withAbortSignal(signal, customConfig)),"
+        }
+      ],
+      "sha256": "0a9884bfbc832fd9fc14c1f5e52a288efbc8756c8b83e6235d8aba5c266ba74c"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/dao/api/banner/banner.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 5,
+          "text": "const RESOURCE = \"/v1/dao\";"
+        },
+        {
+          "line": 9,
+          "text": "const resData: AxiosResponse<GetDaoBannersResponseDto> = await instance.get(`${RESOURCE}/banners`, { ...customConfig });"
+        },
+        {
+          "line": 16,
+          "text": "const resData: AxiosResponse<CreateDaoBannerResponseDto> = await instance.post(`${RESOURCE}/banners`, payload, { ...customConfig });"
+        },
+        {
+          "line": 23,
+          "text": "const resData: AxiosResponse<PathDaoBannerResponseDto> = await instance.patch(`${RESOURCE}/banners/${bannerId}`, payload, { ...customConfig });"
+        },
+        {
+          "line": 30,
+          "text": "const resData: AxiosResponse<DeleteDaoBannerResponseDto> = await instance.delete(`${RESOURCE}/banners/${bannerId}`, { ...customConfig });"
+        }
+      ],
+      "sha256": "b34d5600668a022c0b65d7709c2f60a063fe58f61dd443a1fbf7b293b75e2558"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/dao/api/dao-logs/logs.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 6,
+          "text": "const RESOURCE = \"/v1/dao\";"
+        },
+        {
+          "line": 10,
+          "text": "const resData: AxiosResponse<TableApiResponseDto<GetDaoLogsHistoryListItemDto, \"PUT\" | \"POST\" | \"PATCH\" | \"DELETE\">> = await instance.get("
+        },
+        {
+          "line": 11,
+          "text": "`${RESOURCE}/audit`,"
+        }
+      ],
+      "sha256": "8c82f4040e97dae7cb0e33aa446c140994bbcbe9266ce5885e41181b9110593e"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/dao/api/dao.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [],
+      "sha256": "587f376c995401c27582ae7305e0b3aa359e2d0802b78f0a0058dd3ab9437033"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/dao/api/discussion/discussion.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 22,
+          "text": "const RESOURCE = \"/v1/dao\";"
+        },
+        {
+          "line": 33,
+          "text": "client.get<TableApiResponseDto<GetDaoDiscussionPostsListItemDto, DaoProposalStatus>>(`${RESOURCE}/proposals/discussion/posts`, {"
+        },
+        {
+          "line": 39,
+          "text": "client.get<GetDaoDiscussionPostsResponseDto>(`${RESOURCE}/proposals/${proposalId}/discussion/posts`, {"
+        },
+        {
+          "line": 45,
+          "text": "client.post<CreateDaoDiscussionPostResponseDto, CreateDaoDiscussionPostRequestDto>(`${RESOURCE}/proposals/${proposalId}/discussion/posts`, payload, {"
+        },
+        {
+          "line": 50,
+          "text": "client.get<GetDaoDiscussionPostDetail>(`${RESOURCE}/proposals/discussion/posts/${postId}`, { ...customConfig }),"
+        },
+        {
+          "line": 53,
+          "text": "client.patch<void, PatchDaoDiscussionPostsModerationRequestDto>(`${RESOURCE}/discussion/posts/${postId}/moderation`, payload, {"
+        },
+        {
+          "line": 58,
+          "text": "client.delete<void>(`${RESOURCE}/proposals/discussion/posts/${postId}`, { ...customConfig }),"
+        },
+        {
+          "line": 64,
+          "text": "client.get<TableApiResponseDto<GetDaoDiscussionPostCommentsListItemDto>>(`${RESOURCE}/discussion/posts/${postId}/comments`, {"
+        },
+        {
+          "line": 70,
+          "text": "client.post<CreateDaoDiscussionCommentResponseDto, CreateDaoDiscussionCommentRequestDto>(`${RESOURCE}/discussion/comments`, payload, { ...customConfig }),"
+        },
+        {
+          "line": 73,
+          "text": "client.delete<void>(`${RESOURCE}/discussion/comments/${commentId}`, { ...customConfig }),"
+        },
+        {
+          "line": 76,
+          "text": "client.patch<void, PatchDaoDiscussionPostsModerationRequestDto>(`${RESOURCE}/discussion/posts/${postId}/moderation`, payload, {"
+        },
+        {
+          "line": 81,
+          "text": "client.patch<void, PatchDaoDiscussionCommentsModerationRequestDto>(`${RESOURCE}/discussion/comments/${commentId}/moderation`, payload, {"
+        }
+      ],
+      "sha256": "ed5a7bec6916dddf5826a2feed97ca5a9498eb7bf884b2f046d3f475e4b284c0"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/dao/api/main-board/main-board.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 5,
+          "text": "const RESOURCE = \"/v1/dao\";"
+        },
+        {
+          "line": 9,
+          "text": "const resData: AxiosResponse<CreateMainBoardPublishDaoResponseDto> = await instance.get(`${RESOURCE}/main-board/${proposalId}/publish`, {"
+        },
+        {
+          "line": 18,
+          "text": "const resData: AxiosResponse<DeleteDaoMainBoardPublishResponseDto> = await instance.delete(`${RESOURCE}/main-board/${proposalId}/publish`, {"
+        }
+      ],
+      "sha256": "26aaadc548fcb5643b412e99382c77866548b796d037a92e32e13400fa1cb134"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/dao/api/policy/policy.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 5,
+          "text": "const RESOURCE = \"/v1/dao\";"
+        },
+        {
+          "line": 9,
+          "text": "const resData: AxiosResponse<GetDaoPolicyResponseDto> = await instance.get(`${RESOURCE}/policy`, { ...customConfig });"
+        },
+        {
+          "line": 16,
+          "text": "const resData: AxiosResponse<PatchDaoPolicyResponseDto> = await instance.patch(`${RESOURCE}/policy`, payload, { ...customConfig });"
+        },
+        {
+          "line": 23,
+          "text": "const resData: AxiosResponse<RestartDaoJobsSettleResponseDto> = await instance.post(`${RESOURCE}/jobs/settle/${proposalId}`, { ...customConfig });"
+        }
+      ],
+      "sha256": "9cf34c641ab817984b2f976b79f6e270ae0a248290ece87b1c37c3771deb7bee"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/dao/api/proposal-review/proposal-review.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 13,
+          "text": "const RESOURCE = \"/v1/dao\";"
+        },
+        {
+          "line": 17,
+          "text": "const resData: AxiosResponse<TableApiResponseDto<GetDaoProposalsReviewListItemDto, DaoProposalReviewStatus>> = await instance.get("
+        },
+        {
+          "line": 18,
+          "text": "`${RESOURCE}/proposals/reviews`,"
+        },
+        {
+          "line": 30,
+          "text": "const resData: AxiosResponse<GetDaoProposalReviewDetailResponseDto> = await instance.get(`${RESOURCE}/proposals/${proposalId}/review/detail`, {"
+        },
+        {
+          "line": 39,
+          "text": "const resData: AxiosResponse<CreateDaoProposalReviewResponseDto> = await instance.post(`${RESOURCE}/proposals/${proposalId}/review`, payload, {"
+        }
+      ],
+      "sha256": "023d1f32743199297463c692a13943a659207688e026648161f4e1332aa302c4"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/dao/api/proposal/proposal.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 14,
+          "text": "const RESOURCE = \"/v1/dao\";"
+        },
+        {
+          "line": 18,
+          "text": "const resData: AxiosResponse<CreateDaoProposalResponseDto> = await instance.post(`${RESOURCE}/proposals`, payload, customConfig);"
+        },
+        {
+          "line": 24,
+          "text": "const resData: AxiosResponse<TableApiResponseDto<GetDaoProposalsListItemDto, DaoProposalStatus>> = await instance.get(`${RESOURCE}/proposals`, {"
+        },
+        {
+          "line": 34,
+          "text": "const resData: AxiosResponse<TableApiResponseDto<GetDaoProposalsListItemDto>> = await instance.post(`${RESOURCE}/proposals/history`, payload, {"
+        },
+        {
+          "line": 43,
+          "text": "const resData: AxiosResponse<GetDaoProposalDetailResponseDto> = await instance.get(`${RESOURCE}/proposals/${proposalId}`, { ...customConfig });"
+        },
+        {
+          "line": 49,
+          "text": "const resData: AxiosResponse<void> = await instance.patch(`${RESOURCE}/proposals/${proposalId}`, payload, { ...customConfig });"
+        },
+        {
+          "line": 55,
+          "text": "const resData: AxiosResponse<void> = await instance.delete(`${RESOURCE}/proposals/${proposalId}`, { ...customConfig });"
+        },
+        {
+          "line": 61,
+          "text": "const resData: AxiosResponse<string> = await instance.post(`${RESOURCE}/proposals/images`, payload, {"
+        },
+        {
+          "line": 73,
+          "text": "const resData: AxiosResponse<void> = await instance.delete(`${RESOURCE}/proposals/images`, {"
+        }
+      ],
+      "sha256": "933325b7de9a498822f5de425dc376f577941a493929f02cd01b1cd3bd8ed23d"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/dao/api/report/report.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 5,
+          "text": "const RESOURCE = \"/v1/dao\";"
+        },
+        {
+          "line": 9,
+          "text": "const resData: AxiosResponse<GetDaoReportsResponseDto> = await instance.get(`${RESOURCE}/discussion/reports`, { params, ...customConfig });"
+        },
+        {
+          "line": 16,
+          "text": "const resData: AxiosResponse<PatchDaoDiscussionReportResponseDto> = await instance.patch(`${RESOURCE}/discussion/reports/${reportId}`, payload, {"
+        }
+      ],
+      "sha256": "a68981b0cd69b0f91aa8cd1e6e506c47e6edf36542799940874823c46ccc1a0e"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/dao/api/voice-room/voice-room.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 5,
+          "text": "const RESOURCE = \"/v1/dao\";"
+        },
+        {
+          "line": 9,
+          "text": "const resData: AxiosResponse<GetDaoVoiceRoomsResponseDto> = await instance.get(`${RESOURCE}/voice-rooms`, { params, ...customConfig });"
+        },
+        {
+          "line": 16,
+          "text": "const resData: AxiosResponse<CloseDaoVoiceRoomResponseDto> = await instance.post(`${RESOURCE}/voice-rooms/${roomId}/close`, { ...customConfig });"
+        }
+      ],
+      "sha256": "a6a3c3dced295c35fabadd5c58a13f3985ee5605fae5e4dff707a75e92fe6c30"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/dao/api/vote/vote.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 14,
+          "text": "const RESOURCE = \"/v1/dao\";"
+        },
+        {
+          "line": 18,
+          "text": "const resData: AxiosResponse<CreateDaoVoteResponseDto> = await instance.post(`${RESOURCE}/proposals/${proposalId}/votes`, payload, { ...customConfig });"
+        },
+        {
+          "line": 25,
+          "text": "const resData: AxiosResponse<GetDaoVotesResponseDto> = await instance.get(`${RESOURCE}/votes`, { params, ...customConfig });"
+        },
+        {
+          "line": 32,
+          "text": "const resData: AxiosResponse<GetDaoVoteResultResponseDto> = await instance.get(`${RESOURCE}/votes/${proposalId}/result`, { ...customConfig });"
+        },
+        {
+          "line": 39,
+          "text": "const resData: AxiosResponse<CreateCloseDaoVoteResponseDto> = await instance.post(`${RESOURCE}/votes/${proposalId}/close`, payload, { ...customConfig });"
+        },
+        {
+          "line": 46,
+          "text": "const resData: AxiosResponse<void> = await instance.post(`${RESOURCE}/votes/${proposalId}/force-close`, payload, { ...customConfig });"
+        }
+      ],
+      "sha256": "4907c8366fae3eb09ccf71b3f2dd1b4bb6d0045d161f043f868c6d19b27168b4"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/dashboard/api/dashboard.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 6,
+          "text": "const RESOURCE = \"/v1/dashboard\";"
+        },
+        {
+          "line": 10,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/today/soria/recharge`, customConfig);"
+        },
+        {
+          "line": 17,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/today/users/new`, customConfig);"
+        },
+        {
+          "line": 24,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/today/users/access`, customConfig);"
+        },
+        {
+          "line": 31,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/current/users/access`, customConfig);"
+        },
+        {
+          "line": 38,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/users`, customConfig);"
+        },
+        {
+          "line": 45,
+          "text": "const resData = await instance.get<unknown, { data: GetUserDeviceCountResponseDto }>(`${RESOURCE}/users/devices`, customConfig);"
+        },
+        {
+          "line": 57,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/today/inquiries`, customConfig);"
+        },
+        {
+          "line": 64,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/sales/items`, customConfig);"
+        },
+        {
+          "line": 71,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/sales/items/ranking`, customConfig);"
+        },
+        {
+          "line": 78,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/today/videos`, customConfig);"
+        }
+      ],
+      "sha256": "be43bb772f763eeaea68bb4b69722563d43042fb946e5f3b852e0be5050626b5"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/event/api/attendance/attendance.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 17,
+          "text": "const RESOURCE = \"/v1/events/attendance\";"
+        },
+        {
+          "line": 21,
+          "text": "await instance.post(`${RESOURCE}`, payload, customConfig);"
+        },
+        {
+          "line": 25,
+          "text": "const resData = await instance.get<unknown, { data: GetEventAttendanceListResponseDto }>(`${RESOURCE}`, { params, ...customConfig });"
+        },
+        {
+          "line": 32,
+          "text": "const resData = await instance.get<unknown, { data: GetEventAttendanceResponseDto }>(`${RESOURCE}/${eventId}`, customConfig);"
+        },
+        {
+          "line": 39,
+          "text": "await instance.patch(`${RESOURCE}/${eventId}`, payload, customConfig);"
+        },
+        {
+          "line": 43,
+          "text": "await instance.post(`${RESOURCE}/${eventId}/configs/images/${configKey}`, payload, {"
+        },
+        {
+          "line": 52,
+          "text": "await instance.patch(`${RESOURCE}/${eventId}/configs`, payload, customConfig);"
+        },
+        {
+          "line": 57,
+          "text": "const resData = await instance.get<unknown, { data: EventAttendanceItemDto[] }>(`${RESOURCE}/${eventId}/items`, customConfig);"
+        },
+        {
+          "line": 68,
+          "text": "await instance.put(`${RESOURCE}/${eventId}/items`, payload, customConfig);"
+        }
+      ],
+      "sha256": "252dadeaa74c4c5726a7e220c9f1ded93fa0f1a0fabbe120b3de3c5db932e67f"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/event/api/roulette/roulette.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 16,
+          "text": "const RESOURCE = \"/v1/events/roulette\";"
+        },
+        {
+          "line": 20,
+          "text": "await instance.post(`${RESOURCE}`, payload, customConfig);"
+        },
+        {
+          "line": 24,
+          "text": "const resData = await instance.get<unknown, { data: GetEventRouletteListResponseDto }>(`${RESOURCE}`, { params, ...customConfig });"
+        },
+        {
+          "line": 31,
+          "text": "const resData = await instance.get<unknown, { data: GetEventRouletteResponseDto }>(`${RESOURCE}/${eventId}`, customConfig);"
+        },
+        {
+          "line": 38,
+          "text": "await instance.patch(`${RESOURCE}/${eventId}`, payload, customConfig);"
+        },
+        {
+          "line": 42,
+          "text": "await instance.post(`${RESOURCE}/${eventId}/configs/images/${configKey}`, payload, {"
+        },
+        {
+          "line": 51,
+          "text": "await instance.patch(`${RESOURCE}/${eventId}/configs`, payload, customConfig);"
+        },
+        {
+          "line": 55,
+          "text": "const resData = await instance.get<unknown, { data: EventRouletteItemDto[] }>(`${RESOURCE}/${eventId}/items`, customConfig);"
+        },
+        {
+          "line": 62,
+          "text": "await instance.put(`${RESOURCE}/${eventId}/items`, payload, customConfig);"
+        }
+      ],
+      "sha256": "05dd103ffc67b25c4264bef415e2c640ef16f8b64b3efff4819704fcfb87a0a0"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/faq/api/faq.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 6,
+          "text": "const RESOURCE = \"/v1/faqs\";"
+        },
+        {
+          "line": 10,
+          "text": "await instance.post(`${RESOURCE}`, payload, customConfig);"
+        },
+        {
+          "line": 13,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}`, { params, ...customConfig });"
+        },
+        {
+          "line": 19,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/${faqId}`, customConfig);"
+        },
+        {
+          "line": 25,
+          "text": "await instance.patch(`${RESOURCE}/${faqId}`, payload, customConfig);"
+        },
+        {
+          "line": 28,
+          "text": "await instance.patch(`${RESOURCE}/batch`, payload, customConfig);"
+        },
+        {
+          "line": 31,
+          "text": "await instance.delete(`${RESOURCE}/${faqId}`, customConfig);"
+        }
+      ],
+      "sha256": "11052579bec6f19732b366a54872c517d799eedbdc35854476d60309a9cce7ca"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/inquiries/api/inquiry.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 9,
+          "text": "const RESOURCE = \"/admin/inquiries\";"
+        },
+        {
+          "line": 35,
+          "text": "client.get<unknown>(RESOURCE, withAbortSignal(signal, { ...customConfig, params, paramsSerializer: { indexes: null } })),"
+        },
+        {
+          "line": 38,
+          "text": "client.get<unknown>(`${RESOURCE}/${inquiryId}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 41,
+          "text": "client.delete<unknown>(`${RESOURCE}/${inquiryIdSchema.parse(inquiryId)}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 44,
+          "text": "client.patch<unknown, PatchInquiryStatusRequestDto>("
+        },
+        {
+          "line": 45,
+          "text": "`${RESOURCE}/${inquiryIdSchema.parse(inquiryId)}/status`,"
+        },
+        {
+          "line": 51,
+          "text": "client.post<unknown, PostInquiryAnswerRequestDto>("
+        },
+        {
+          "line": 52,
+          "text": "`${RESOURCE}/${inquiryIdSchema.parse(inquiryId)}/answer`,"
+        },
+        {
+          "line": 58,
+          "text": "client.put<unknown, PutInquiryAnswerRequestDto>("
+        },
+        {
+          "line": 59,
+          "text": "`${RESOURCE}/${inquiryIdSchema.parse(inquiryId)}/answer`,"
+        },
+        {
+          "line": 65,
+          "text": "client.delete<unknown>(`${RESOURCE}/${inquiryIdSchema.parse(inquiryId)}/answer`, withAbortSignal(signal, customConfig)),"
+        }
+      ],
+      "sha256": "e696b5fd22b2c99b4816738f84f2d56af8451f20c4e5a15a4c6116a2d7b5506b"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/items/api/item-category.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 9,
+          "text": "const RESOURCE = \"/admin/items/categories\";"
+        },
+        {
+          "line": 31,
+          "text": "client.get<unknown>(RESOURCE, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 34,
+          "text": "client.post<unknown, PostItemCategoryRequestDto>(RESOURCE, postItemCategoryRequestSchema.parse(payload), withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 37,
+          "text": "client.patch<unknown, PatchItemCategoryRequestDto>("
+        },
+        {
+          "line": 38,
+          "text": "`${RESOURCE}/${itemCategoryIdSchema.parse(categoryId)}`,"
+        },
+        {
+          "line": 44,
+          "text": "client.delete<unknown>(`${RESOURCE}/${itemCategoryIdSchema.parse(categoryId)}`, withAbortSignal(signal, customConfig)),"
+        }
+      ],
+      "sha256": "a6aa39f8be2cfd6219293b8930aa3f22e1e214f3c2787b80a7aa9655b89c3983"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/items/api/items.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 9,
+          "text": "const RESOURCE = \"/admin/items\";"
+        },
+        {
+          "line": 42,
+          "text": "client.get<unknown>(RESOURCE, withAbortSignal(signal, { ...customConfig, params: itemListQuerySchema.parse(params) })),"
+        },
+        {
+          "line": 45,
+          "text": "client.get<unknown>(`${RESOURCE}/${itemIdSchema.parse(itemId)}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 48,
+          "text": "client.get<unknown>(`${RESOURCE}/latest/id`, withAbortSignal(signal, { ...customConfig, params: latestItemIdQuerySchema.parse(params) })),"
+        },
+        {
+          "line": 51,
+          "text": "client.post<unknown, PostItemRequestDto>(RESOURCE, postItemRequestSchema.parse(payload), withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 54,
+          "text": "client.patch<unknown, PatchItemRequestDto>(`${RESOURCE}/${itemIdSchema.parse(itemId)}`, patchItemRequestSchema.parse(payload), withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 57,
+          "text": "client.delete<unknown>(`${RESOURCE}/${itemIdSchema.parse(itemId)}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 64,
+          "text": "return client.post<unknown, FormData>(`${RESOURCE}/upload`, body, withAbortSignal(signal, {"
+        },
+        {
+          "line": 72,
+          "text": "client.patch<unknown>(`${RESOURCE}/toggle/event/reward/${itemIdSchema.parse(itemId)}`, undefined, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 75,
+          "text": "client.patch<unknown, PatchBatchItemStatusRequestDto>(`${RESOURCE}/batch`, batchItemStatusRequestSchema.parse(payload), withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 78,
+          "text": "client.delete<unknown>(`${RESOURCE}/${itemIdSchema.parse(itemId)}/image`, withAbortSignal(signal, customConfig)),"
+        }
+      ],
+      "sha256": "ba3281d12638a62b0846ef8fed739f83aa5e88c11f0f3289772f209c83c556dc"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/maintenance/api/maintenance.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 6,
+          "text": "// Override this via VITE_SYNTHORIA_CONFIG_RESOURCE when the backend resource path differs by environment."
+        },
+        {
+          "line": 7,
+          "text": "const RESOURCE = import.meta.env.VITE_SYNTHORIA_CONFIG_RESOURCE || \"/v1/maintenance\";"
+        },
+        {
+          "line": 11,
+          "text": "const resData = await instance.get<unknown, { data: GetSynthoriaConfigListResponseDto }>(`${RESOURCE}`, { ...customConfig });"
+        },
+        {
+          "line": 19,
+          "text": "await instance.patch("
+        },
+        {
+          "line": 20,
+          "text": "`${RESOURCE}`,"
+        }
+      ],
+      "sha256": "67f6f8f5bf4f5261494608b3832bfa17ee9c14a3b47bf4f556781d2331cb4b7f"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/maps/api/map.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 6,
+          "text": "const RESOURCE = \"/v1/maps\";"
+        },
+        {
+          "line": 10,
+          "text": "const resData = await instance.get<unknown, { data: GetMapActivityResponseDto[] }>(`${RESOURCE}/activity`, customConfig);"
+        }
+      ],
+      "sha256": "ae37c954ceee1b03f20accf517c542bd64d0902b63d76ea4854eff830a7c3411"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/news/api/news.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 9,
+          "text": "const RESOURCE = \"/admin/news\";"
+        },
+        {
+          "line": 32,
+          "text": "client.get<unknown>(RESOURCE, withAbortSignal(signal, {"
+        },
+        {
+          "line": 39,
+          "text": "client.get<unknown>(`${RESOURCE}/${newsIdSchema.parse(newsId)}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 42,
+          "text": "client.post<unknown, PostNewsRequestDto>(RESOURCE, postNewsRequestSchema.parse(payload), withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 45,
+          "text": "client.patch<unknown, PatchNewsRequestDto>("
+        },
+        {
+          "line": 46,
+          "text": "`${RESOURCE}/${newsIdSchema.parse(newsId)}`,"
+        },
+        {
+          "line": 52,
+          "text": "client.delete<unknown>(`${RESOURCE}/${newsIdSchema.parse(newsId)}`, withAbortSignal(signal, customConfig)),"
+        }
+      ],
+      "sha256": "4e03eb36ddf636bf5182014df931da3e0be23647d431555b275fd89e204a7675"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/profile/api/profile.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 6,
+          "text": "const RESOURCE = \"/v1/admins/me\";"
+        },
+        {
+          "line": 10,
+          "text": "const resData = await instance.get<unknown, { data: GetProfileResponseDto }>(`${RESOURCE}`, customConfig);"
+        },
+        {
+          "line": 17,
+          "text": "const resData = await instance.get<unknown, { data: GetRbacResponseDto }>(`${RESOURCE}/rbac`, customConfig);"
+        },
+        {
+          "line": 23,
+          "text": "await instance.patch(`${RESOURCE}`, payload, customConfig);"
+        },
+        {
+          "line": 27,
+          "text": "await instance.patch(`${RESOURCE}/password`, payload, customConfig);"
+        }
+      ],
+      "sha256": "81a1093ec7f269b8e45f474c5d3a85b523c1658b4067998a0097c0dcdaa553d4"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/sales/api/sales.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 6,
+          "text": "const RESOURCE = \"v1/sales\";"
+        },
+        {
+          "line": 10,
+          "text": "const resData = await instance.get<unknown, { data: Omit<GetSalesSummaryResponseDto, \"sumCount\" | \"sumAmount\"> }>(`${RESOURCE}/summary`, { params, ...customConfig });"
+        },
+        {
+          "line": 21,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/`, { params, ...customConfig });"
+        },
+        {
+          "line": 28,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/statistics`, { params, ...customConfig });"
+        }
+      ],
+      "sha256": "13864edeef124ec04e9649d0b953109d04953f2216ecb7f6edd6e6839c796839"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/usage/api/admin-usage.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 9,
+          "text": "const RESOURCE = \"/admin/usage\";"
+        },
+        {
+          "line": 18,
+          "text": "client.get<unknown>("
+        },
+        {
+          "line": 19,
+          "text": "`${RESOURCE}/point`,"
+        },
+        {
+          "line": 28,
+          "text": "client.get<unknown>("
+        },
+        {
+          "line": 29,
+          "text": "`${RESOURCE}/item`,"
+        }
+      ],
+      "sha256": "4c5a13525ee091fd0e9ee1db0fe4c46412c08c54337a72282d81ceb1618c490f"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/usage/api/usage.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 6,
+          "text": "const RESOURCE = \"/v1/usage\";"
+        },
+        {
+          "line": 10,
+          "text": "const resData = await instance.get(`${RESOURCE}/calls`, { params, ...customConfig });"
+        },
+        {
+          "line": 17,
+          "text": "const resData = await instance.get(`${RESOURCE}/items`, { params, ...customConfig });"
+        },
+        {
+          "line": 24,
+          "text": "const resData = await instance.get(`${RESOURCE}/points`, { params, ...customConfig });"
+        },
+        {
+          "line": 31,
+          "text": "const resData = await instance.get(`${RESOURCE}/soria`, { params, ...customConfig });"
+        },
+        {
+          "line": 38,
+          "text": "const resData = await instance.get(`${RESOURCE}/soria-plus`, { params, ...customConfig });"
+        }
+      ],
+      "sha256": "c23c5104e6f66e70905e2b5a5c77067ea312337b00de0ddd9958d0112f4ff5b0"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/users/api/admin-users.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 9,
+          "text": "const RESOURCE = \"/admin/users\";"
+        },
+        {
+          "line": 35,
+          "text": "client.get<unknown>(`${RESOURCE}/${adminUserIdSchema.parse(userId)}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 38,
+          "text": "client.get<unknown>(`${RESOURCE}/withdrawals`, withAbortSignal(signal, {"
+        },
+        {
+          "line": 45,
+          "text": "client.post<unknown, PostUserPointsRequestDto>("
+        },
+        {
+          "line": 46,
+          "text": "`${RESOURCE}/${adminUserIdSchema.parse(userId)}/points`,"
+        },
+        {
+          "line": 53,
+          "text": "client.post<unknown, PostUserAuthoritiesRequestDto>("
+        },
+        {
+          "line": 54,
+          "text": "`${RESOURCE}/${adminUserIdSchema.parse(userId)}/authorities`,"
+        },
+        {
+          "line": 60,
+          "text": "client.patch<unknown, PatchUserStatusRequestDto>("
+        },
+        {
+          "line": 61,
+          "text": "`${RESOURCE}/${adminUserIdSchema.parse(userId)}/status`,"
+        }
+      ],
+      "sha256": "837414181a3c1e115c2fa47d21d73bbb7136d1cccbddfb39f7018dadf67de6a0"
+    },
+    {
+      "project": "A",
+      "path": "src/entities/users/api/users.api.ts",
+      "transport": "Axios",
+      "signal": false,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 21,
+          "text": "const RESOURCE = \"/v1/users\";"
+        },
+        {
+          "line": 25,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}`, { params, ...customConfig });"
+        },
+        {
+          "line": 32,
+          "text": "const resData: AxiosResponse<GetNftUserDetailResponseDto> = await instance.get(`${RESOURCE}/${userId}`, customConfig);"
+        },
+        {
+          "line": 39,
+          "text": "await instance.post(`${RESOURCE}/${userId}/suspended`, payload, customConfig);"
+        },
+        {
+          "line": 43,
+          "text": "await instance.post(`${RESOURCE}/${userId}/resume`, payload, customConfig);"
+        },
+        {
+          "line": 47,
+          "text": "// -> request update to POST ${RESOURCE}/${userId}/currency"
+        },
+        {
+          "line": 49,
+          "text": "await instance.post(`${RESOURCE}/${userId}/currency/update`, payload, customConfig);"
+        },
+        {
+          "line": 53,
+          "text": "await instance.patch(`${RESOURCE}/${userId}/status`, payload, customConfig);"
+        },
+        {
+          "line": 57,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/device-logs`, { params, ...customConfig });"
+        },
+        {
+          "line": 64,
+          "text": "const resData = await instance.get<unknown, { data: unknown }>(`${RESOURCE}/statistics`, { params, ...customConfig });"
+        },
+        {
+          "line": 71,
+          "text": "const resData: AxiosResponse<GetDailyAvgPlayTimeTopTenResponseDto[]> = await instance.get(`${RESOURCE}/statistics/${params.date}`, { ...customConfig });"
+        },
+        {
+          "line": 78,
+          "text": "//   const resData: AxiosResponse<TableApiResponseDto<GetNftUserItemList, DaoProposalStatus>> = await instance.get(`${RESOURCE}/nft`, {"
+        }
+      ],
+      "sha256": "89bdc683cc69e709b2d287b73ceef5693d78c3ea00a1b0e2e39128840be6830d"
+    },
+    {
+      "project": "A",
+      "path": "src/features/meeting/api/meeting.api.ts",
+      "transport": "fetch",
+      "signal": false,
+      "reachable": true,
+      "evidence": [
+        {
+          "line": 65,
+          "text": "const httpResponse = await fetch(`${apiBaseUrl}${path}`, {"
+        }
+      ],
+      "sha256": "b1006e27f6cd98900e64c557f87f8daa264521dae0bfb6ce05e77b7383d0983a"
+    },
+    {
+      "project": "V",
+      "path": "src/entities/video/api/playlist.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 17,
+          "text": "const RESOURCE = \"/admin/video/playlists\";"
+        },
+        {
+          "line": 37,
+          "text": "client.get<unknown>("
+        },
+        {
+          "line": 38,
+          "text": "RESOURCE,"
+        },
+        {
+          "line": 47,
+          "text": "client.get<unknown>(`${RESOURCE}/${playlistIdSchema.parse(playlistId)}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 50,
+          "text": "client.post<unknown, PostPlaylistRequestDto>(RESOURCE, postPlaylistRequestSchema.parse(payload), withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 53,
+          "text": "client.patch<unknown, PatchPlaylistRequestDto>("
+        },
+        {
+          "line": 54,
+          "text": "`${RESOURCE}/${playlistIdSchema.parse(playlistId)}`,"
+        },
+        {
+          "line": 60,
+          "text": "client.delete<unknown>(`${RESOURCE}/${playlistIdSchema.parse(playlistId)}`, withAbortSignal(signal, customConfig)),"
+        }
+      ],
+      "sha256": "5ce7d9410d567c915c55795393990f3e94ab4e7c8851992fcc3decedde93cc32"
+    },
+    {
+      "project": "V",
+      "path": "src/entities/video/api/video.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 17,
+          "text": "const RESOURCE = \"/admin/video\";"
+        },
+        {
+          "line": 47,
+          "text": "client.get<unknown>("
+        },
+        {
+          "line": 48,
+          "text": "RESOURCE,"
+        },
+        {
+          "line": 57,
+          "text": "client.get<unknown>(`${RESOURCE}/${videoIdSchema.parse(videoId)}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 60,
+          "text": "client.post<unknown, FormData>("
+        },
+        {
+          "line": 61,
+          "text": "RESOURCE,"
+        },
+        {
+          "line": 70,
+          "text": "client.patch<unknown, FormData>("
+        },
+        {
+          "line": 71,
+          "text": "`${RESOURCE}/${videoIdSchema.parse(videoId)}`,"
+        },
+        {
+          "line": 80,
+          "text": "client.delete<unknown>(`${RESOURCE}/${videoIdSchema.parse(videoId)}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 83,
+          "text": "client.post<unknown, FormData>("
+        },
+        {
+          "line": 84,
+          "text": "`${RESOURCE}/${videoIdSchema.parse(videoId)}/thumbnail`,"
+        }
+      ],
+      "sha256": "7be448a1966ef5c9cbdc0d5fddcaa3e23ab2c289ec19ffdecd13d16c5bd38b0b"
+    },
+    {
+      "project": "E",
+      "path": "src/entities/event/api/attendance/attendance.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 18,
+          "text": "const RESOURCE = \"/events/attendance\";"
+        },
+        {
+          "line": 22,
+          "text": "client.get<unknown>(RESOURCE, withAbortSignal(signal, { ...customConfig, params: eventListQuerySchema.parse(params) })),"
+        },
+        {
+          "line": 25,
+          "text": "client.get<unknown>(`${RESOURCE}/${eventIdSchema.parse(eventId)}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 28,
+          "text": "client.post<unknown, PostAttendanceEventRequestDto>(RESOURCE, postAttendanceEventRequestSchema.parse(payload), withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 31,
+          "text": "client.patch(`${RESOURCE}/${eventIdSchema.parse(eventId)}`, patchEventRequestSchema.parse(payload), withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 34,
+          "text": "client.get<unknown>(`${RESOURCE}/${eventIdSchema.parse(eventId)}/items`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 37,
+          "text": "client.put<unknown, PutAttendanceEventItemsRequestDto>("
+        },
+        {
+          "line": 38,
+          "text": "`${RESOURCE}/${eventIdSchema.parse(eventId)}/items`,"
+        },
+        {
+          "line": 44,
+          "text": "client.patch<unknown, PatchAttendanceEventConfigsRequestDto>("
+        },
+        {
+          "line": 45,
+          "text": "`${RESOURCE}/${eventIdSchema.parse(eventId)}/configs`,"
+        },
+        {
+          "line": 55,
+          "text": "return client.post<unknown, FormData>("
+        },
+        {
+          "line": 56,
+          "text": "`${RESOURCE}/${id}/configs/upload`,"
+        }
+      ],
+      "sha256": "c1c9c1426201c1ab79824eb46afa03afe3ef7139de1001a875d29e0bb63c3d84"
+    },
+    {
+      "project": "E",
+      "path": "src/entities/event/api/roulette/roulette.api.ts",
+      "transport": "ApiClient",
+      "signal": true,
+      "reachable": false,
+      "evidence": [
+        {
+          "line": 18,
+          "text": "const RESOURCE = \"/events/roulette\";"
+        },
+        {
+          "line": 22,
+          "text": "client.get<unknown>(RESOURCE, withAbortSignal(signal, { ...customConfig, params: eventListQuerySchema.parse(params) })),"
+        },
+        {
+          "line": 25,
+          "text": "client.get<unknown>(`${RESOURCE}/${eventIdSchema.parse(eventId)}`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 28,
+          "text": "client.post<unknown, PostRouletteEventRequestDto>(RESOURCE, postRouletteEventRequestSchema.parse(payload), withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 31,
+          "text": "client.patch(`${RESOURCE}/${eventIdSchema.parse(eventId)}`, patchEventRequestSchema.parse(payload), withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 34,
+          "text": "client.get<unknown>(`${RESOURCE}/${eventIdSchema.parse(eventId)}/items`, withAbortSignal(signal, customConfig)),"
+        },
+        {
+          "line": 37,
+          "text": "client.put<unknown, PutRouletteEventItemsRequestDto>("
+        },
+        {
+          "line": 38,
+          "text": "`${RESOURCE}/${eventIdSchema.parse(eventId)}/items`,"
+        },
+        {
+          "line": 44,
+          "text": "client.patch<unknown, PatchRouletteEventConfigsRequestDto>("
+        },
+        {
+          "line": 45,
+          "text": "`${RESOURCE}/${eventIdSchema.parse(eventId)}/configs`,"
+        },
+        {
+          "line": 55,
+          "text": "return client.post<unknown, FormData>("
+        },
+        {
+          "line": 56,
+          "text": "`${RESOURCE}/${id}/configs/upload`,"
+        }
+      ],
+      "sha256": "d90f6ad45a7adceb8345f4a39bf1747618ffa83b5c308f977f823e2cb730cfd8"
+    }
+  ]
+}
