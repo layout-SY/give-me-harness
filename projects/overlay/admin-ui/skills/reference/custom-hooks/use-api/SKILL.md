@@ -1,56 +1,33 @@
 ---
 name: hook-use-api
-description: {{PROJECT_NAME}}의 useApi 훅(src/shared/lib/hooks/use-api.tsx) 사용 및 수정 가이드. ApiResult 계약, race 가드, unmount 취소와 실패 처리 정책을 다룰 때 사용.
+description: {{PROJECT_NAME}}의 기존 명령형 useApi 호출에서 최신 요청 판정, 로딩 종료, unmount 취소와 오류 보고를 다룬다.
 ---
 
 # useApi
 
-## 대상
+대상은 `src/shared/lib/hooks/use-api.tsx`와 `src/shared/api/common/api-result.ts`다. 반환값은 `{ execute, isLoading }`이며 도메인 API는 소비처에서 직접 import한다.
 
-- `src/shared/lib/hooks/use-api.tsx`
-- `src/shared/api/common/api-result.ts` (`ApiResult`, `ApiError` 타입)
+## admin-ui의 현재 계약
 
-## 계약
+`ExecuteFn`은 조건부 타입으로 결과를 추론한다. ApiResult를 반환하는 호출은 `ApiResult<T> | { canceled: true }`, 원시 값 호출은 `T | undefined`를 반환한다. throw·Axios cancel·AbortError 경로는 런타임에서 undefined를 반환하므로 호출부가 이를 처리하는지 확인한다. ApiResult 경로의 선언 타입과 이 런타임 차이는 기존 제약이며 새 코드에서 성공을 가정하지 않는다.
 
-```ts
-const { execute, isLoading } = useApi();
-```
+옵션은 `onSuccess`, `onError`, `silent`, `unauthorizedBehavior`다. `silent` 기본값은 true다.
 
-**반환값은 `execute`와 `isLoading` 두 개뿐이다.** 도메인 API 집계 객체는 없다. API 함수는 소비처가 직접 import한다.
+- 실패는 먼저 `reportApiFailure`에 전달한다. onError가 없고 silent가 false일 때 modal, 그 외에는 silent presentation을 지정한다. 인증 오류 처리는 reporter의 unauthorized 정책을 따른다.
+- onError가 있으면 이어서 호출한다. 전역 보고가 생략되는 것은 아니다.
+- onError 없이 silent가 true이면 개발 환경에서 미처리 오류 경고를 남긴다.
 
-`execute`는 오버로드된 함수다.
+## 동시 호출과 loading
 
-- `apiCall`이 `Promise<ApiResult<T>>`를 반환하면 결과는 `ApiResult<T> | { canceled: true }`다.
-- 그 외에는 `T | undefined`다.
+- 한 인스턴스에서 sequence를 증가시키고 마지막 호출만 반영한다. 이전 ApiResult는 `{ canceled: true }`, 이전 원시 값은 undefined로 반환하며 콜백·오류 보고를 생략한다.
+- 최신 호출의 finally만 loading을 내린다. 이전 요청이 남았다는 이유로 loading을 유지하지 않는다.
+- unmount에서 보관한 controller를 모두 abort한다. 수정 시에는 finally의 상태 갱신에도 mounted 조건을 적용해 해제 이후 갱신을 막는다.
+- 최신 호출 정책은 이전 네트워크 요청을 자동 중단하거나 서버 mutation을 취소하지 않는다. 독립 명령의 결과가 모두 필요하면 hook 인스턴스나 도메인 orchestration을 분리한다.
 
-옵션은 `{ onSuccess?, onError?, silent? }`이며 **`silent` 기본값은 `true`다.**
+## 사용과 수정 기준
 
-실패 처리 순서는 다음과 같다.
+서버 캐시 조회·mutation은 기존 TanStack Query hook/options를 사용하고 이를 useApi로 다시 감싸지 않는다. useApi는 기존 명령형 lifecycle 조정에 사용한다. 상세 기준은 공통 `recipe/api-authoring/references/query-mutation.md`를 따른다.
 
-1. `onError`가 있으면 그것만 호출한다.
-2. 없고 `silent`가 `false`면 `Dialog.alert`로 메시지를 표시한다.
-3. 없고 `silent`가 기본값 `true`면 **아무 UI도 뜨지 않는다.** 개발 환경에서만 `console.warn`으로 경고한다.
+취소를 사용자 오류로 표시하지 않는다. silent 기본값과 공개 반환 타입 변경은 전체 호출부의 UX·타입에 영향을 주므로 동시 요청 수정에 섞지 않는다. 최신 응답 판정과 요청량을 줄이는 debounce는 별도 목적이므로 필요하면 함께 사용할 수 있다.
 
-즉 실패를 사용자에게 알리려면 `onError`를 주거나 `silent: false`를 명시하거나 반환된 `ApiResult`를 직접 분기해야 한다.
-
-race·수명 관리는 다음과 같다.
-
-- 호출마다 `seqRef`를 증가시켜 **마지막 호출만 반영한다.** 뒤늦게 도착한 이전 응답은 `ApiResult` 경로에서 `{ canceled: true }`를 반환하고 콜백을 호출하지 않는다.
-- 언마운트 시 등록된 모든 `AbortController`를 `abort`한다.
-- axios cancel과 `AbortError`는 실패로 처리하지 않고 `undefined`를 반환한다.
-- `isLoading`은 최신 호출일 때만 해제된다.
-
-## 사용 기준
-
-- 화면에서 API를 호출할 때 이 훅을 거친다. 컴포넌트에서 axios를 직접 쓰지 않는다.
-- 실패를 사용자에게 보여야 하면 `silent: false` 또는 `onError`를 명시한다. 기본값에 기대지 않는다.
-- `ApiResult` 계약 API는 반환값을 분기해 성공·실패를 값으로 다룬다.
-- 검색어 입력처럼 연속 호출되는 화면은 race 가드가 이미 있으므로 별도 디바운스 취소 로직을 중복 구현하지 않는다.
-- `{ canceled: true }`는 실패가 아니다. 오류 처리로 분기하지 않는다.
-
-## 수정 규칙
-
-- `silent` 기본값을 바꾸면 모든 호출부의 실패 UX가 한 번에 바뀐다. 사용자 승인 없이 바꾸지 않는다.
-- `seqRef` 최신 호출 판정과 `isMountedRef` 검사를 제거하지 않는다. 지난 응답이 화면을 덮어쓴다.
-- `finally`에서 최신 호출일 때만 `isLoading`을 내리는 조건을 유지한다.
-- `ExecuteFn` 오버로드 순서를 바꾸면 `ApiResult` 계약 호출부의 타입 추론이 깨진다.
+회귀 검증은 이전/최신 응답의 두 완료 순서, 오래된 실패의 reporter·callback 억제, 최신 요청 종료 시 loading 해제와 unmount 취소를 포함한다. user-ui는 동일한 동시 요청 방향을 사용하되 `status: completed | failed | canceled` 공개 반환 형식을 유지한다.
