@@ -1,11 +1,5 @@
 # 탐색
 
-## 구현 후 상태 갱신
-
-사용자 `proceed` 이후 현재 전체 scope의 구현 승인·스킬·탐색 조건을 확인하고 구현했다. 아래 승인 대기·미구현 표기는 탐색 당시 상태다. 최신 결과는 implementation-log와 handoff를 기준으로 한다. news 테스트 46개·대상 린트·diff 검사가 통과했다. 전체 린트는 기존 오류 68개·경고 5개, tsconfig.app.json 타입 검사는 기존 오류 14개로 실패했다. 사용자 `명령 실행 승인` 후 동일 worktree에서 `npm run build`를 실행해 exit 0을 확인했다. 빌드는 검사 옵션이 다른 tsconfig.json을 사용하므로 app 설정의 오류 결과와 구분한다.
-
-추가로 abstraction-strategy에 따라 저장·삭제 두 사용처의 동일한 경합·생명주기 규칙만 페이지 내부 helper로 추출했다. documentation·portfolio 스킬로 결과를 기록했다. 기존 lockfile의 의존성을 설치했고 패키지 정의는 변경하지 않았다.
-
 ## 요청
 
 news handoff 파악 후 controller 구현 진행. 기존 UI 커밋을 기준으로 승인된 격리 worktree를 생성했다.

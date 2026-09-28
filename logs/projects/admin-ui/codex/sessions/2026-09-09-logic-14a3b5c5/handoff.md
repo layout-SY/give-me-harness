@@ -1,111 +1,124 @@
 # 인계
 
-## 커밋 완료
+news controller 구현 의사는 확인되었다. 격리 worktree 계약을 사용자가 승인했고 자식 branch 생성도 성공했다. 현재 전체 scope에는 기존 구현 승인 기록에 없던 테스트 경로 2개가 추가되어 harness의 구현 승인이 false다. `plan.md`·`exploration.md`를 작성했으며 source 변경 전 현재 전체 scope의 구현 승인 등록이 필요하다.
 
-사용자가 `아 커밋 작업 진행해`로 현재 news 구현 커밋을 요청했고 staging·commit 명령을 각각 승인했다. 승인된 명령을 각각 1회 실행해 exit 0을 확인했다. 커밋은 `6f1d322c5e14802a0d7504d9d83890bfda215b92`, 메시지는 `feat : 공지사항 목록과 폼 controller 구현`이다. 소스·테스트 10개 파일·738줄 추가가 포함됐다. 커밋 전 cached diff 공백 검사와 커밋 후 경로·HEAD·clean 상태를 확인했다. merge는 실행하지 않았다.
+## 격리 worktree 생성 후 최신 상태
 
-workdir만 설정한 git add의 부모 소유권 판정은 git -C로 자식 worktree를 명시해 해결했다. staging·commit 명령의 별도 승인 gate도 사용자 승인으로 해소됐다. 아래는 실행 완료한 명령이며 재실행 대기 명령이 아니다.
+- 사용자 메시지 “승인” 후 `5567cf5221dea8465566ce8d04c7355d61aa3beb29b27ea78af30f8fba90a79f` 계약을 소비한 `create`가 exit 0으로 완료되었다.
+- 실제 구현 위치: `/private/tmp/asan-metaverse-admin-ui-news-management-logic-14a3b5c5`.
+- branch `task/news-management-logic`, ACTIVE·clean, role `logic`, Git 담당 `codex`, HEAD `49aa7392882479dcb6fb08eacd73fc432d2af726`.
+- parent·직접 merge target은 `task/news-management-ui`. 같은 세션 권한 계보의 자식이므로 새 세션은 필요하지 않다.
+- 격리 worktree에서 cp-news 타입·View·barrel, news DTO·query·mutation, 인접 controller, 공용 Table·검증 설정을 다시 읽었다.
+- 현재 `harness-state-v3.json`: `skill_confirmed`, `exploration_completed`, `ui_exploration_completed` 모두 true, `implementation_approved` false. `implementation_scope.source_scopes`는 `src/pages/cp-news`만, 현재 `assignment_scope.source_scopes`는 승인된 테스트 경로 2개를 함께 포함한다.
+- 앞서 “구현 승인이 유지된다”고 안내했으나 현재 기록과 일치하지 않는다. 사용자에게 상태와 원인을 정정했고, plan에 전체 범위를 고정했다. 승인 상태 파일을 수동 변경하거나 source 도구로 gate 우회를 시도하지 않는다.
+- 구현 승인 확인 후 의존성 설치·소스 구현·검증을 진행한다. 격리 worktree에 node_modules는 아직 없다.
+- 아래 생성 전 이력보다 이 절과 현재 plan·exploration을 우선한다.
 
-```sh
-git -C /private/tmp/asan-metaverse-admin-ui-news-management-logic-14a3b5c5 commit -m 'feat : 공지사항 목록과 폼 controller 구현'
-```
+## 최신 재개 상태 — 2026-09-09
 
-이후 Git 명령에는 `-C`로 승인 worktree를 명시한다. 현재 소스가 검증 당시와 같으므로 같은 테스트·빌드는 반복하지 않았다. 독립 검토와 UI 후속, 별도 승인된 merge lifecycle은 남아 있다.
+- 사용자가 UI 커밋 완료를 알렸고 실제 `49aa7392882479dcb6fb08eacd73fc432d2af726`에 UI 8개 파일이 포함됨을 확인했다. `task/news-management-ui`는 ACTIVE·clean이다.
+- 사용자는 같은 worktree 전환 계약 `f815083db55f37f803acb492f46d613d2357262c6bdbad0e217b1d4a03226cfc`를 “승인”했다.
+- 해당 파일을 소비하는 `branch_workflow.py create`를 require_escalated로 요청했으나 PreToolUse가 “Git worktree의 통합 소유자가 다른 assignment입니다”로 차단했다. 보고된 owner는 기존 Claude assignment `f14c4487b1bc4431a3ac89583753fad6`이다.
+- 차단 후 조회: 기존 branch·HEAD·clean 유지, worktree 한 개, `task/news-management-logic` branch 없음. 같은 create 명령은 재시도하지 않는다.
+- 안전한 대안으로 `/private/tmp/asan-metaverse-admin-ui-news-management-logic-14a3b5c5` 격리 worktree를 지정해 새 proposal을 생성했다. 구현 범위는 기존 승인과 동일하다.
+- 새 canonical 파일: `/Users/okand/SynologyDrive/asan-metaverse-admin-ui/.git/asan-agent-policy/proposals/5567cf5221dea8465566ce8d04c7355d61aa3beb29b27ea78af30f8fba90a79f.json`.
+- 새 SHA-256: `5567cf5221dea8465566ce8d04c7355d61aa3beb29b27ea78af30f8fba90a79f`. 이 SHA는 아직 승인 전이다. 앞선 SHA 승인으로 새 worktree 생성을 실행하지 않는다.
+- 새 계약: branch `task/news-management-logic`, parent·직접 merge target `task/news-management-ui`, role `logic`, Git 담당 `codex`, scope `src/pages/cp-news`, `tests/news-list-controller.test.mjs`, `tests/news-form-controller.test.mjs`.
+- 다음 단계: 새 SHA 승인 → 동일 파일로 create → 성공한 격리 worktree에서 준비 상태·재사용 코드 확인 → controller 구현·검증. 구현 승인을 반복 요청하지 않는다.
+- 추가 확인한 스킬: `coding-convention`, `type-definition`, `implementation-quality`, `data-fetch-layer`, `recipe-data-fetch`, `recipe-data-dto`, `validation`.
+- 아래 나머지 내용은 최초 인계 시점의 탐색·범위·제약 기록이며, 커밋·계약 대기 상태는 이 최신 절을 우선한다.
 
-## 최신 상태 — 구현·대상 검증·빌드 완료, 독립 검토 대기
+## Assignment 이동
 
-news 목록·등록·수정·임시 저장·게시·삭제 controller와 페이지 entry를 구현하고 커밋했다. news 테스트 46개·대상 린트·프로젝트 빌드는 통과했다. 전체 린트·별도 app 타입 검사에는 기존 오류가 남아 있다. 독립 검토·병합은 남아 있다. 아래 이전 이력의 미구현·승인 대기 표기는 현재 상태가 아니다.
-
-### 역할·귀속·승인
-
-- requested_roles·confirmed_roles: `logic`; completed_roles: Logic 구현·대상 검증·빌드·기록; next_role: 독립 `review`, 이후 UI 연결. next_role은 권한 부여가 아니다.
-- host `codex`, assignment `14a3b5c529a94f6d8c36fb91cfee693d`, native session `01a08495-d680-76c2-926a-431bb4168469`, 산출물 책임 `owner`.
-- UI handoff의 controller 계약·API 연결이 역할 근거다. 사용자 `작업 진행`·`proceed` 후 현재 전체 scope의 구현 승인·스킬·탐색 충족을 확인하고 구현했다. 일반 구현 승인을 다시 요청하지 않는다.
-- 작업·산출물 정본은 현재 격리 worktree다. 기본 프로젝트의 같은 세션 디렉터리는 과거 이력으로 읽기만 한다.
-
-### 브랜치·소유권
-
-- worktree: `/private/tmp/asan-metaverse-admin-ui-news-management-logic-14a3b5c5`.
-- branch: `task/news-management-logic`, V3·ACTIVE·clean, Git 담당 `codex`.
-- parent·직접 merge target: `task/news-management-ui`, 분기 기준 HEAD `49aa7392882479dcb6fb08eacd73fc432d2af726`, 현재 HEAD `6f1d322c5e14802a0d7504d9d83890bfda215b92`.
-- 계약 SHA: `5567cf5221dea8465566ce8d04c7355d61aa3beb29b27ea78af30f8fba90a79f`.
-- scope: `src/pages/cp-news`, `tests/news-form-controller.test.mjs`, `tests/news-list-controller.test.mjs`.
-- 변경: hook 2개·lib 3개·page entry 2개·index export·테스트 2개. 기존 View·config·타입·API·공용 UI·패키지는 미변경이다.
-- 부모 task·기본 worktree와 UI 소유 파일은 기존 UI 담당이 유지한다. Logic 변경은 격리 worktree에만 있다. 확인된 소유권 충돌은 없다.
-
-### 구현·UI 후속 계약
-
-1. `~/pages/cp-news`에서 `CpNewsListPage`, `CpNewsCreatePage`, `CpNewsEditPage`를 export한다.
-2. 연결할 URL은 `/cp/news`, `/cp/news/new`, `/cp/news/:newsId/edit`다. 수정 param은 `newsId`이며 ID별 key로 편집 생명주기를 분리한다.
-3. 입력 draft와 적용 query를 분리한다. 적용 검색·페이지를 type·status·by·keyword·page query에 보존하며 빈 검색은 by·keyword를 생략하고 적용·초기화 시 1페이지로 이동한다.
-4. 서버 행 순서·집계·totalPages를 유지하고 범위를 벗어난 페이지는 성공 응답 기준으로 보정한다.
-5. POST 5필드, 실제 변경 필드·상태만 PATCH한다. 미입력과 false를 구분하고 제목·본문 공백은 임시 저장·게시 모두 차단한다.
-6. void mutation 성공 뒤 목록으로 복귀한다. 캐시 처리는 기존 options를 재사용한다. 저장·삭제 경합을 막고 실패 시 입력·확인 상태를 유지하며 이전 화면의 callback은 반영하지 않는다.
-7. 라우트·활성 메뉴 연결, 브라우저 MSW의 news 등록 필요, 기존 notice 수정 URL 방침은 현재 scope 밖 UI 후속이다.
-
-### 검증
-
-| 명령 | 결과 |
-| --- | --- |
-| `npm ci --offline --ignore-scripts --no-audit --no-fund` | exit 0, 341개 설치, package 변경 없음 |
-| `node --test tests/news-contract.test.mjs tests/news-form.test.mjs tests/news-msw.test.mjs tests/news-mutation.test.mjs tests/news-list-controller.test.mjs tests/news-form-controller.test.mjs` | exit 0, 46/46 통과, 신규 18개 포함 |
-| `npx eslint src/pages/cp-news --ext .ts,.tsx` | exit 0 |
-| `npx tsc --noEmit -p tsconfig.app.json` | 기존 범위 밖 오류 14개로 실패 |
-| `npm run lint` | 기존 범위 밖 오류 68개·경고 5개로 실패 |
-| `git diff --check` | exit 0 |
-| `npm run build` | 사용자 `명령 실행 승인` 후 동일 worktree에서 1회 실행, exit 0; tsc -b·Vite 빌드 성공 |
-
-최초 SSR 오류 snapshot 2개는 mount 자동 재조회 때문에 실패했다. 테스트 QueryClient의 retryOnMount를 false로 설정해 확정 실패 상태를 관찰하도록 수정했고 기대값을 유지했다. 최종 46개 통과 결과를 사용한다. model·MSW HTTP·QueryClient·SSR hook snapshot·요청 guard를 확인했으며 실제 DOM 이벤트·라우터 effect·실 API·시각 QA는 미수행이다.
-
-### 다음 조치·기록
-
-1. 빌드 명령 승인·실행은 완료했다. tsc -b는 tsconfig.json을 사용하며 noUnusedLocals·noUnusedParameters·erasableSyntaxOnly 등이 있는 tsconfig.app.json 검사와 구분한다. 기존 app 오류 14개가 해결된 것은 아니다. Vite의 paths 플러그인 안내·청크 크기 경고는 비차단이었다. 새로운 변경·실패 근거 없이 빌드를 반복하지 않는다.
-2. 독립 Watcher에게 코드·테스트·실행 결과를 인계한다. 현재 자체 점검은 독립 PASS가 아니다.
-3. commit은 완료했다. 독립 검토·검증 조건을 확인한 뒤 현재 Git 담당이 완료 계약에 따라 finish-proposal을 준비한다. merge는 canonical finish SHA·source/target·검증·정리 범위의 별도 승인 후 수행한다. 현재 전체 검사 통과를 가정하지 않는다.
-4. UI 후속 담당이 위 URL·메뉴·MSW 실행 방식을 연결하고 실제 화면 동작을 확인한다.
-
-현재 inject의 중앙 snapshot과 task-role-routing·git-branch-strategy·Logic 계약, coding/type/data-fetch/validation, documentation·portfolio, abstraction-strategy를 적용했다. owner 8종과 handoff를 현재 세션 디렉터리에 작성했다. 승인된 plan SHA `6d63b5edafb4f9250851de6fd159bf6b74a34bdbfdb85ecb8683502bacd8e7c2`는 유지했다. plan의 과거 승인 대기 문구 대신 현재 handoff·implementation-log를 상태 기준으로 사용한다. commit은 완료했고 독립 Watcher·finish-proposal·merge·close는 미수행이다.
-
-## 이전 이력 — 아래 내용은 구현 승인 전 기록
-
-Logic 격리 worktree와 의존성은 준비됐다. 첫 source 쓰기는 구현 승인 범위 불일치로 차단됐다. 원래 UI worktree에 산출물을 쓴 것이 세션 초점을 부모로 되돌린 원인이었으며, 현재 plan·exploration을 Logic worktree에 동일한 내용으로 귀속해 바로잡았다. 현재 전체 scope의 구현 승인 등록을 기다린다. 애플리케이션 소스 변경은 아직 없다.
-
-## Assignment·역할
-
-- host·assignment·role: `codex` / `14a3b5c529a94f6d8c36fb91cfee693d` / `logic`.
-- requested_roles·confirmed_roles: `logic`. completed_roles: 탐색·계약·환경 준비. next_role: `logic` 구현 재개.
+- 보내는 host·assignment·role: `codex` / `14a3b5c529a94f6d8c36fb91cfee693d` / `logic`.
 - native session: `01a08495-d680-76c2-926a-431bb4168469`.
-- 산출물 책임: `owner`. 현재 세션 정본 디렉터리는 이 격리 worktree의 `.codex/logs/sessions/2026-09-09-logic-14a3b5c5/`다.
-- 기본 worktree의 같은 세션 디렉터리는 이전 이력으로 읽기만 한다. 거기에 다시 쓰면 branch 초점이 UI 부모로 돌아가므로 현재 작업 산출물은 반드시 격리 worktree에 쓴다.
+- 현재 세션 디렉터리: `.codex/logs/sessions/2026-09-09-logic-14a3b5c5/`.
+- 받는 담당: 기존 `task/news-management-ui`의 Git 통합 담당 `claude`가 선행 커밋을 처리한다. 이후 Logic 구현으로 돌아온다. 외부 메시지 전송이나 assignment 이동은 실행하지 않았다.
 
-## 현재 계약
+## 역할 라우팅
 
-- worktree: `/private/tmp/asan-metaverse-admin-ui-news-management-logic-14a3b5c5`.
-- branch `task/news-management-logic`, V3·ACTIVE·clean, Git 담당 `codex`.
-- parent·직접 merge target: `task/news-management-ui`, 기준 HEAD `49aa7392882479dcb6fb08eacd73fc432d2af726`.
-- SHA: `5567cf5221dea8465566ce8d04c7355d61aa3beb29b27ea78af30f8fba90a79f`. 사용자 승인 후 create exit 0.
-- scope: `src/pages/cp-news`, `tests/news-form-controller.test.mjs`, `tests/news-list-controller.test.mjs`.
-- UI View·표기 config 소유권은 UI 담당, 새 hook·lib·페이지 조합은 Logic. 라우트·메뉴는 UI 후속이다.
+- 요청 역할(`requested_roles`): `logic`.
+- 확인된 역할(`confirmed_roles`): `logic` — inject role.
+- 완료 역할(`completed_roles`): 인계·코드·계약의 읽기 전용 조사. 구현 완료 역할 없음.
+- 다음 제안 역할(`next_role`): 기존 `ui` 담당의 Git 마무리 후 `logic`.
+- 역할 판단 근거: 미구현 작업은 목록·폼 controller, 요청 DTO 매핑, 검증·이동·요청 상태 처리다. 기존 UI 변경의 Git 소유권은 현재 Logic assignment에 없다.
+- 사용자 확인: 첫 요청은 “news 관련 handoff 문서 읽은 후에 너가 구현 해야 할 작업 내용 파악해”. controller·페이지 조합·동작 검증 범위를 보고했고, 후속으로 “작업 진행”을 받았다. 구현 진행 의사는 확인되었으며 같은 구현 범위의 재승인을 요구하지 않는다. branch SHA·정확한 명령·담당자 변경 승인은 별개다.
 
-## 승인 불일치 근거와 수정
+## 목표 및 현재 상태
 
-1. 사용자의 `proceed`는 정상 반영되어 저장된 `implementation_approved`가 true였다. 다만 당시 binding branch가 `task/news-management-ui`라서 source_scopes는 `src/pages/cp-news`만이었다.
-2. 격리 worktree의 `lib/cp-news-list.model.ts`와 `lib/cp-news-form.model.ts`를 만드는 apply_patch가 PreToolUse의 “사용자 구현 승인” 누락으로 거부됐다. 실제 파일 생성은 없고 재시도하지 않았다.
-3. `artifact_policy.py`의 `bind_task_assignment`는 source 대상의 branch·worktree로 임시 focus를 바꾸고, `approval_policy.py`의 `approval_scope`·`load_harness_state`는 그 위치의 plan hash와 전체 branch scopes를 다시 검사한다. 원래 문서 위치·승인 범위와 불일치했다.
-4. `bind_artifact_session`의 `lineage_worktree_move`가 허용하는 동일 권한 계보·동일 세션 디렉터리 이동을 사용해 plan·exploration을 구조화 도구로 현재 worktree에 작성했다. 정책·승인 상태를 수동 변경하지 않았다.
-5. 실제 binding은 현재 `branch=task/news-management-logic`, `worktree=/private/tmp/asan-metaverse-admin-ui-news-management-logic-14a3b5c5`다. 권한 root task는 부모 UI task로 유지되는 것이 정상이다.
-6. 계획은 원래 승인 문서와 byte 단위로 동일하다. SHA-256 `6d63b5edafb4f9250851de6fd159bf6b74a34bdbfdb85ecb8683502bacd8e7c2`.
-7. 현재 skill·exploration·ui_exploration true, implementation false, pending SHA 없음. 현재 assignment scope는 테스트 2개를 포함하며 과거 implementation scope는 cp-news만이다. 올바른 초점에서 구현 승인을 받아야 한다. 사용자의 전체 기능 진행 의사가 없었다고 표현하지 않는다.
+기존 `/cp/boards`를 유지하면서 news 전용 관리 화면에 실제 목록·등록·수정·임시 저장·게시·삭제 기능을 연결한다. API·DTO·query/mutation hook과 View·controller 타입은 존재한다. news 페이지 hook·lib·페이지 조합은 아직 없다. 신규 라우트와 메뉴도 아직 연결되지 않았다.
 
-## 실행 결과
+최신 UI 인계는 `.claude/logs/sessions/2026-09-09-ui-f14c4487/handoff.md`다. 이전 API 인계와 `.codex/logs/sessions/2026-09-09-logic-3bf3fa3a/handoff.md`도 참고했고, 실제 코드와 비교했다.
 
-- `npm ci --offline --ignore-scripts --no-audit --no-fund`: 격리 worktree에서 exit 0, 기존 lockfile의 341개 의존성 설치. package 파일 변경 없음.
-- `git status --short --branch`: `task/news-management-logic`, clean.
-- 기본 계획과 현재 계획의 bytes 동일 확인: true.
-- 테스트·lint·build·실서버·시각 QA 미실행. commit·merge도 미실행.
+## 완료된 작업
+
+1. 중앙 snapshot의 역할·브랜치 정책, Logic·소유권·파이프라인 계약, 스킬 인덱스·문서화 스킬을 읽었다.
+2. news API DTO·query/mutation hook과 캐시 처리, cp-news의 8개 UI 파일, 인접 cp-board controller·폼 model·페이지를 읽었다.
+3. 공용 Table의 페이지·행 계약, 기존 news 테스트, 라우트·활성 메뉴·MSW registry를 확인했다.
+4. 실제 V3 metadata와 worktree·변경 상태를 확인했다. 정책 파일과 Git metadata를 변경하지 않았다.
+
+## 대기 중인 작업
+
+| 순서 | 작업 위치·담당 | 방법·목적·기대 결과 |
+| --- | --- | --- |
+| 1 | 기존 Claude Git 담당 / `src/pages/cp-news` | 현재 8개 UI 파일을 검토·검증하고 승인된 Git 명령으로 커밋하여 Logic 분기에 필요한 기준 커밋 확보 |
+| 2 | 후속 Logic / V3 계약 | UI 커밋 포함 여부·부모 ACTIVE·clean을 확인한 후 Logic 자식 task의 목적·역할·scope·Git 통합 담당을 확정하고 canonical proposal 전체 SHA 승인 진행 |
+| 3 | Logic / `src/pages/cp-news/hook/`, `lib/` | `CpNewsListController`의 입력·적용 검색·페이지·오류·재시도·이동과 `CpNewsFormController`의 등록·수정·삭제·검증·요청 보호 구현 |
+| 4 | Logic / 페이지 entry·barrel | View와 controller를 조합하고 라우트에서 사용할 페이지 export 제공. UI 소유 파일의 동시 수정 금지 |
+| 5 | Logic / 승인된 `tests/news-*.test.mjs` | 빈 검색 쌍, 첫 페이지 복귀, false PATCH, void 생성 응답, 잘못된 ID, 요청 간섭·중복 제출, 마지막 항목 삭제 후 유효 페이지 복귀 검증 |
+| 6 | UI 후속 / 라우트·활성 메뉴 | Logic 인계 후 `/cp/news`, `/cp/news/new`, `/cp/news/:newsId/edit` 연결 |
+
+## 결정 사항 및 제약 조건
+
+- `by`·`keyword`는 함께 전송하거나 함께 생략한다. 검색 적용·초기화 시 1페이지로 복귀한다.
+- 목록 순서와 `totalElements`, `totalPages`, `pinnedItemCount`는 서버 값을 그대로 보존한다.
+- 등록은 `title`, `content`, `type`, `status`, `isPinned`가 필수다. 제목·본문의 공백만 있는 값을 거부한다.
+- PATCH는 미입력과 명시적인 `isPinned: false`를 구분한다. 임시 저장은 `DRAFT`, 게시는 `PUBLISHED`다.
+- 생성 성공 data는 `void`다. 새 ID를 가정하지 않고 목록으로 이동한다.
+- 캐시 무효화와 삭제 상세 제거는 기존 mutation options가 담당한다.
+- 실패를 빈 결과·성공으로 표시하지 않는다. 실패 시 입력 보존, 중복 요청·저장과 삭제 간 경합·다른 ID의 이전 응답 간섭을 방지한다.
+- 잘못된 ID는 상세 query 비활성화만으로 끝내지 않고 `load.isFailed`로 표현한다.
+- 브라우저 MSW news 등록 여부와 기존 공지 수정 URL의 유지·redirect·제거 방침은 아직 확정되지 않았다. 이 결정을 controller 구현에 임의로 포함하지 않는다.
+- 현재 scope는 `src/pages/cp-news`뿐이다. 테스트 경로와 필요 시 MSW 경로는 후속 계약에 명시해야 한다.
+
+## 소유권과 Git 계약
+
+- 이번 변경 경로: 현재 assignment의 이 `handoff.md`만.
+- 기존 미커밋 경로: `src/pages/cp-news/index.ts`, `model/cp-news-form.config.ts`, `model/cp-news-form.types.ts`, `model/cp-news-list.config.ts`, `model/cp-news-list.types.ts`, `ui/cp-news-delete-popup.tsx`, `ui/cp-news-form-view.tsx`, `ui/cp-news-list-view.tsx`.
+- 역할별 소유권: 기존 View·표기 config는 UI. 신규 hook·lib는 Logic의 후속 작업. 타입·barrel·페이지 entry는 순차 공유.
+- 충돌 여부: 기존 미커밋 UI 파일은 이번 세션에서 변경하지 않았다. 소스 구현을 시도하지 않았다.
+- task·branch·worktree: `task/news-management-ui` / V3·ACTIVE / `/Users/okand/SynologyDrive/asan-metaverse-admin-ui`.
+- 현재 HEAD 및 승인 parent SHA: `5834f920fcceadbe79491791d5cf8a35ca7e2a98`.
+- parent·직접 merge target: `sy-main`.
+- 목적: 공지사항(news) 전용 관리 화면의 UI View와 controller props/callback 계약 신설.
+- branch 역할: `ui`. scope: `src/pages/cp-news`.
+- 계약 SHA-256: `0aa18eee3ae6503590c79bfa855822f76df4e5ebac7d6221093038e9d70b9775`.
+- Git 통합 담당자: `claude`. 현재 Codex가 이 branch의 index·commit·metadata를 조작할 권한은 없다.
+- 산출물 책임: `owner`. 이번 문서는 구현 완료나 필수 8종·finish 판정을 대체하지 않는다.
+- launcher assignment.json의 `task`는 빈 문자열이며, 주입된 준비 상태와 branch context는 현재 news task를 표시한다. 빈 launcher 필드만으로 런타임 귀속 실패를 단정하지 않는다. 첫 source 변경 전 현재 `[SESSION_READINESS]`를 다시 확인해야 한다.
+
+## 관련 경로와 스킬
+
+정책 snapshot: `/Users/okand/SynologyDrive/asan-agent-policy/build/admin-ui/codex-logic-0c09bf9c0b8f0edc/policy`.
+
+- 적용: `task-role-routing`, `git-branch-strategy`, `skill-index`, `documentation`.
+- 후속 구현 시 확인: `coding-convention`, `type-definition`, `implementation-quality`, `data-fetch-layer`, `recipe-data-fetch`, `recipe-data-dto`, `validation`.
+- 브랜치 스킬의 명시 규칙: “parent worktree에 commit되지 않은 변경이 있으면 생성하지 않는다”, “Git 통합 담당자 한 명만 branch 전환, index, commit과 완료 workflow를 실행한다”.
+- `scope-proposal`·`update-scope`는 scope만 변경한다. 역할·목적·Git 통합 담당자 변경 수단으로 사용하지 않는다. 이 snapshot의 workflow parser에는 해당 필드 변경 명령이 없다.
+
+## 명령어 및 결과
+
+- `git status --short --branch`: `task/news-management-ui`, `?? src/pages/cp-news/`.
+- `git config --get-regexp '^branch\.task/news-management-ui\.'`: 위 V3 계약 확인.
+- `git worktree list --porcelain`: 기본 worktree 1개, HEAD `5834f920fcceadbe79491791d5cf8a35ca7e2a98`.
+- snapshot `branch_workflow.py context`: exit 0, UI 역할·claude 통합 담당·cp-news scope·dirty·ACTIVE 확인.
+- `managed_policy_guard.py branch-context codex`: exit 2, “중앙 정책 상태 오류: hook 입력을 JSON으로 읽을 수 없습니다.” 준비 상태 갱신 성공으로 취급하지 않으며, 재시도하지 않았다.
+- 앞선 읽기 전용 조사에서 `rg` 검색 한 건이 중앙 PreToolUse의 비구조적 변경 분류로 차단되었다. 같은 검색 명령을 재시도하지 않았다. 이후 실제 파일 읽기로 필요한 코드 확인은 마쳤다.
+
+## 실행하지 않은 검증
+
+이번 assignment에서 테스트·lint·build·개발 서버·실서버 호출·시각 QA는 실행하지 않았다. 이전 문서의 테스트 통과 기록을 이번 실행 결과로 주장하지 않는다. Git stage·commit·proposal·create·scope 변경·merge·preserve·finish·close도 실행하지 않았다.
 
 ## 다음 조치
 
-현재 초점에서 전체 범위의 `Proceed` 구현 승인을 확인한 뒤 `plan.md`대로 구현한다. 이후 승인된 plan 자체를 수정하면 hash gate에 영향을 주므로 상태·실행 근거는 implementation-log와 handoff에 기록한다. 소스·테스트·Git 명령의 workdir와 구조화 파일 경로는 모두 위 격리 worktree를 사용한다. 같은 gate 거부를 승인·외부 상태 변화 없이 반복하지 않는다.
-
-범위·동작·스킬·인접 구현·검증 계획의 정본은 이 디렉터리의 plan.md와 exploration.md다. 기존 news hook의 void mutation·캐시 계약을 유지하고 URL 검색·페이지 보존, 순수 요청 매핑, 폼 입력 보존·중복 요청 방지를 구현한다. 브라우저 MSW registry와 기존 공지 URL 방침은 이번 scope 밖이다.
+기존 Claude 담당이 현재 UI 변경을 커밋한 후, 사용자에게 작업 위치와 해당 커밋을 알려준다. Logic은 최신 상태를 다시 읽고 UI 결과를 포함하는 자식 task 계약을 준비한다. 자식 task의 이름·Git 통합 담당·전체 scope와 SHA는 아직 확정·승인되지 않았다. 일반 구현 승인과 이를 혼동하지 않는다. 현재 사용자의 “작업 진행”은 승인된 controller 구현 방향의 진행 의사로 유지한다.

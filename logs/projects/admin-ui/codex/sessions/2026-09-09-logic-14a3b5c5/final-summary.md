@@ -20,6 +20,8 @@ news 목록·등록·수정·임시 저장·게시·삭제 controller와 페이�
 
 ## 인계·다음 단계
 
+사용자의 병합·소유권 인계 승인 이후 병합 계약은 생성했으나 실제 병합은 현재 정책의 교차 host 소유권 제한으로 실행하지 못했다. 공개 인계는 같은 host·role의 새 assignment만 허용하고, 완료 workflow는 source 담당 host와 target claim owner를 모두 요구한다. 현재 codex 자식·claude 부모 조합을 처리할 중앙 정책 후속이 필요하다. 자세한 재현 근거와 생성된 계약 SHA는 unknown/merge-policy-blocker.md에 있다.
+
 공개 진입점은 `CpNewsListPage`, `CpNewsCreatePage`, `CpNewsEditPage`다. UI 담당이 `/cp/news`, `/cp/news/new`, `/cp/news/:newsId/edit`로 연결하며 param 이름은 `newsId`다. 활성 메뉴·브라우저 MSW registry·기존 notice 수정 URL 방침은 scope 밖이다.
 
 현재 `task/news-management-logic`에 `feat : 공지사항 목록과 폼 controller 구현` 커밋을 생성했고 작업 폴더는 clean이다. parent는 `task/news-management-ui`이며 아직 미병합이다. 독립 Watcher와 별도 승인된 merge가 남아 있다. owner 8종과 handoff를 현재 세션 디렉터리에 작성했다. 승인된 plan의 과거 상태 문구는 보존했으며 최신 상태는 이 요약과 handoff를 기준으로 한다.

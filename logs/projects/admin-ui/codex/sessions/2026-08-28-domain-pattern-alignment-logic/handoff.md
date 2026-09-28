@@ -49,11 +49,11 @@
 - 제거한 linked worktree: `/private/var/folders/d0/tpr2m0ld4f57x3zlndrbnxfw0000gn/T/opencode/domain-pattern-alignment-logic`
 - 제거한 merge worktree: `/private/var/folders/d0/tpr2m0ld4f57x3zlndrbnxfw0000gn/T/opencode/domain-pattern-alignment-merge`
 - project 배포본: `.opencode/plugins/harness.js`, `.opencode/plugins/harness_core.py`, `.opencode/plugins/branch_guard.py`
-- 활성 native plugin: `/Users/okand/SynologyDrive/폐기된 외부 정책 저장소/build/admin-ui/opencode-home/plugin/harness.js`
+- 활성 native plugin: `/Users/okand/SynologyDrive/asan-prompt-core/build/admin-ui/opencode-home/plugin/harness.js`
 - 실제 선행 차단 코드: `/Users/okand/.cache/opencode/packages/oh-my-openagent@latest/node_modules/oh-my-openagent/dist/index.js:97178`
 - upstream source checkout: `/private/var/folders/d0/tpr2m0ld4f57x3zlndrbnxfw0000gn/T/opencode/oh-my-openagent/packages/omo-opencode/src/hooks/claude-code-hooks/handlers/tool-execute-before-handler.ts:23`
 - upstream 회귀 테스트: `/private/var/folders/d0/tpr2m0ld4f57x3zlndrbnxfw0000gn/T/opencode/oh-my-openagent/packages/omo-opencode/src/hooks/claude-code-hooks/handlers/tool-execute-before-handler.test.ts:53`
-- 중앙 Claude settings 정본: `/Users/okand/SynologyDrive/폐기된 외부 정책 저장소/source/hosts/claude/settings.json`
+- 중앙 Claude settings 정본: `/Users/okand/SynologyDrive/asan-prompt-core/source/hosts/claude/settings.json`
 - 계획: `.omo/plans/domain-pattern-alignment.md`
 - evidence: `.omo/evidence/domain-pattern-alignment/`
 

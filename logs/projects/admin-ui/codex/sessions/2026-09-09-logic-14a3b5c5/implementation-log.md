@@ -52,6 +52,8 @@ news 목록·폼 controller와 페이지 export를 구현했다. 관련 테스�
 
 ## 제한과 다음 단계
 
+사용자의 병합·Git 소유권 인계 진행 승인 후 finish proposal 9f248106a7264e1a3004091c0f519a0e359d5b58001a16ca36fe64dd672f7747을 생성했다. 최초 문서 구조 검사 실패는 grill-me-review·portfolio-log를 템플릿에 맞춰 보완해 해결했다. 실제 인계·merge는 현재 source 담당 host와 target worktree claim 조건, 같은 host·role에만 허용되는 인계 도구 조건이 충돌해 수행하지 않았다. 중앙 정책 수정이 필요한 실행 제한을 unknown/merge-policy-blocker.md에 기록했다. 사용자의 인계 의사를 다시 묻지 않는다.
+
 사용자 요청과 staging·commit 각각의 명령 승인 후 `6f1d322c5e14802a0d7504d9d83890bfda215b92` 커밋을 생성했다. 메시지는 `feat : 공지사항 목록과 폼 controller 구현`이다. 소스·테스트 10개·738줄 추가를 포함하며 커밋 전 cached diff 검사와 커밋 후 HEAD·경로·clean 상태를 확인했다. Git 변경 명령에는 git -C로 자식 worktree를 명시해 부모 소유권 오판을 해소했다. 정책상 명령 승인 차단은 사용자 승인으로 해결했고 병합은 실행하지 않았다.
 
 빌드는 tsconfig.json을 사용하며 별도 tsconfig.app.json의 noUnusedLocals·noUnusedParameters·erasableSyntaxOnly 검사와 설정이 다르다. 두 타입 검증 결과를 혼동하지 않는다. Vite는 tsconfig paths 플러그인의 내장 기능 전환 안내와 500 kB 초과 청크 경고를 출력했으나 빌드는 성공했다. 설정·패키지는 변경하지 않았다.

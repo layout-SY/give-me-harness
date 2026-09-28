@@ -62,3 +62,58 @@ View는 API를 호출하지 않는다. 표현과 이벤트 전달만 담당하�
 ## 다음 담당자 인계
 
 Logic 담당이 `~/pages/cp-news`의 `CpNewsListController`, `CpNewsFormController`를 구현하고 `~/entities/news`의 공개 hook과 연결한다. 세부 계약은 `handoff.md`에 정리했다.
+
+---
+
+# 2차 구현 — 게시 상태 액션 교정과 라우트·메뉴 연결
+
+## 승인된 범위
+
+- 사용자 구현 승인: 계획 보고 후 `작업 진행`
+- scope 확장 승인 SHA-256: `e4045c5b1f923f504271eeb870508d4c447200e13e3740b54fa4afd0f8facc68`
+- 갱신된 승인 scope: `src/app/router/routes.tsx`, `src/pages/cp-news`, `src/widgets/side-navigation/model/_navigation5.ts`
+- 선행 조건: 자식 `task/news-management-logic`이 ff-only로 병합되어 현재 HEAD `6f1d322`
+
+## 변경 사항
+
+| 경로 | 변경 사항 | 결과 |
+| --- | --- | --- |
+| `src/pages/cp-news/model/cp-news-form.config.ts` | `resolveNewsFormActionLabels`와 상태별 액션 라벨 추가 | 게시 상태에 따라 두 액션의 실제 결과를 라벨로 표시 |
+| `src/pages/cp-news/ui/cp-news-form-view.tsx` | 저장·게시 버튼 라벨을 `detail.status` 기준으로 결정 | 게시 중인 공지에서 "저장"과 "게시 중단"이 구분됨 |
+| `src/app/router/routes.tsx` | `/cp/news`, `/cp/news/new`, `/cp/news/:newsId/edit` 추가 | 공지 전용 화면 접근 경로 확보 |
+| `src/widgets/side-navigation/model/_navigation5.ts` | "게시판 관리" 다음에 "공지사항 관리"(`/cp/news`, `info` 아이콘) 추가 | GNB에서 진입 가능 |
+
+## 핵심 로직·요청 처리
+
+검토에서 발견한 문제는 `PUBLISHED` 공지를 수정하다 "임시 저장"을 누르면 `status: "DRAFT"`가 PATCH에 포함되어 게시가 조용히 내려가는 것이었다. 계약이나 controller를 바꾸지 않고 View에서 해결했다.
+
+`buildNewsPatchPayload`는 `status !== detail.status`일 때만 status를 넣는다. 따라서 `PUBLISHED` 상세에서 `onPublish`는 status를 제외한 순수 내용 저장이고, `onSaveDraft`는 게시 중단이다. 두 액션의 실제 결과에 맞춰 라벨만 상태별로 바꿨다.
+
+| 화면 상태 | 보조(`onSaveDraft`) | 주(`onPublish`) |
+| --- | --- | --- |
+| 등록 | 임시 저장 | 게시 |
+| 수정 · `DRAFT` | 임시 저장 | 게시 |
+| 수정 · `PUBLISHED` | 게시 중단 | 저장 |
+| 수정 · `ARCHIVED` | 임시 저장으로 전환 | 게시 |
+
+`PUBLISHED`에서 내용 변경이 없으면 patch가 비어 `canPublish`가 false가 되어 "저장"이 비활성화되고, "게시 중단"은 status 변경이 잡혀 활성 상태를 유지한다. 별도 조건 추가 없이 기존 계약으로 동작한다.
+
+## 결정 사항
+
+1. controller 계약(`CpNewsFormFieldsController`)에 저장 액션을 추가하지 않았다. Logic 소유 파일 수정 없이 View 표현만으로 문제가 해결되며, 계약 변경은 순차 인계 비용을 다시 발생시킨다.
+2. 메뉴 아이콘은 미사용 중인 `info.icon`을 사용했다. 새 자산을 추가하지 않았다.
+3. 기존 `/cp/boards/notices/:noticeId/edit` 라우트는 유지했다. 제거·redirect 방침은 아직 사용자와 확정되지 않았다.
+
+## 검증 근거
+
+| 명령어 | 결과 |
+| --- | --- |
+| `npx tsc --noEmit -p tsconfig.app.json` | 변경 파일 오류 0건. 기존 파일 14건은 그대로 |
+| `npx eslint src/pages/cp-news src/app/router/routes.tsx src/widgets/side-navigation/model/_navigation5.ts` | PASS |
+| `node --test tests/news-*.test.mjs` (6개 파일) | 46/46 PASS |
+
+## 알려진 위험과 제한
+
+- `npm run build`는 기존 타입 오류 14건으로 실패하므로 실행하지 않았다. 타입 검증은 `tsc --noEmit`으로 대체했다.
+- 브라우저에서 실제 화면을 열어 확인하지 않았다. news MSW handler가 브라우저 registry에 없어 mock 데이터로도 확인되지 않는다.
+- 공지 진입점이 `/cp/news`와 `/cp/boards/notices/:noticeId/edit` 둘로 남아 있다.
