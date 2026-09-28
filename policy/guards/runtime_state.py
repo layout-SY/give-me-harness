@@ -27,7 +27,7 @@ def repository_state(common: Path) -> Path:
     return state_root() / "repositories" / digest(str(common.resolve()))
 
 
-def session_path(common: Path, host: str, session: str, namespace: str) -> Path | None:
+def session_path(common: Path, host: str, session: str, namespace: str, *, create: bool = True) -> Path | None:
     if not session or session == "missing-session-id":
         return None
     assignment = os.environ.get(ASSIGNMENT_ENV, "")
@@ -37,7 +37,8 @@ def session_path(common: Path, host: str, session: str, namespace: str) -> Path 
         root = repository_state(common) / "assignments" / assignment
     else:
         root = repository_state(common) / "sessions" / digest(f"{host}\0{session}")
-    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if create:
+        root.mkdir(mode=0o700, parents=True, exist_ok=True)
     return root / f"{namespace}.json"
 
 
@@ -91,10 +92,10 @@ def locked(path: Path):
         os.close(descriptor)
 
 
-def bind_native_session(common: Path, host: str, session: str) -> None:
+def bind_native_session(common: Path, host: str, session: str, *, read_only: bool = False) -> None:
     if not os.environ.get(ASSIGNMENT_ENV) or session == "missing-session-id":
         return
-    path = session_path(common, host, session, "assignment")
+    path = session_path(common, host, session, "assignment", create=not read_only)
     record = read(path)
     if not record or record.get("host") != host or record.get("repository") != str(common.resolve()):
         raise RuntimeError("launcher의 assignment와 현재 host/repository가 다릅니다.")
@@ -111,6 +112,10 @@ def bind_native_session(common: Path, host: str, session: str) -> None:
     previous = record.get("native_session")
     if previous and previous != session:
         raise RuntimeError("다른 native session이 소유한 assignment입니다. 새 세션 또는 명시적 handoff를 사용하세요.")
+    if read_only:
+        if previous != session:
+            raise RuntimeError("native session의 훅이 먼저 assignment를 확인해야 합니다.")
+        return
     record["native_session"] = session
     write(path, record)
 

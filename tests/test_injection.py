@@ -598,7 +598,7 @@ class InjectionTests(unittest.TestCase):
             self.assertNotIn(marker, guard)
         self.assertFalse(any((CENTRAL_ROOT / "projects/legacy").glob("*.json")))
 
-    def test_all_host_stop_paths_are_nonblocking_log_collection_only(self) -> None:
+    def test_all_host_stop_paths_check_formatting_without_documentation_gate(self) -> None:
         codex = self.prepare("codex")
         codex_hooks = json.loads(
             (Path(codex.environment["CODEX_HOME"]) / "hooks.json").read_text(
@@ -611,7 +611,9 @@ class InjectionTests(unittest.TestCase):
             for handler in group["hooks"]
         ]
         self.assertTrue(codex_stop)
-        self.assertTrue(all("collect-logs" in command for command in codex_stop))
+        self.assertTrue(any("collect-logs" in command for command in codex_stop))
+        self.assertTrue(any("format-stop" in command for command in codex_stop))
+        self.assertFalse(any("documentation-stop" in command for command in codex_stop))
 
         claude = self.prepare("claude")
         claude_hooks = json.loads(
@@ -623,7 +625,9 @@ class InjectionTests(unittest.TestCase):
             for handler in group["hooks"]
         ]
         self.assertTrue(claude_stop)
-        self.assertTrue(all("collect-logs" in command for command in claude_stop))
+        self.assertTrue(any("collect-logs" in command for command in claude_stop))
+        self.assertTrue(any("format-stop" in command for command in claude_stop))
+        self.assertFalse(any("documentation-stop" in command for command in claude_stop))
 
         opencode = self.prepare("opencode")
         plugin = (opencode.bundle_root / "opencode-home/plugins/agent-policy.js").read_text(
@@ -631,6 +635,7 @@ class InjectionTests(unittest.TestCase):
         )
         self.assertIn('event.type !== "session.idle"', plugin)
         self.assertIn('"collect-logs"', plugin)
+        self.assertIn('"format-stop"', plugin)
         self.assertNotIn("documentation-stop", plugin)
 
     def test_codex_command_has_no_consumer_hook_disable_workaround(self) -> None:

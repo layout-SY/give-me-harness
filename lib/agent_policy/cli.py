@@ -54,6 +54,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit = subparsers.add_parser("audit", help="중앙 소스와 대상 메타데이터를 검사합니다.")
     project_argument(audit)
+    subparsers.add_parser("formatter-install", help="고정 버전 Prettier를 중앙 state에 한 번 설치합니다.")
 
     start = subparsers.add_parser("start", help="중앙 inject 정책으로 host 세션을 시작합니다.")
     start.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
@@ -604,6 +605,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             from .maintenance import apply
             target = apply(select_projects(arguments.project)[0], Path(arguments.plan_file), arguments.approved_sha256)
             print(f"검토·검증할 V3 유지보수 worktree: {target}")
+            code = 0
+        elif arguments.command == "formatter-install":
+            from .formatter import install
+            print(f"공용 Prettier 설치 확인: {install()}")
             code = 0
         elif arguments.command == "collect-logs":
             code = run_collect_logs(arguments.project, arguments.channel, arguments.quiet)

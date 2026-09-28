@@ -1,0 +1,8 @@
+{
+  "name": "asan-policy-prettier",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "prettier": "3.7.4"
+  }
+}

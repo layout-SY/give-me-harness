@@ -27,7 +27,7 @@
         {
           "type": "command",
           "command": "pre-tool",
-          "timeout": 10
+          "timeout": 60
         }
       ]
     }
@@ -44,6 +44,15 @@
     }
   ],
   "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "format-stop",
+          "timeout": 15
+        }
+      ]
+    },
     {
       "hooks": [
         {

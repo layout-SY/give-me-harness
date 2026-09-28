@@ -71,13 +71,29 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 
 - 모든 host는 중앙 digest bundle만 사용하며 SessionStart hook이 inject context와 브랜치 context를 보고합니다.
 - 소비자 `AGENTS.md`, `CLAUDE.md`, host hook·skill·설정 사본은 우선순위로 덮지 않습니다. launcher가 시작 전에 탐지해 거부합니다.
-- Codex와 Claude Code의 Stop hook 및 OpenCode의 `session.idle`은 세션 로그를 수집하되 대화를 차단하지 않습니다. 새 bundle에서 V3 finish/close 계약을 사용하지 않습니다.
+- Codex와 Claude Code의 Stop hook 및 OpenCode의 `session.idle`은 세션 로그를 수집합니다. 문서 누락으로 대화를 차단하지 않습니다. 코드 포맷 누락은 별도로 확인하며 새 bundle에서 V3 finish/close 계약을 사용하지 않습니다.
 - 세 호스트 모두 managed file 편집과 명시적인 shell write를 차단합니다.
 - 세 호스트 모두 공통 UserPrompt/PostTool 상태로 구현 승인, 관련 skill 확인과 역할별 재사용·인접 구현 탐색을 기록하며, 조건을 갖추기 전 source mutation을 차단합니다.
 - Git 변경은 현재 bundle의 `git_operations.py`가 승인된 정확한 명령·위치·상태를 실행 직전에 다시 검사합니다. 일반 Git 변경을 요청하면 guard가 보호 실행 명령을 제시합니다.
 - `status`, `diff`, `log`, branch 목록과 `worktree list`는 승인 없이 조회합니다. 일반 lint/test/build도 별도 Git 승인이 필요 없습니다.
 - source 구현 승인과 Git 실행 승인을 구분합니다. 다른 host·세션의 로그는 읽기 전용이며 branch·worktree 소유권은 없습니다.
 - 중앙 원본을 바꾼 뒤에는 실행 중인 세션을 handoff하고 새 세션을 시작해야 현재 source digest의 새 bundle을 선택합니다. 기존 세션 resume은 이전 bundle을 유지합니다.
+
+## 코드 자동 포맷
+
+중앙 저장소에서 `bin/agent-policy formatter-install`을 한 번 실행하면 `state/tools/prettier/3.7.4/`에 고정 버전 Prettier만 설치합니다. package-lock의 배포 무결성을 확인하고 설치 스크립트를 실행하지 않습니다. 소비자와 worktree의 package.json·node_modules는 변경하지 않습니다. 각 세션은 이 공용 설치를 사용하며 실행 중 자동 다운로드하지 않습니다.
+
+자동 포맷 회귀 테스트도 임시 Git 저장소에서 이 실제 엔진을 사용하므로, 새 개발 환경에서는 위 설치 후 `python3 -m unittest discover -s tests -v`를 실행합니다. 테스트 자체는 패키지를 다운로드하지 않습니다.
+
+새 inject 세션에서 코드 수정 도구가 성공하면 해당 파일의 실제 경로·내용 해시를 기록합니다. 페이지나 기능 작업이 끝났을 때 시스템 프롬프트의 `formatting.py apply` 명령을 해당 workdir에서 실행하면 기록된 파일만 자동 편집합니다. host·native session은 launcher 설정에서 찾으므로 직접 지정할 필요가 없습니다. 등록된 lint·test·build 직전에도 같은 포맷을 자동 수행합니다. 포맷 후 검증하고 stage·commit합니다.
+
+주입 세션의 명령 트리거도 공통 PreToolUse에서 포맷을 수행합니다. 이어 실행되는 명령은 파일과 결과를 읽어 확인하므로 중앙 상태 디렉터리에 쓰기 권한을 추가로 열 필요가 없습니다.
+
+포맷을 마친 커밋의 과거 기록으로 다른 브랜치의 코드를 다시 포맷하지 않습니다. 새로 수정한 파일은 다시 추적하며, 완료 기록 때문에 세션을 이전 브랜치·worktree에 묶지 않습니다.
+
+프로젝트의 Prettier 설정과 ignore 파일을 따르며 수정하지 않은 파일, host 정책·로그, node_modules·dist·build는 제외합니다. 포맷 후 다시 수정하거나 설정이 바뀌면 다시 확인합니다. 문법 오류·설정 누락·동시 변경·진행 중인 쓰기·stage된 대상은 원본을 덮어쓰지 않고 미완료 사유를 표시합니다. 여러 파일 중 하나라도 Prettier 계산에 실패하면 결과를 반영하지 않습니다. 포맷은 전체 파일에 적용되므로 같은 파일 안의 기존 공백도 달라질 수 있습니다.
+
+Codex·Claude의 Stop은 누락을 한 번 알리고 같은 오류로 반복 차단하지 않습니다. OpenCode는 idle 알림으로 표시합니다. 검증·Git 실행 전 검사와 시스템 프롬프트의 완료 절차를 함께 사용하며, 강제 종료까지 포맷 성공으로 간주하지 않습니다. 코드 수정 없는 commit·merge 요청은 대상 파일·필수 문서를 생성하지 않습니다. 기존 bundle을 재개하면 원래 정책을 유지하므로 새 inject 세션에서 적용합니다.
 
 ## 역할과 병렬 세션
 

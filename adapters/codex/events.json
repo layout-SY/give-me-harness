@@ -31,8 +31,8 @@
         {
           "type": "command",
           "command": "pre-tool",
-          "timeout": 10,
-          "statusMessage": "Protecting central agent policy files"
+          "timeout": 60,
+          "statusMessage": "Protecting files and formatting changed code before validation"
         }
       ]
     }
@@ -50,6 +50,15 @@
     }
   ],
   "Stop": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "format-stop",
+          "timeout": 15
+        }
+      ]
+    },
     {
       "hooks": [
         {

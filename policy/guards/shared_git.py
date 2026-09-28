@@ -145,6 +145,12 @@ def git_denial(event: dict, root: Path, host: str, command: str, cwd: Path) -> s
         args = invocation.arguments
         if not args:
             continue
+        formatting = _loader.load("formatting")
+        recovering = args[0] in {"merge", "rebase"} and args[1:] in {("--abort",), ("--quit",)}
+        if formatting.enabled() and args[0] in {"add", "commit", "merge", "rebase"} and not recovering:
+            message = formatting.check(root, event, host, invocation.root)
+            if message:
+                return message
         # Git의 --output/--file 역시 파일 쓰기다. 명령 이름이 조회형이어도
         # 다른 host 기록·중앙 정책·.git을 출력 대상으로 삼을 수 없다.
         for index, arg in enumerate(args):
@@ -266,6 +272,16 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
     event_cwd = Path(str(event.get("cwd") or root))
     cwd = paths.shell_working_directory(event_cwd, data)
     operations = _loader.load("git_operations")
+    formatting = _loader.load("formatting")
+    trigger = formatting.invocation(command, event, host, cwd) if shell else None
+    if trigger is not None:
+        format_cwd, action = trigger
+        denial = boundary.directory_denial(root, cwd) or boundary.directory_denial(root, format_cwd)
+        if denial:
+            protocol.emit_denial(host, denial)
+            return
+        formatting.require_for_trigger(root, event, host, action, format_cwd)
+        return
     if shell:
         invocation = operations.invocation(command)
         if invocation is not None:
@@ -369,6 +385,7 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
             if denial:
                 protocol.emit_denial(host, denial)
                 return
+        formatting.require_before_validation(root, event, host, command, cwd)
     denial = bind_artifacts(event, root, host, contexts)
     if denial:
         protocol.emit_denial(host, denial)
@@ -398,6 +415,7 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
         commands = branch.shell_command_contexts(command, cwd) or ()
         if any(Path(words[0]).name not in reads for _, words in commands):
             operations.reserve_write(root, event, host, [location for location, _ in commands])
+    formatting.record_before(root, event, host, contexts)
     common = branch.git_common_directory(root)
     context_path = state.session_path(common, host, paths.event_session_id(event), "branch-context")
     if context_path:

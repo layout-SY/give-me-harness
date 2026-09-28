@@ -392,6 +392,18 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
         if context:
             print(context)
         return
+    if mode == "format-stop":
+        message = load_runtime_module("formatting").check(repository_root(event), event, host)
+        if host == "opencode":
+            if message:
+                print(message, file=sys.stderr)
+                raise SystemExit(2)
+        elif event.get("stop_hook_active"):
+            # 같은 오류로 종료를 무한 반복시키지 않고 미완료 결과를 보고하게 한다.
+            print(json.dumps({"systemMessage": message} if message else {}, ensure_ascii=False))
+        else:
+            emit_stop_result(message)
+        return
     if mode == "documentation-stop":
         # 구버전 adapter가 이 mode를 계속 호출해도 대화 종료를 재차단하지 않는다.
         # 산출물 계약은 명시적 finish/verify/close와 preserve PreToolUse에서 검증한다.
@@ -401,6 +413,7 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
         record_user_prompt(event, repository_root(event), host)
         return
     if mode == "post-tool":
+        load_runtime_module("formatting").record_after(repository_root(event), event, host)
         complete_binding(event, repository_root(event), host)
         record_post_tool(event, repository_root(event), host)
         if branch_guard.SHARED_GIT_ACCESS:
@@ -526,8 +539,9 @@ def git_ownership(event: dict[str, Any], root: Path, host: str, *, reserve: bool
 def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     host = sys.argv[2] if len(sys.argv) > 2 else ""
+    time_limit = 8
     def timeout(_signum, _frame):
-        raise RuntimeError("정책 검사가 제한 시간 8초를 초과했습니다.")
+        raise RuntimeError(f"정책 검사가 제한 시간 {time_limit}초를 초과했습니다.")
 
     signal.signal(signal.SIGALRM, timeout)
     signal.alarm(8)
@@ -543,10 +557,22 @@ def main() -> None:
             raise ValueError("launcher assignment의 실제 host session ID가 필요합니다.")
         root = repository_root(event)
         common = branch_guard.git_common_directory(root) or root.resolve()
-        with runtime_state.locked(runtime_state.repository_state(common) / "events.lock"):
-            runtime_state.bind_native_session(common, host, event_session_id(event))
-            with branch_guard.git_snapshot():
-                dispatch(mode, host, event)
+        formatting = load_runtime_module("formatting")
+        for attempt in range(3):
+            try:
+                with runtime_state.locked(runtime_state.repository_state(common) / "events.lock"):
+                    runtime_state.bind_native_session(common, host, event_session_id(event))
+                    with branch_guard.git_snapshot():
+                        dispatch(mode, host, event)
+                break
+            except formatting.FormattingRequired as request:
+                if attempt == 2:
+                    raise RuntimeError("포맷 중 변경이 반복되었습니다. 진행 중인 쓰기가 끝난 뒤 검증하세요.")
+                time_limit = 50
+                signal.alarm(time_limit)
+                formatting.apply(root, event, host, request.worktree)
+                time_limit = 8
+                signal.alarm(time_limit)
     except Exception as error:
         if mode == "pre-tool":
             emit_denial(host, f"중앙 정책 검사 오류: {error}")

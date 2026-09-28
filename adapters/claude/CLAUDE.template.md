@@ -24,6 +24,7 @@ inject system prompt에 `--role`이 있으면 해당 값은 이번 세션에서 
 - `git checkout -- <path>` 대신 `git restore ... -- <path>`를 사용한다.
 - 관련 Git 명령을 묶을 때 전체 작업 위치·대상·영향을 보고하여 한 번에 승인받는다.
 - branch workflow의 계약·SHA 승인은 사용하지 않는다. 일반 Git 변경은 native 권한 요청을 따른다.
+- 페이지·기능 코드 작업 완료 시 inject 프롬프트의 공통 포맷 트리거를 실행한다. 등록된 lint·test·build 직전에도 훅이 수정한 파일만 실제 Prettier로 자동 편집한다. 이후 편집·검증은 포맷된 내용을 기준으로 한다.
 
 ## 4. 관리 정책 파일
 

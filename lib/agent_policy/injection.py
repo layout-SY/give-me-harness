@@ -282,6 +282,12 @@ def _injection_preamble(
     profile = role_profile(role)
     documents = "\n".join(f"  - `{path}`" for path in role_document_paths(host, role))
     artifact_root = artifact_session_root(host)
+    formatter_root = {
+        "codex": policy_root / ".agent-policy/runtime",
+        "claude": policy_root.parent / "plugin/runtime",
+        "opencode": policy_root.parent / "opencode-home/runtime",
+    }[host]
+    formatter_command = shlex.join(["python3", "-I", str(formatter_root / "formatting.py"), "apply"])
     return f"""# 중앙 정책 inject 실행 컨텍스트
 
 이 세션은 소비자 저장소에 배포된 정책 파일이 아니라 중앙 정책 번들을 사용한다.
@@ -294,7 +300,8 @@ def _injection_preamble(
 - 선택된 role: `{role}` (`{profile.canonical_name}`)
 - 역할 목적: {profile.summary}
 - 아래에 바인딩된 정책 상대 경로는 읽을 때 정책 스냅샷 아래에서 해석한다.
-- 애플리케이션 경로와 `{artifact_root}/**` 산출물 경로는 작업 프로젝트 루트에서 해석한다.
+- 애플리케이션 경로와 `{artifact_root}/**` 산출물 경로는 해당 도구의 실제 작업 cwd에서 해석한다.
+- 페이지·기능 코드 작업 완료 시 실제 workdir에서 실행할 포맷 트리거: `{formatter_command}`. 프로젝트 설정을 사용해 수정한 파일만 자동 편집한다. 포맷 후 lint·test·build를 실행한다. 해당 검증 명령의 PreToolUse에서도 필요한 포맷을 자동 수행한다.
 - 정책 스냅샷과 중앙 저장소는 세션에서 직접 수정하지 않는다. 정책 변경은 중앙 저장소의 승인 절차를 따른다.
 - 소비자 저장소의 기존 `AGENTS.md`, `CLAUDE.md`, `.codex/**`, `.claude/**`,
   `.opencode/**`는 이 inject 세션의 정책 원본이 아니다.
@@ -420,6 +427,7 @@ def _replace_guard_commands(value: object, runtime: Path, host: str) -> object:
         "user-prompt",
         "pre-tool",
         "post-tool",
+        "format-stop",
         "documentation-stop",
     ):
         if value.endswith(f" {mode} {host}"):
@@ -994,6 +1002,7 @@ def prepare_injection(
         "ASAN_AGENT_POLICY_HOST": host,
         "ASAN_SESSION_DIR": session_dir or (artifact_session_root(host) + "/" + datetime.now(timezone.utc).strftime("%Y-%m-%d") + "-" + session_slug + "-" + assignment_id[:8]),
         "ASAN_SESSION_DIR_MODE": "explicit" if session_dir or not shared else "suggested",
+        "ASAN_FORMATTER": "prettier-v1" if shared else "disabled",
         "ASAN_AGENT_POLICY_STATE_ROOT": str(selected_state_root),
         INJECT_MODE_ENV: "inject",
         INJECT_PROJECT_ENV: project.id,

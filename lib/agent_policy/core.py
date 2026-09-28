@@ -264,7 +264,7 @@ def render_project(project: ProjectConfig) -> dict[str, bytes]:
             project,
         )
     rendered["opencode.json"] = render_opencode_config(project)
-    for source in sorted((CENTRAL_ROOT / "policy/guards").glob("*.py")):
+    for source in sorted(path for path in (CENTRAL_ROOT / "policy/guards").iterdir() if path.suffix in {".py", ".mjs"}):
         rendered[f".agent-policy/runtime/{source.name}"] = render_content(source.read_bytes(), project)
     rendered[".codex/hooks.json"] = render_codex_hooks(project)
     rendered[".claude/settings.json"] = render_claude_settings(project)

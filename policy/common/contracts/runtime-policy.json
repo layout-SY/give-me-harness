@@ -1,5 +1,10 @@
 {
   "version": 4,
+  "formatting": {
+    "engine": "prettier",
+    "version": "3.7.4",
+    "extensions": [".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".mts", ".cts", ".css", ".scss", ".less", ".json", ".html", ".vue", ".svelte", ".yaml", ".yml"]
+  },
   "execution": {
     "boundary": "session-project",
     "linked_worktrees": "same-git-common-directory",
