@@ -163,6 +163,8 @@ def collect(root: Path, source: str, target: str, strategy: str, verification: l
 
 
 def require_report(evidence: dict, report: dict) -> None:
+    if not isinstance(report, dict):
+        raise RuntimeError("검토 보고는 JSON 객체여야 합니다.")
     if report.get("evidence_digest") != evidence["evidence_digest"]:
         raise RuntimeError("에이전트 검토가 현재 비교 자료와 일치하지 않습니다.")
     if any(not isinstance(report.get(key), str) or not report[key].strip() for key in REPORT_FIELDS):

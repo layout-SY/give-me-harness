@@ -35,7 +35,7 @@ inject system prompt에 `--role`이 있으면 해당 값은 이번 세션에서 
 
 - Claude Code 세션 산출물의 정본은 `.claude/logs/sessions/{YYYY-MM-DD-task-slug}/`다.
 - 산출물 스키마는 `.claude/templates/`, 부분 역할 인계는 `.claude/templates/handoff.template.md`를 사용한다.
-- 전체 작업 책임자는 공통 계약의 계획·최종 결과 기록을 작성하고, 부분 기여자는 `handoff.md`를 작성한다.
+- 기존 변경의 commit·merge만 수행하는 요청은 공통 문서화 정책의 예외에 따라 새 세션에서도 산출물을 작성하지 않는다. 일반 작업의 전체 책임자는 계획·최종 결과를, 부분 기여자는 `handoff.md`를 기록한다.
 - handoff의 `next_role`은 다음 역할의 제안이며 자동 권한이 아니다.
 - 모든 branch/worktree에서 사용자 승인 후 Git 변경을 수행한다. 다른 세션의 Git 소유권이나 CLOSED를 요구하지 않는다.
 

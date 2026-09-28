@@ -1,6 +1,6 @@
 # 인계 스키마
 
-부분 기여·인계 문서는 `handoff.template.md`에 따라 다음을 기록한다.
+기존 변경의 commit·merge만 수행하는 요청에는 산출물 예외를 적용한다. 그 외 부분 기여·인계 문서는 `handoff.template.md`에 따라 다음을 기록한다.
 
 - 보내는·받는 host/session/role, 역할 라우팅, 목표와 현재 상태, 완료·대기 작업, 결정과 제약.
 - 보내는 작업의 실제 project·branch·HEAD·worktree 절대 경로·실행 디렉터리와 확인 시점. commit 내역, staged·unstaged·untracked 변경의 경로와 내용, 보존할 기존 변경.

@@ -5,6 +5,19 @@ description: 작업 범위의 거버넌스 산출물과 결론 우선 근거 요
 
 # 문서화
 
+## commit·merge만 수행하는 요청
+
+기존 변경을 commit하거나 기존 branch를 merge하는 요청만 수행할 때는 `owner`·`contributor`와 새 세션 여부에 관계없이 필수 산출물을 작성하지 않는다. `plan.md`, `final-summary.md`, `handoff.md`, portfolio와 탐색·구현·리뷰 등 선택 로그, 이를 위한 빈 세션 디렉터리도 생성하지 않는다. 사용자가 문서 기록을 명시적으로 요청하면 해당 기록만 작성한다.
+
+- 대상·HEAD·staged·unstaged·untracked 확인, 필요한 stage, 형제 변경 검토, 검증, Git 승인과 승인된 branch·worktree 정리는 이 요청에 포함된다. 산출물 대신 실제 commit·merge 결과, 검증과 정리 여부, 실패·미완료 사항을 대화로 보고한다.
+- Git 승인·관계·형제 검토·실행 결과의 runtime 기록은 유지한다. 병합 검토는 `git-branch-strategy`의 `complete --report-json`으로 전달해 별도 세션 문서를 만들지 않는다.
+- 같은 작업에서 기능·버그 수정·리팩터링·문서·설정을 직접 변경했다면 commit·merge만 남았더라도 그 작업의 정상 산출물을 작성하고 Git 처리 결과를 함께 기록한다. 기존 산출물을 삭제하거나 다른 세션의 기록을 대신 작성·수정하지 않는다. 새 세션에서 commit·merge만 맡았다는 이유로 이전 작업의 누락 문서를 보충하지 않는다.
+- 현재 요청의 실제 수행 내용으로 판단한다. 전용 role·세션 모드·branch 제한을 만들지 않는다. 도중에 기능 수정이나 충돌 해결을 위한 구현 변경까지 맡으면 해당 변경부터 일반 작업 흐름과 산출물 책임을 적용한다.
+
+예: 새 세션의 “A branch의 기존 변경만 commit해줘” 또는 “F를 A에 merge하고 정리해줘”는 문서 없이 Git 작업과 결과 보고만 수행한다. “A 기능을 수정하고 commit·merge까지 해줘”는 A 작업 산출물에 구현과 Git 처리 결과를 함께 기록한다.
+
+## 일반 작업의 산출물
+
 실행 호스트의 산출물 경로를 사용한다. Codex는 `.codex/logs/sessions/`, Claude Code는 `.claude/logs/sessions/`, OpenCode는 `.opencode/logs/sessions/` 아래에 작업 디렉터리를 만들고 해당 host adapter의 템플릿을 사용한다. 기록은 결론부터 작성하고, 경로와 명령어를 인용하며, 관찰한 사실과 권고 사항을 구분한다. 이전 세션의 산출물을 현재 근거로 재사용해서는 안 된다.
 
 `owner`는 `plan.md`와 `final-summary.md`에 범위·결정·변경·검증·미완료 항목을 기록한다. `contributor` 또는 중단·인계 시에는 `handoff.md`를 작성한다. 탐색·구현·리뷰·평가·grill-me·portfolio 문서는 작업 규모와 사용자 요청에 맞춰 선택한다. 문서가 부족하다는 이유로 Git 변경이나 다음 작업을 차단하지 않는다.

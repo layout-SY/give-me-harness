@@ -599,7 +599,9 @@ def main() -> None:
     evidence.add_argument("--cleanup", action="store_true")
     complete = commands.add_parser("complete")
     complete.add_argument("--review", required=True)
-    complete.add_argument("--report", type=Path, required=True)
+    report_input = complete.add_mutually_exclusive_group(required=True)
+    report_input.add_argument("--report", type=Path, help="현재 프로젝트의 검토 JSON 파일")
+    report_input.add_argument("--report-json", help="파일 생성 없이 전달하는 검토 JSON 객체")
     relation = commands.add_parser("relation")
     relation.add_argument("--action", dest="relation_action", choices=("register", "create", "rename", "reparent", "cancel", "retire"), required=True)
     relation.add_argument("--name", required=True)
@@ -622,9 +624,11 @@ def main() -> None:
         result = review.collect(root, args.source, args.target, args.strategy, args.verify_command, args.cleanup)
         state.write(relations.directory(root) / "reviews" / (result["id"] + ".json"), result)
     elif args.action == "complete":
-        if not re.fullmatch(r"[a-f0-9]{32}", args.review) or not git.same_git_repository(root, args.report.resolve().parent):
+        if not re.fullmatch(r"[a-f0-9]{32}", args.review) or (
+                args.report is not None and not git.same_git_repository(root, args.report.resolve().parent)):
             raise RuntimeError("현재 프로젝트의 검토 보고와 review ID를 명시하세요.")
-        result = prepare_completion(root, cwd, state.read(relations.directory(root) / "reviews" / (args.review + ".json")), json.loads(args.report.read_text()))
+        report = json.loads(args.report.read_text() if args.report is not None else args.report_json)
+        result = prepare_completion(root, cwd, state.read(relations.directory(root) / "reviews" / (args.review + ".json")), report)
     elif args.action == "relation":
         result = prepare_relation(root, cwd, args.relation_action, args.name, args.parent, args.fork,
                                   args.purpose or "", args.new_name, args.worktree)

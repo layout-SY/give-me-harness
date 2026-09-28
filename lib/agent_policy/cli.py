@@ -80,7 +80,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--responsibility",
         choices=("owner", "contributor"),
         default="owner",
-        help="owner는 plan.md·final-summary.md, contributor는 handoff.md를 기록합니다.",
+        help="일반 작업에서 owner는 plan.md·final-summary.md, contributor는 handoff.md를 기록합니다. 기존 변경의 commit·merge만 수행하는 요청은 산출물을 작성하지 않습니다.",
     )
     start.add_argument(
         "--session-dir",

@@ -6,6 +6,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -290,6 +291,109 @@ class RelationOperationTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "변경|재검토"):
                 operations.execute(self.root, operation["id"])
             self.assertEqual(self.git("log", "-1", "--format=%s"), "external change")
+
+    def test_commit_existing_changes_without_creating_session_artifacts(self):
+        operations = self.module("git_operations")
+        for host in ("codex", "claude", "opencode"):
+            for responsibility in ("owner", "contributor"):
+                with self.subTest(host=host, responsibility=responsibility), patch.dict(os.environ, {
+                    **self.env, "ASAN_SESSION_DIR": f".{host}/logs/sessions/commit-only",
+                    "ASAN_ARTIFACT_RESPONSIBILITY": responsibility,
+                }, clear=True):
+                    content = f"export const value = '{host}-{responsibility}';\n"
+                    (self.root / "src/app.ts").write_text(content)
+                    event = {"session_id": f"{host}-{responsibility}"}
+                    operation = operations.prepare_git(self.root, self.root,
+                        "git add -- src/app.ts && git commit -m 'fix: 기존 변경 커밋'", host, event)
+                    operations.grant(self.root, operation, host, event)
+                    operations.execute(self.root, operation["id"])
+                    self.assertEqual(self.git("show", "HEAD:src/app.ts"), content.strip())
+                    self.assertEqual(self.git("status", "--porcelain"), "")
+                    self.assertFalse((self.root / f".{host}/logs").exists())
+
+    def operation_cli(self, *args):
+        return subprocess.run([sys.executable, "-I", str(self.runtime / "git_operations.py"), *args],
+            cwd=self.root, env=self.env, text=True, capture_output=True)
+
+    def test_inline_merge_review_preserves_approval_without_session_artifacts(self):
+        self.seed_tree()
+        self.git("switch", "-q", "K")
+        source_head = self.commit_file(self.root, "src/button.ts", "export const button = true;\n")
+        self.git("switch", "-q", "A")
+        reviewed = self.operation_cli("review", "--source", "K", "--target", "A",
+            "--strategy", "ff-only", "--verify-command", "git diff --check")
+        self.assertEqual(reviewed.returncode, 0, reviewed.stderr)
+        evidence = json.loads(reviewed.stdout)
+        operations = self.module("git_operations")
+        report = {key: "fixture 비교 결과; 의미 검증은 이 검사 범위 밖" for key in operations.review.REPORT_FIELDS}
+        report["evidence_digest"] = evidence["evidence_digest"]
+        args = ("complete", "--review", evidence["id"], "--report-json", json.dumps(report))
+        command = shlex.join([sys.executable, "-I", str(self.runtime / "git_operations.py"), *args])
+        for host in ("codex", "claude", "opencode"):
+            guarded = self.event("pre-tool", command, host=host)
+            self.assertEqual(guarded.returncode, 0, guarded.stderr)
+            self.assertNotIn('"deny"', guarded.stdout)
+        result = self.operation_cli(*args)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        operation, _ = json.JSONDecoder().raw_decode(result.stdout)
+        self.assertEqual(operation["report"], report)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        self.assertNotEqual(self.git("rev-parse", "HEAD"), source_head)
+        denied = self.operation_cli("execute", operation["id"])
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertIn("승인", denied.stderr)
+        with patch.dict(os.environ, self.env, clear=True):
+            operations.grant(self.root, operation, "codex", {"session_id": "new-merge-session"})
+        executed = self.operation_cli("execute", operation["id"])
+        self.assertEqual(executed.returncode, 0, executed.stderr)
+        self.assertEqual(json.loads(executed.stdout)["stage"], "retained")
+        self.assertEqual(self.git("rev-parse", "A"), source_head)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+        for host in ("codex", "claude", "opencode", "agent-policy"):
+            self.assertFalse((self.root / f".{host}/logs").exists())
+
+    def test_inline_merge_review_rejects_invalid_or_incomplete_evidence(self):
+        self.seed_tree()
+        operations = self.module("git_operations")
+        with patch.dict(os.environ, self.env, clear=True):
+            evidence = operations.review.collect(self.root, "K", "A", "ff-only", ["git diff --check"], False)
+            operations.state.write(operations.relations.directory(self.root) / "reviews" / (evidence["id"] + ".json"), evidence)
+        report = {key: "검토 근거" for key in operations.review.REPORT_FIELDS}
+        report["evidence_digest"] = evidence["evidence_digest"]
+        for content in ("{", "[]", "null", "{}", json.dumps({**report, "evidence_digest": "stale"}),
+                        json.dumps({**report, "comparisons": ""})):
+            with self.subTest(content=content):
+                result = self.operation_cli("complete", "--review", evidence["id"], "--report-json", content)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertNotIn("unrecognized arguments", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+        self.assertEqual(self.git("status", "--porcelain"), "")
+
+    def test_file_merge_report_keeps_project_boundary_and_excludes_inline_input(self):
+        self.seed_tree()
+        outside = self.base / "report.json"
+        outside.write_text("{}")
+        result = self.operation_cli("complete", "--review", "a" * 32, "--report", str(outside))
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("현재 프로젝트", result.stderr)
+        result = self.operation_cli("complete", "--review", "a" * 32,
+            "--report", str(outside), "--report-json", "{}")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("not allowed with argument", result.stderr)
+        reviewed = self.operation_cli("review", "--source", "K", "--target", "A",
+            "--strategy", "ff-only", "--verify-command", "git diff --check")
+        self.assertEqual(reviewed.returncode, 0, reviewed.stderr)
+        evidence = json.loads(reviewed.stdout)
+        operations = self.module("git_operations")
+        report = {key: "기존 보고 파일의 검토 근거" for key in operations.review.REPORT_FIELDS}
+        report["evidence_digest"] = evidence["evidence_digest"]
+        existing = self.root / ".codex/logs/sessions/current/unknown/review.json"
+        existing.parent.mkdir(parents=True)
+        existing.write_text(json.dumps(report))
+        result = self.operation_cli("complete", "--review", evidence["id"], "--report", str(existing))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        operation, _ = json.JSONDecoder().raw_decode(result.stdout)
+        self.assertEqual(operation["report"], report)
 
     def completion(self, operations, source="K", target="A", strategy="ff-only", cleanup=False, cwd=None):
         evidence = operations.review.collect(self.root, source, target, strategy, ["git diff --check"], cleanup)

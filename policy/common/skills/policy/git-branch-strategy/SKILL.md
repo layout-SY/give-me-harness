@@ -9,6 +9,8 @@ description: 세션과 독립된 브랜치 관계, 직접 부모 통합 순서�
 
 다른 프로젝트의 명령 실행은 승인 전에 차단한다. 같은 Git common directory를 공유하는 linked worktree만 같은 프로젝트다. 다른 host의 설정·세션 로그와 다른 세션 산출물은 읽기 전용이다. 기존에 commit된 로그는 승인된 branch 전환·병합으로 그대로 전달할 수 있다. 다른 작업의 변경을 임의로 stage·commit·stash·복원하지 않는다.
 
+기존 변경의 commit·merge만 맡은 요청은 새 세션에서도 `documentation`의 산출물 예외를 적용한다. 계획·최종 요약·handoff·portfolio를 새로 작성하지 않고 Git 작업과 결과 보고만 수행한다. 필요한 변경 검토·검증·승인은 수행하며, 같은 작업에서 구현을 변경했다면 그 작업의 산출물에 Git 결과를 함께 기록한다.
+
 ## 조회·승인·실행
 
 조회형 status/diff/log/branch/config/worktree list와 일반 lint·test·build에는 Git 승인이 필요 없다. 파일 출력 옵션이나 해석할 수 없는 Git 명령은 조회로 간주하지 않는다. `.git` 직접 편집, 다른 저장소·Git alias·모호한 실행 경로로 우회하지 않는다.
@@ -45,8 +47,8 @@ Git 변경은 **현재 bundle의 `runtime/git_operations.py`**를 `python3 -I`�
 
 1. `review --source <자식> --target <직접 부모> --strategy ff-only|merge --verify-command "{{LINT_COMMAND}}" --verify-command "{{BUILD_COMMAND}}" [--cleanup]`으로 근거를 수집한다.
 2. 같은 직접 부모의 형제, 삭제된 형제 이력, 형제의 하위 작업, 분기 이후 부모 변경, staged·unstaged·untracked 근거를 읽는다. diff 함수 문맥과 문자열 참조 후보를 활용해 함수·타입·props·호출부·상태·API 계약의 영향을 **에이전트가** 검토한다. 자동 수집은 의미적 호환성 판정이 아니다.
-3. 자기 세션의 JSON 보고에 `evidence_digest`, `comparisons`, `text_conflicts`, `contract_risks`, `validation`, `unknowns`, `recommendation`을 작성한다. 비교 commit·dirty 상태, 실제 검증·미확인 범위, 권장 병합 순서를 구체적으로 쓴다. 위험 자체는 자동 차단하지 않는다. 미확인을 “충돌 없음”으로 쓰지 않는다.
-4. `complete --review <id> --report <보고 경로>`로 준비한다. 형제 검토와 `execute <id>` 승인을 하나의 보고로 묶는다. `--cleanup`은 검증 후 해당 source 로컬 branch·linked worktree 정리까지 승인에 포함한다. 원격 삭제는 포함하지 않는다.
+3. 검토 JSON 객체에 `evidence_digest`, `comparisons`, `text_conflicts`, `contract_risks`, `validation`, `unknowns`, `recommendation`을 작성한다. 비교 commit·dirty 상태, 실제 검증·미확인 범위, 권장 병합 순서를 구체적으로 쓴다. 위험 자체는 자동 차단하지 않는다. 미확인을 “충돌 없음”으로 쓰지 않는다.
+4. `complete --review <id> --report-json <JSON 객체>`로 준비한다. JSON은 shell 치환 없이 하나의 인자로 안전하게 인용해 전달한다. 기존 프로젝트 내 보고 파일을 사용할 때는 대신 `--report <보고 경로>`를 지정할 수 있다. 검토 내용은 runtime 작업 기록에 보존되므로 commit·merge만 수행하는 요청에는 보고 파일을 만들지 않는다. 형제 검토와 `execute <id>` 승인을 하나의 보고로 묶는다. `--cleanup`은 검증 후 해당 source 로컬 branch·linked worktree 정리까지 승인에 포함한다. 원격 삭제는 포함하지 않는다.
 5. 실행기는 승인한 source·target·관계·검토를 다시 확인하고 병합 → 결과 확인 → 승인한 검증 → 로그 보존 → 안전한 정리를 수행한다.
 
 ff-only가 불가능한 분기는 Git 텍스트 충돌과 다르다. 형제를 먼저 병합하면 다른 파일만 바꿔도 이후 ff-only가 실패할 수 있다. 실패 후 임의로 전략을 바꾸지 않고 merge 전략의 새 검토·승인을 받는다. squash·rebase·cherry-pick·직접 ref 갱신은 초기 자동 완료 경로가 아니다. 이 경로를 완료 관계 우회에 사용하지 않는다. 일반 merge·fetch/pull/refspec 경로도 같은 검사를 적용한다.
