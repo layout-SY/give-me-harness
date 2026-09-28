@@ -29,7 +29,7 @@
 
 ## 다음 단계
 
-22개 파일을 각각 사용자 독립 명령 승인 후 스테이징하고 커밋했다. 커밋은 `32e2265e3581a2bc0590ff01f935ebc1e61423a0` (`feat : 시민 토론 API 연결과 참여 상태 처리 구현`)이다. source와 target worktree는 clean이며 finish-proposal 생성도 완료했다. 병합 승인을 기다린다.
+22개 파일을 각각 사용자 독립 명령 승인 후 스테이징하고 커밋했다. 커밋은 `32e2265e3581a2bc0590ff01f935ebc1e61423a0` (`feat : 시민 토론 API 연결과 참여 상태 처리 구현`)이다. source와 target worktree는 clean이며 finish-proposal 생성과 사용자 병합 승인도 완료했다. 타 assignment의 통합 소유권 해제를 기다린다.
 
 sy-main 병합·사후 검증·close는 아래 최종 계약의 별도 승인 후 수행한다.
 
@@ -45,4 +45,8 @@ sy-main 병합·사후 검증·close는 아래 최종 계약의 별도 승인 �
 - SHA-256: `40b0274e867e675cd5191470e54fba10cc14724c58d583b71368e9dfd858f736`
 - 파일 내용을 읽고 shasum -a 256 결과가 위 SHA와 일치함을 확인했다.
 - 기존 투표 테스트 실패 5개를 승인 요청에 명시한다. npm run test는 source에서 실행했으며 전체 통과로 보고하지 않는다.
-- finish·verify·close는 미실행이며 이 최종 계약에 대한 별도 사용자 승인 대기다.
+- 사용자 병합 승인을 받았다. 승인된 finish는 다른 assignment의 통합 소유권 때문에 PreToolUse에서 실행 전에 차단됐다. finish·verify·close는 미실행이다.
+
+## 현재 차단과 다음 담당자
+
+기존 Claude UI assignment `37fd2a2fe7ea425cb15d4f303d62c60d`의 예약 팝업 task가 MERGED_VERIFIED에서 미종료 상태이고 sy-main 통합 예약을 소유한다. 기존 완료 계약은 통합 worktree 자체를 cleanup 대상으로 지정하고 있어 정식 계약 복구와 close가 먼저 필요하다. 증거·계약·담당 세션에 전달할 문구는 `unknown/integration-blocker.md`에 기록했다. 현재 source·target은 승인 HEAD에서 clean이며, 소유권이 해제되고 계약 필드가 유지되면 기존 승인으로 재개한다.

@@ -1,4 +1,4 @@
-# 시민 토론 API 타입 오류 수정 — 커밋·최종 계약 완료, 병합 승인 대기
+# 시민 토론 API 타입 오류 수정 — 병합 승인 완료, 타 assignment 통합 소유권으로 차단
 
 ## 역할과 소유권
 
@@ -42,8 +42,8 @@ useCitizenParticipationQueries.ts의 토론 목록 캐시 키에서 status·sear
 
 ## 다음 조치
 
-1. 아래 canonical 파일·전체 SHA·검증 조건·기존 투표 실패를 제시해 별도 병합 승인을 요청한다.
-2. 승인 후 같은 파일과 SHA로 중앙 branch_workflow.py의 finish·verify·close를 각각 실행한다. 현재 HEAD가 바뀌면 계약을 다시 준비한다.
+1. 사용자 병합 승인은 이미 받았다. 먼저 기존 Claude UI 작업의 계약 복구·close와 통합 소유권 해제가 필요하다.
+2. 소유권 해제 후 계약 필드가 유지되면 같은 파일과 SHA로 중앙 branch_workflow.py의 finish·verify·close를 각각 실행한다. 현재 HEAD나 통합 경로가 바뀌면 계약을 다시 준비한다.
 3. cleanup은 false이므로 source branch와 worktree를 삭제하지 않는다.
 
 ## 최종 병합 계약
@@ -58,6 +58,10 @@ useCitizenParticipationQueries.ts의 토론 목록 캐시 키에서 status·sear
 - SHA-256: `40b0274e867e675cd5191470e54fba10cc14724c58d583b71368e9dfd858f736`
 - 파일 내용을 읽고 shasum -a 256 결과가 위 SHA와 일치함을 확인했다.
 - 기존 투표 테스트 실패 5개를 승인 요청에 명시한다. npm run test는 source에서 실행했으며 전체 통과로 보고하지 않는다.
-- finish·verify·close는 미실행이며 이 최종 계약에 대한 별도 사용자 승인 대기다.
+- 사용자가 이 최종 계약에 `승인`으로 답했다. finish 실행은 다른 assignment의 통합 소유권을 이유로 중앙 PreToolUse에서 실행 전에 차단됐다. finish·verify·close는 미실행이다.
+
+## 승인 이후 병합 차단
+
+기존 Claude UI assignment `37fd2a2fe7ea425cb15d4f303d62c60d`가 target worktree를 소유하고 있고 `task/reservation-restricted-popup`은 MERGED_VERIFIED 상태다. 기존 완료 계약 `1a44ba2fee957bd74c48eab48ec5d1be93b8ac56261cf247207b3364e0e77a81`에는 cleanup=true와 integration/source worktree 동일 경로 충돌도 있다. 기존 담당자가 정식 계약 복구·close·통합 예약 해제를 완료해야 한다. source와 target HEAD는 승인 시점 값으로 유지됐고 양쪽 clean이다. 구체적 증거와 기존 담당 세션에 전달할 문구는 `unknown/integration-blocker.md`에 기록했다. 현재 logic 세션에서 타 assignment 소유권이나 중앙 정책을 수정하지 않는다.
 
 중앙 snapshot의 task-role-routing·git-branch-strategy와 실제 branch·assignment 상태를 resume/compact 뒤 다시 확인한다. 현재 사용자 요청의 구현 승인은 별도 빌드 명령 승인과 구분한다.

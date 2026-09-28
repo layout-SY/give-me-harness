@@ -1,0 +1,9 @@
+{
+  "evidence_digest": "77dd28168c4566bb8c25ea7518c2ce65d3de22b44a51cd4de007f5386510aa81",
+  "comparisons": "source fix/reservation-media-check a1b113d(커밋 dac1e90 Logic, a1b113d UI), target sy-main 57c88ac, fork 71ba983. target은 분기 이후 src/shared/lib/hooks/use-api.tsx와 use-api.test.tsx만 변경했고 source는 src/features/meeting/** 와 src/pages/meeting-reservation/** 12개 파일을 변경해 겹치는 파일이 없다. 같은 부모 sy-main의 형제 중 기록상 미처리는 task/meeting-entry-ui 뿐이며 실제 브랜치는 71ba983으로 병합된 뒤 삭제되었고 09dd640이 sy-main의 조상임을 확인했다. 나머지 형제는 병합·삭제 기록을 보유하고, 삭제된 형제의 하위 작업도 모두 병합 기록이 있다. source worktree는 clean이며 staged·untracked 소스가 없다.",
+  "text_conflicts": "없음. review 결과 text_conflicts=false이고 ff_only_possible=false라 merge 커밋이 필요하다. 변경 파일 집합이 분리되어 있어 Git 텍스트 충돌은 관찰되지 않았다.",
+  "contract_risks": "MeetingRoomView에 micUnavailable·cameraUnavailable optional props를 추가했고 기본값 false, 호출부는 MeetingEntryRoute 한 곳이다. 회의 컨트롤 DOM 순서 변경과 라벨 축약에 맞춰 텍스트 기반 조회를 쓰던 테스트를 함께 갱신했다. meeting-room.css의 --speaker-active 재정의는 .meeting-room__video-grid 범위로 한정해 /meeting 공통 화면과 장치 점검 미리보기에 영향이 없다. sy-main의 useApi 변경과 source의 입장·RTC hook은 호출 계약이 겹치지 않지만 병합 결과의 통합 동작은 아래 검증 명령 범위에서만 확인한다.",
+  "validation": "source HEAD a1b113d에서 npm run lint 통과, npm run build 통과(500 kB 초과 청크 경고 유지), npm run test -- src/features/meeting src/features/meeting-reservation src/pages/meeting-reservation로 39개 파일·318개 테스트 통과를 확인했다. 병합 결과에는 승인된 npm run lint와 npm run build를 실행한다. 전체 테스트 스위트, 브라우저 시각 확인, 실제 장치·권한 확인은 실행하지 않았다.",
+  "unknowns": "관계 기록의 task/meeting-entry-ui는 브랜치가 이미 삭제되어 retire와 cancel이 모두 거부된 상태이며 이번 병합과 별개로 남은 기록 정리 항목이다. 축소된 타일의 가독성과 36px 컨트롤의 터치 영역은 실제 기기에서 확인하지 않았다. 병합 후 전체 테스트 결과도 미확인이다.",
+  "recommendation": "fix/reservation-media-check를 sy-main에 merge 전략으로 병합한다. 병합 후 npm run lint와 npm run build를 실행한다. 로컬 브랜치와 linked worktree 정리는 사용자 요청에 따라 수행하지 않으며 원격도 변경하지 않는다."
+}

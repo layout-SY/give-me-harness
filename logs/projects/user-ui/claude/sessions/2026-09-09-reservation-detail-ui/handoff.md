@@ -3,23 +3,67 @@
 ## Assignment 이동
 
 - 보내는 host·session·role: claude / `.claude/logs/sessions/2026-09-09-reservation-detail-ui` / `ui`
-- 받는 host·session·제안 role: 미정 host / 새 세션 / `logic` (`--role logic`으로 새 inject 세션 시작 필요)
+- 받는 host·session·제안 role: codex(권장) / 새 세션 / `logic` (`--role logic`으로 새 inject 세션 시작 필요)
+- 갱신 시점: Logic 작업 `2184467` merge 후 검토 완료 시점
 
 ## 역할 라우팅
 
 - 요청 역할(`requested_roles`): ui
 - 확인된 역할(`confirmed_roles`): ui
-- 완료 역할(`completed_roles`): ui (STEP06 예약 상세 화면 구현·테스트)
+- 완료 역할(`completed_roles`): ui (STEP06 상세 화면, Figma 정렬, 취소 팝업 2종), logic (목록·상세·취소·제한 API와 MSW·라우트 — `task/reservation-mock-logic`, codex)
 - 다음 제안 역할(`next_role`): logic
-- 역할 판단 근거: 남은 작업이 목록·상세 조회 API, DTO·parser, 조회 hook, MSW 핸들러, 라우트 연결이며 전부 데이터·상태 전이 계층이다. UI 세션에서는 계층 경계상 구현할 수 없다.
-- 사용자 확인: 사용자가 이번 세션에서 "logic한테 인계할 핸드오프 문서 작성"을 지시했다. 다음 역할의 실제 확정은 인계받는 세션에서 다시 받는다.
+- 역할 판단 근거: 남은 후속 조치 3건이 전부 `src/pages/meeting-reservation`과 `src/features/meeting-reservation/api` 아래이며 라우팅·데이터 계약 문제다. UI 세션의 승인 scope(`src/features/meeting-reservation` 중 `ui/**`) 밖이다.
+- 사용자 확인: 사용자가 "지금 이 내용 다른 세션에서 실행할 수 있게끔 handoff 문서 만들어놔"라고 지시했다. 다음 역할의 실제 확정은 인계받는 세션에서 다시 받는다.
 
 ## 목표 및 현재 상태
 
-예약 상세 모바일 화면(STEP06) UI는 구현·검증·커밋을 마쳤다(`96a5e3e`). 그러나 두 가지 문제가 있다.
+**UI와 Logic이 모두 연결된 상태다.** 브랜치 `task/reservation-detail-ui` HEAD는 `2184467`이고, Logic 자식 브랜치 `task/reservation-mock-logic`은 ff-only merge 후 `CLOSED`다. 이 브랜치는 아직 `sy-main`에 **미병합**이다.
 
-1. **화면을 실제로 띄워 볼 수 없다.** 목록·상세 조회 API와 MSW 핸들러가 없고, 두 화면 모두 라우트에 등록돼 있지 않다.
-2. **구현이 Figma 디자인과 여러 곳에서 다르다.** 「Figma 대조 결과」 섹션 참고. 이는 UI 역할의 후속 수정 대상이다.
+검토 결과 동작과 품질은 양호하나 **후속 조치 3건**이 남아 있다. 아래 「후속 조치 3건」이 이 인계의 본문이며, 그 아래 섹션들은 배경 자료다.
+
+### 검토에서 확인한 것 (2026-09-09, claude/ui 세션)
+
+| 항목 | 결과 |
+| --- | --- |
+| `npm run lint` | 통과 |
+| `npm run build` | 통과 |
+| `npx vitest run` | 565 passed / 6 failed |
+
+6건 실패는 전부 `citizen-participation`의 기존 MSW `onUnhandledRequest` 문제이며 merge 전과 동일한 파일·테스트명이다. 예약 도메인 테스트는 전부 통과하고 신규 테스트 3종(`mocks/reservationRead.test.ts`, `pages/.../MeetingReservationRoutes.test.tsx`, `hook/useMeetingReservationRestriction.test.tsx`)이 추가됐다.
+
+좋았던 점(그대로 유지할 것): MSW `refresh()`가 T-5 도달 시 `EXPIRED`, 종료시각 도달 시 `COMPLETED`로 상태를 전이시키고 `cancelable`을 매 조회 재계산한다(STEP06 07·08행). 취소는 `cancelInFlight` ref로 중복 실행을 막고 성공 시 상세를 `setQueryData`로 갱신한 뒤 목록·슬롯을 무효화한다. 신청 실패 중 `RESERVATION_RESTRICTED`만 제한 쿼리를 무효화하고 나머지는 dialog로 알린다.
+
+## 후속 조치 3건
+
+세 건 모두 Logic 소유 경로다. 우선순위는 2 → 3 → 1 순을 권장한다(2는 기능 누락, 3은 잠재 버그, 1은 명세 불일치).
+
+### 1. 제한 팝업 닫기 동작이 프레임과 다르다
+
+- 위치: `src/pages/meeting-reservation/ui/MeetingReserveRoute.tsx`
+- 현재: `close={() => { void navigate(meetingReservationRoutes.list); }}` — 예약 **목록**으로 이동
+- 프레임 근거: STEP04(`10:3687`) 정의서 04행 "동작: Popup 닫기 · **추가 화면 이동 없음** / 사용자 영향: 현재 신규 예약 제한 상태 유지"
+- 문제: 팝업이 폼 대신 렌더되는 구조라 닫으면 어딘가로 가야 하는데, 목록은 프레임에 없는 이동이다. STEP04 01행이 "로비 NPC에서 회의 예약 선택 시" 진입이라고 하므로 **진입 지점인 로비(`/meeting`)로 복귀**하는 편이 명세에 가깝다.
+- 판단 필요: 로비 복귀로 바꿀지, 목록 이동을 의도된 UX로 확정할지. 후자면 그 근거를 문서에 남길 것.
+
+### 2. 반려 사유가 화면에 표시되지 않는다
+
+- 위치: `src/pages/meeting-reservation/ui/MeetingReservationRoutes.tsx`(미연결), `src/features/meeting-reservation/api/meetingReservationRead.dto.ts`(필드 없음)
+- 현재: 상세 라우트가 `noticeTitle`/`noticeDescription`을 전달하지 않고, 상세 응답 DTO에도 해당 필드가 없다
+- 결과: `REJECTED` 예약을 열면 배지만 `반려`로 뜨고 **사유가 비어 있다**
+- UI 계약: 두 props가 **모두** 있어야 `NoticeBox`가 렌더된다. 하나만 주면 표시되지 않는다
+- 조치안: 상세 응답에 `noticeTitle: string | null`, `noticeMessage: string | null`을 추가하고 parser에서 `noticeDescription`으로 매핑, MSW fixtures의 `REJECTED` 건에 사유를 채운다. 서버 계약 미확정이라 보류한 것이라면 그 판단을 문서에 남기고, 최소한 상태별 고정 문구(예: 승인만료 안내)를 클라이언트에서 채울지 결정할 것
+- 참고: 이 문서 「5. 예약 상세」 DTO 표에 `noticeTitle`/`noticeMessage`가 이미 추정으로 들어가 있다
+
+### 3. 예약 폼이 배경 refetch에 언마운트될 수 있다
+
+- 위치: `src/pages/meeting-reservation/ui/MeetingReserveRoute.tsx`
+- 현재: `if (restriction.isPending || restriction.isFetching) return <Loading />;`
+- 문제: `isFetching`은 배경 refetch에도 true가 되어 **입력 중이던 폼 전체가 언마운트되고 입력값이 사라진다.** `MeetingReserveContent`가 별도 컴포넌트라 상태가 통째로 초기화된다
+- 발생 경로: 제한 쿼리는 `refetchOnWindowFocus: false`라 일상적으로는 안 터진다. 다만 `useMeetingReservationMutation`의 `onError`가 `RESERVATION_RESTRICTED` 응답에서 제한 쿼리를 무효화하므로(`useMeetingReservationMutation.ts:31`), 그 시점 refetch가 폼을 날린다. 제한 상태면 어차피 폼을 못 쓰지만, 다른 무효화 경로가 추가되면 실제 데이터 유실이 된다
+- 조치안: 초기 진입만 막도록 `isPending`만 검사한다. 배경 갱신 중 제한 상태가 바뀌면 그때 팝업으로 전환된다
+- 검증: 폼 입력 중 `queryClient.invalidateQueries({ queryKey: meetingReservationKeys.restriction() })`를 호출해도 입력값이 유지되는지 확인하는 테스트를 권장한다
+
+## 완료된 작업
 
 ## 완료된 작업
 
@@ -33,7 +77,9 @@
 | `index.ts` | `MeetingReservationDetailPage`, `ReservationStatus` export |
 | `ui/MeetingReservationDetailPage.test.tsx` | 9 케이스 |
 
-## 대기 중인 작업 (Logic 범위)
+## 배경 — 인계 당시의 대기 작업 (현재 모두 구현 완료)
+
+아래 4개 항목은 `2184467`에서 구현됐다. **이력으로만 읽고 다시 착수하지 말 것.** 구현 결과는 각 항목 끝의 「구현됨」 줄을 참고한다.
 
 ### 1. 조회 API 부재
 
@@ -44,6 +90,8 @@
 - 예약 취소 실행
 - 신규 예약 제한 상태 조회
 
+**구현됨**: `api/meetingReservationRead.dto.ts`(목록·상세·취소·제한 4종 스키마), `api/meetingReservationRead.parser.ts`(표시 문자열 조합), `api/meetingReservation.api.ts`에 호출 추가.
+
 ### 2. MSW 핸들러 부재
 
 `mocks/handlers.ts`의 목 데이터는 신청 폼 흐름 전용이다.
@@ -53,13 +101,19 @@
 - 목록·상세 응답 없음. 상태 6종 중 `REJECTED`·`COMPLETED`는 목 데이터에 존재하지 않는다
 - 워커는 `VITE_API_BASE_URL_STATUS === "dev"`일 때만 시작한다(`src/app/mocks/startMocks.ts`)
 
+**구현됨**: `mocks/fixtures.ts`(상태 6종 전부 포함), `mocks/handlers.ts`에 `GET /restriction`, `GET /`(목록), `GET /:reservationId`(상세), `POST /:reservationId/cancel` 추가. `createMeetingReservationHandlers`가 `now`·`reservations`·`restriction`·`delayMs`·`failReads` 옵션을 받아 테스트에서 시간과 실패를 주입할 수 있다.
+
 ### 3. 라우팅 미등록
 
 `src/app/routing.ts`의 보호 라우트에는 `meetingReservationRoutes.reserve` → `MeetingReserveRoute`만 있다. 목록·상세 라우트가 없고, `MeetingReservationListPage`는 feature `index.ts`에서 export되지 않는다(상세만 이번에 추가).
 
+**구현됨**: `meetingReservationRoutes`에 `list`(`/meeting/reservations`), `detailPattern`, `detail(id)` 추가. `MeetingReservationRoutes.tsx`의 `MeetingReservationListRoute`·`MeetingReservationDetailRoute`를 `routing.ts`에 등록. 목록 탭·페이지는 `?scope=&page=` 쿼리로 유지되고 상세에서 뒤로가기 시 그대로 복원된다.
+
 ### 4. 상태 계약 불일치
 
 `model/reservation.ts`의 `MEETING_RESERVATION_STATUS`는 4종(`PENDING_APPROVAL`, `APPROVED`, `EXPIRED`, `CANCELED`)이고, UI는 `REJECTED`·`COMPLETED`를 더한 6종을 `ui/parts/reservationStatus.ts`에서 소유한다. Figma STEP05·STEP06 정의서가 6종을 명시하므로 model을 6종으로 확장하는 것이 맞다.
+
+**구현됨**: `model/reservation.ts`에 `REJECTED`·`COMPLETED` 추가, `api/meetingReservation.parser.ts`의 `STATUS_LABELS`에 `반려`·`종료` 추가. UI의 `RESERVATION_STATUS_LABEL`과 값이 일치한다.
 
 ## UI가 요구하는 props 계약
 
@@ -303,19 +357,23 @@ DESIGN.md와 충돌한 값은 DESIGN.md를 따랐다. 11px 문구는 12px로, 13
 
 - 취소 권한 판정, 승인만료 전이, 참여 코드 발급은 Logic 경계로 합의됐다. UI는 boolean과 문자열만 받는다. Figma STEP07 02행의 "최종 클릭 순간 재검증"이 이 경계를 뒷받침한다.
 - DESIGN.md: 고정 480px 셸, 뷰포트 미디어 쿼리 금지, 신규 색 토큰 금지.
-- 화면 확인 수단에 대해 사용자에게 세 가지 안(A: fixture 프리뷰 라우트 / B: Logic 전체 구현 / C: 현행 유지)을 제시했고 **아직 선택되지 않았다.** A는 `src/pages/meeting-reservation`·`src/app/routing.ts`로의 scope 확장 승인이 필요하다.
+- 화면 확인 수단은 **B(Logic 전체 구현)로 해결됐다.** MSW와 라우트가 붙어 `VITE_API_BASE_URL_STATUS=dev`로 실행하면 `/meeting/reservations`에서 목록·상세·취소를 실제로 확인할 수 있다.
 - Figma 채널은 `hgkguilr`로 이번 세션에서 연결에 성공했다. 다음 세션에서도 같은 채널로 시도하고, 실패할 때만 사용자에게 새 채널을 요청한다.
 
 ## 소유권과 Git 계약
 
-- 변경 경로: `src/features/meeting-reservation/**` (커밋 `96a5e3e`, 7 files, +416/-28)
-- 역할별 파일 소유권: UI가 `ui/**`와 `ui/parts/*.css`를 소유. `api/**`, `model/**`, `hook/**`, `mocks/**`는 Logic 소유
+- 현재 HEAD: `2184467` (Logic 자식 브랜치를 ff-only로 병합한 결과)
+- UI 커밋: `96a5e3e`(상세 신규), `ea4766b`(Figma 정렬), `b5b07fa`(취소 팝업)
+- Logic 커밋: `2184467` (26 files, +1054/-111, codex/`task/reservation-mock-logic`)
+- 역할별 파일 소유권: UI가 `ui/**`와 `ui/parts/*.css`를 소유. `api/**`, `model/**`, `hook/**`, `mocks/**`, `src/pages/meeting-reservation/**`, `src/app/routing.ts`, `src/shared/config/meetingReservationRoutes.ts`는 Logic 소유
 - 충돌 여부: 없음. 워킹 트리 clean
 - task·branch·worktree: `task/reservation-detail-ui` / 분기 기준 `sy-main` / `/Users/okand/SynologyDrive/asan-worktrees/reservation-detail-ui`
-- branch 계약의 `asan-role`은 `ui`, `asan-scope`는 `src/features/meeting-reservation`과 세션 로그 경로뿐이다. Logic이 라우팅까지 손대려면 `scope-proposal → update-scope`로 `src/app/routing.ts`, `src/pages/meeting-reservation` 승인이 필요하다
-- Git 통합 담당자: claude
+- Git 통합 담당자: **claude** (이 브랜치). 자식 `task/reservation-mock-logic`의 담당자는 codex였고 해당 계약은 `CLOSED`다
+- **후속 조치 3건은 이 브랜치의 UI scope 밖이다.** 이어받는 세션은 두 경로 중 하나를 택한다.
+  - (a) 이 브랜치에서 이어가기: `--role logic` 세션 + `scope-proposal → update-scope`로 `src/pages/meeting-reservation`, `src/app/routing.ts`, `src/features/meeting-reservation/api` 추가 승인. 계약의 `asan-role`이 `ui`인 점도 함께 정리해야 한다
+  - (b) 새 자식 브랜치: `task/reservation-detail-ui`를 parent로 `branch_workflow.py proposal → create`. 이 브랜치가 아직 `ACTIVE`이므로 자식 생성이 가능하다
 - 산출물 책임: owner (필수 8종 작성 완료)
-- merge 상태: **미병합**. `sy-main` 병합 승인은 아직 받지 않았다
+- merge 상태: **미병합**. `sy-main` 병합 승인은 아직 받지 않았다. 사용자는 병합 후 `sy-main` 소유권 반납을 요청한 상태이며, 후속 조치 3건을 병합 전에 처리할지 후속으로 둘지 아직 결정되지 않았다
 
 ## 관련 경로와 스킬
 
@@ -329,28 +387,36 @@ DESIGN.md와 충돌한 값은 DESIGN.md를 따랐다. 11px 문구는 12px로, 13
 
 ## 명령어 및 결과
 
+merge 후 `2184467`에서 claude/ui 세션이 실행한 결과다.
+
 | 명령 | 결과 |
 | --- | --- |
-| `npx vitest run src/features/meeting-reservation/ui/` | 24 passed (신규 9 포함) |
 | `npm run lint` | 통과 |
-| `tsc -b` / `npm run build` | 통과 |
-| `npm run test` | 533 passed / **6 failed** |
+| `npm run build` | 통과 |
+| `npx vitest run` | **565 passed / 6 failed** |
 
-6개 실패는 전부 `citizen-participation`(`api/http/citizenParticipation.api.test.ts` 1, `mocks/handlers.test.ts` 3, `pages/.../CitizenResultRoutes.test.tsx` 2)이며 MSW `onUnhandledRequest: "error"` 전략과 현재 msw 버전의 bypass 동작 충돌로 보인다. 이번 변경 이전부터 존재하는 실패이고 변경 파일과 의존 관계가 없다. **전체 테스트가 이미 빨간 상태라 새 회귀 신호가 묻힌다는 점을 Logic 세션에서 먼저 고려할 것.**
+6개 실패는 전부 `citizen-participation`(`api/http/citizenParticipation.api.test.ts` 1, `mocks/handlers.test.ts` 3, `pages/.../CitizenResultRoutes.test.tsx` 2)이며 MSW `onUnhandledRequest: "error"` 전략과 현재 msw 버전의 bypass 동작 충돌로 보인다. merge 전과 동일한 파일·테스트명이고 예약 도메인과 의존 관계가 없다. **전체 테스트가 이미 빨간 상태라 새 회귀 신호가 묻힌다.** 이어받는 세션은 예약 도메인만 돌려 신호를 분리할 것을 권장한다.
+
+```sh
+npx vitest run src/features/meeting-reservation/ src/pages/meeting-reservation/
+```
 
 ## 실행하지 않은 검증
 
-- 브라우저 실제 렌더 확인(라우트·데이터 없음)
+- **브라우저 실제 렌더 확인.** 라우트와 MSW가 붙어 이제 가능하다. `VITE_API_BASE_URL_STATUS=dev`로 `npm run dev` 후 `/meeting/reservations`에서 목록 → 상세 → 취소 흐름과 상태 6종 카드를 확인할 것. 단 이미지 캡처·시각 QA는 사용자가 요청할 때만 수행한다
 - 목록 페이지·카드의 표시 회귀 테스트(해당 테스트가 저장소에 없음)
-- 「Figma 대조 결과」의 12개 차이 수정
+- 후속 조치 3건 수정과 그 회귀 테스트
 - `sy-main` 병합과 사후 검증
 
 ## 다음 조치
 
-1. 「Figma 대조 결과」를 사용자와 함께 검토하고, UI 수정 범위를 먼저 확정한다. 5번(참여 예정 인원)과 11·12번(취소 확인·완료 팝업)은 props와 API 계약을 바꾸므로 Logic 착수 전에 결정하는 것이 좋다.
-2. `--role logic` 세션을 새로 시작하고 이 문서와 현재 브랜치 상태를 함께 읽는다.
-3. 서버 계약을 확인하고 「화면별 API 요청·응답 DTO 추정」과 대조한다. 차이가 있으면 그 섹션을 실제 계약으로 갱신한 뒤 DTO·parser·api·hook을 구현한다.
-4. 상태 6종을 `model/reservation.ts`로 확장한다(현재 4종).
-5. 목록·상세·취소·예약 제한 MSW 핸들러를 추가한다. 상태 6종과 빈 값·오류·로딩을 모두 재현할 수 있는 목 데이터를 권장한다.
-6. 라우트를 등록하고 상세·목록 페이지에 props를 연결한다. scope 확장 승인이 필요하다.
-7. 이 브랜치의 `sy-main` 병합 여부를 사용자에게 확인한다(현재 미병합).
+1. `--role logic` 세션을 새로 시작하고 이 문서와 현재 브랜치 상태(`branch_workflow.py context`)를 함께 읽는다.
+2. 「후속 조치 3건」을 사용자와 검토해 **처리 범위와 브랜치 경로(a: scope 확장 / b: 새 자식 브랜치)** 를 확정받는다. 1번(제한 팝업 닫기 이동)은 UX 결정이라 사용자 확인 없이 바꾸지 않는다.
+3. 승인 후 2번(반려 사유) → 3번(폼 언마운트) → 1번(닫기 동작) 순으로 수정하고, 각 건에 회귀 테스트를 붙인다.
+4. 예약 도메인만 돌려 검증한다: `npx vitest run src/features/meeting-reservation/ src/pages/meeting-reservation/`, 이어서 `npm run lint`, `npm run build`.
+5. 브라우저에서 목록 → 상세 → 취소 흐름을 확인한다(사용자 요청이 있을 때만 캡처).
+6. 이 브랜치의 `sy-main` 병합은 **claude(이 브랜치 Git 통합 담당자)** 가 수행한다. 후속 조치를 마쳤으면 완료 계약을 만들어 사용자 승인을 받는다. 사용자는 병합 후 `sy-main` 소유권 반납을 요청해 둔 상태다.
+
+### 참고 — 완료 workflow에서 걸렸던 점
+
+`finish-proposal`은 **source 워크트리에서** 실행해야 하고, 실행 전에 세션 산출물 8종이 구조 검사를 통과해야 한다. 이 세션은 처음에 `grill-me-review.md`(Method Guardrails·`neutral question-first 적용 여부` 문구·Recommended Answer 열·데이터 행 필요)와 `portfolio-log.md`(`## 사례 N` + 5개 `###` 소제목 + 필수 `- 필드:` 행 필요)에서 막혀 템플릿 구조로 다시 작성했다. 이어받는 세션도 같은 검사를 통과해야 한다.

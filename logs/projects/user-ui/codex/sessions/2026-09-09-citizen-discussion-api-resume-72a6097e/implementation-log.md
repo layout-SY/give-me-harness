@@ -29,6 +29,8 @@ useVoteListQuery의 조건부 spread 패턴과 기존 query key를 재사용했�
 
 ## 기존 실패와 제한
 
+사용자가 finish 계약을 승인한 뒤 정확한 파일·SHA로 finish를 요청했으나 PreToolUse가 타 assignment 소유권으로 실행 전에 거부했다. 다른 Claude UI 작업의 MERGED_VERIFIED·미완료 통합 예약과 cleanup 계약 충돌을 읽기 전용으로 확인했다. 병합·검증·close는 미실행이며 원인과 재개 조건은 unknown/integration-blocker.md에 기록했다.
+
 남은 실패는 citizenParticipation.api.test.ts의 투표 요청 1개, mocks/handlers.test.ts의 투표 참여 3개, CitizenResultRoutes.test.tsx의 투표 완료 1개다. API `/ballots`와 mock `/responses` 불일치는 현재 소스에서 확인했다. 이 재개 작업에서 투표 계약을 수정하지 않았다.
 
 테스트 assertion은 삭제하거나 약화하지 않았다. 이번 변경은 타입 경계의 객체 구성 수정이며 기존 동작 테스트를 실행했다. 빌드 대신 별도 컴파일 명령을 사용해 승인 훅을 우회하지 않았다.
