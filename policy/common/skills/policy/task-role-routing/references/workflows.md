@@ -1,5 +1,9 @@
 # 역할 기반 작업 흐름
 
+## 기존 작업의 commit·merge
+
+기존 변경의 commit·merge만 요청받으면 `git-branch-strategy`의 상태 확인·검토·승인·실행·검증·정리를 수행하고 결과를 대화로 보고한다. 기능 구현 파이프라인을 새로 시작하거나 필수 산출물·handoff를 만들지 않는다. 예외의 범위와 구현 작업으로 전환하는 기준은 `documentation`을 따른다.
+
 ## 기능 작업
 
 1. Planner가 요청과 handoff를 분류하고 기본 역할, scope와 검증을 제안한다.
@@ -22,8 +26,10 @@ Planner → Refactorer → Watcher 순서를 기본으로 한다. 공개 계약�
 ## Logic·UI 분리 작업
 
 - Planner가 Logic과 UI의 예상 기여 범위, props/callback·DTO·hook 계약과 통합 순서를 제안한다. 파일 소유권을 만들지 않으며 형제 통합 순서는 변경 검토와 사용자 승인으로 결정한다.
-- 같은 worktree이면 순차 인계하고 Git 변경은 사용자 승인 후 순차 실행한다.
-- 실제 병렬 수정이면 역할별 child branch와 worktree를 사용한다.
+- handoff에 역할별 목적지 branch·worktree 절대 경로·기준 HEAD·직접 부모와 상세 작업을 연결해 기록한다. 보내는 현재 위치만 적거나 역할 이름만으로 다음 할 일을 대신하지 않는다.
+- UI·Logic이 같은 결과물을 순차로 연결하면 같은 branch·worktree를 공유할 수 있다. 소스 수정과 Git 변경을 순차 실행하고 역할 전환 전에 commit·staged·unstaged·untracked 변경과 선행 작업의 완료를 확인한다.
+- 실제 병렬 수정이나 별도 변경 이력·검증이 필요하면 작업별 child branch와 linked worktree를 사용한다. 역할·세션 수만으로 작업 공간을 나누지 않는다. 각 작업의 부모·자식 관계, 직접 부모 통합 순서, 형제 변경 검토와 승인을 handoff에 명시한다.
+- 각 역할의 수정할 파일·컴포넌트·hook·API·상태, 재사용 방법, 연결 계약, 시작 조건, 완료 기준·검증 명령과 다음 인계 대상을 구체적으로 기록한다. 위치나 계약이 미정이면 질문하고 임의로 확정하지 않는다. 공유·분리 예시는 `handoff-and-ownership.md`를 따른다.
 - 선행 역할의 Watcher 판정과 handoff 후 사용자가 다음 역할을 확인한다.
 - 통합 역할은 최신 파일과 handoff를 다시 읽고 기능을 연결한 뒤 전체 검증을 수행한다.
 

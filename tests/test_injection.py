@@ -161,6 +161,22 @@ class InjectionTests(unittest.TestCase):
                     self.assertFalse((policy / foreign).exists())
         self.assertEqual(self.consumer_snapshot(), before)
 
+    def test_required_clarification_contract_is_injected_for_every_host_and_role(self) -> None:
+        # Every role must receive the mandatory decision boundary in its actual
+        # system prompt, without depending on optional skill discovery.
+        common = render_project(self.project)[".agent-policy/common/AGENT_POLICY.md"].decode()
+        heading = "### 추측 금지와 재사용 확인 (필수)\n"
+        _, separator, remainder = common.partition(heading)
+        self.assertTrue(separator, "공통 시스템 프롬프트의 필수 확인 계약이 없습니다.")
+        contract = heading + remainder.split("\n### ", 1)[0]
+        before = self.consumer_snapshot()
+        for host in ("codex", "claude", "opencode"):
+            for role in ("logic", "ui", "orchest", "review", "generate"):
+                with self.subTest(host=host, role=role):
+                    launch = self.prepare(host, role=role)
+                    self.assertIn(contract, launch.system_prompt.read_text(encoding="utf-8"))
+        self.assertEqual(self.consumer_snapshot(), before)
+
     def test_all_host_system_prompts_require_incident_regression_tests(self) -> None:
         required_contract = (
             "사용자 보고 또는 실행 로그로 확인된 정책·훅·세션 실행 결함을 수정할 때는 "
