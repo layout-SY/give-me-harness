@@ -25,12 +25,14 @@ Git 변경은 **현재 bundle의 `runtime/git_operations.py`**를 `python3 -I`�
 
 ## 관계와 작업 공간
 
+새 worktree를 생성하거나 이전할 때 [저장 위치와 보존 규칙](references/worktree-storage.md)을 읽는다. 새 작업 폴더는 프로젝트 설정의 `{{WORKTREE_ROOT}}` 바로 아래에 두며 임시 디렉토리를 사용하지 않는다.
+
 관계 기록은 Git common directory를 기준으로 중앙 runtime state의 `branch-relations/v1/graph.json`에 둔다. UUID, 현재 이름, 직접 부모 UUID, fork commit, 목적, 관계 변경 이력을 기록한다. assignment와 소유 파일 목록을 추가하지 않는다. 완료·검증·정리는 `operations/`, 검토 근거는 `reviews/`, 필요한 파일은 `archives/`에 보존한다. 병합 commit과 fork는 `refs/asan-policy/integrations/`로 보존한다.
 
 관계 명령은 먼저 작업을 준비하고 같은 `execute` 승인 경로를 사용한다.
 
 - `relation --action register --name <branch> --parent <parent> --fork <전체 commit> --purpose <목적>`: 사용자와 확인한 기존 관계 등록. sy-main 등록은 parent를 생략한다. 이름·upstream·오래된 V3 assignment로 부모를 추측하지 않는다.
-- `relation --action create ... --worktree <새 linked 경로>`: 승인한 부모의 현재 commit에서 별도 작업 공간 생성. 기능은 sy-main에서, 독립 하위 작업은 기능 branch에서 분기한다. 새 요청마다 생성하지 않는다.
+- `relation --action create ... [--worktree <새 linked 경로>]`: 승인한 부모의 현재 commit에서 별도 작업 공간 생성. 경로를 생략하면 프로젝트 저장 폴더와 branch 이름으로 계산해 승인 전에 표시한다. 기능은 sy-main에서, 독립 하위 작업은 기능 branch에서 분기한다. 새 요청마다 생성하지 않는다.
 - `relation --action rename --name <기존> --new-name <새 이름>`: UUID를 유지한 이름 변경.
 - `relation --action reparent --name <자식> --parent <새 부모> --fork <commit>`: 승인한 부모 변경. 순환은 차단한다.
 - `relation --action cancel --name <branch>`: commit·미커밋 변경을 보존하고 의존성에서 제외한다. branch/worktree와 접근 권한은 유지한다. 이후 변경이 추가되면 다시 미처리 작업이 된다.

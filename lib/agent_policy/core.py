@@ -44,6 +44,7 @@ class ProjectConfig:
     path: Path
     commands: dict[str, str]
     base_branch: str = "sy-main"
+    worktree_root: Path | None = None
 
 
 def sha256_bytes(content: bytes) -> str:
@@ -66,6 +67,9 @@ def project_ids() -> tuple[str, ...]:
 
 def load_project(project_id: str) -> ProjectConfig:
     raw = read_json(PROJECTS_ROOT / f"{project_id}.json")
+    worktree_root = raw.get("worktree_root")
+    if not isinstance(worktree_root, str) or not Path(worktree_root).is_absolute():
+        raise PolicyError(f"worktree_root 절대 경로가 필요합니다: {project_id}")
     commands = raw.get("commands")
     if not isinstance(commands, dict) or not all(
         isinstance(key, str) and isinstance(value, str) for key, value in commands.items()
@@ -78,6 +82,7 @@ def load_project(project_id: str) -> ProjectConfig:
             path=Path(str(raw["path"])).resolve(),
             commands=dict(commands),
             base_branch=str(raw["base_branch"]),
+            worktree_root=Path(worktree_root),
         )
     except KeyError as error:
         raise PolicyError(f"프로젝트 필드가 누락되었습니다: {project_id}: {error}") from error
@@ -100,6 +105,8 @@ def replacements(project: ProjectConfig) -> dict[str, str]:
         "{{PROJECT_ID}}": project.id,
         "{{PROJECT_NAME}}": project.name,
         "{{PROJECT_PATH}}": str(project.path),
+        "{{WORKTREE_ROOT}}": str(project.worktree_root or (
+            project.path.parent / "asan-worktrees" / f"{project.name}-worktree")),
         "{{CENTRAL_ROOT}}": str(CANONICAL_ROOT),
         "{{BASE_BRANCH}}": project.base_branch,
         "{{DEV_COMMAND}}": project.commands["dev"],
@@ -344,6 +351,7 @@ def audit_project(project: ProjectConfig) -> tuple[str, ...]:
             issues.append(f"forbidden legacy distribution header: {relative}")
         unresolved = (
             "{{PROJECT_",
+            "{{WORKTREE_ROOT}}",
             "{{CENTRAL_ROOT}}",
             "{{BASE_BRANCH}}",
             "{{DEV_COMMAND}}",

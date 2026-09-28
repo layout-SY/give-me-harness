@@ -26,6 +26,7 @@ relations = _loader.load("branch_relations")
 review = _loader.load("integration_review")
 config = relations.config
 git, state = relations.git, relations.state
+storage = _loader.load("worktree_storage")
 
 
 def operation_path(root: Path, identifier: str) -> Path:
@@ -98,9 +99,16 @@ def prepare_git(root: Path, cwd: Path, value: str, host: str, event: dict) -> di
     operation = base(root, cwd, "git")
     operation.update(command=value, invocations=[{"root": str(item.root), "cwd": str(item.working_directory or item.root), "args": list(item.arguments)} for item in invocations],
         fingerprint=_loader.load("approval_policy").operation_fingerprint(cwd, value))
+    operation["worktree_destinations"] = [
+        str(target) if (target := storage.git_destination(root, item.working_directory or item.root, item.arguments)) else None
+        for item in invocations]
     # Repeated preparation of the same still-pending operation does not create
     # another approval question. Completed operations get a fresh execution ID.
-    operation["id"] = relations.digest([operation["repository"], str(cwd), operation["fingerprint"]])[:32]
+    identity = [operation["repository"], str(cwd), operation["fingerprint"]]
+    if any(operation["worktree_destinations"]):
+        # 같은 명령 문자열이라도 symlink의 실제 목적지가 달라지면 새 승인이다.
+        identity.append(operation["worktree_destinations"])
+    operation["id"] = relations.digest(identity)[:32]
     previous = state.read(operation_path(root, operation["id"]))
     if previous and previous.get("stage") == "prepared":
         return previous
@@ -174,6 +182,8 @@ def prepare_relation(root: Path, cwd: Path, action: str, name: str, parent: str 
                      purpose: str = "", new_name: str | None = None, worktree: str | None = None) -> dict:
     if action not in {"register", "create", "rename", "reparent", "cancel", "retire"}:
         raise RuntimeError("지원하지 않는 관계 변경입니다.")
+    if action == "create":
+        worktree = str(storage.destination(root, cwd, worktree if worktree is not None else str(storage.default_destination(name))))
     graph = relations.read(root)
     operation = base(root, cwd, "relation")
     operation.update(action=action, name=name, parent=parent, fork=fork, purpose=purpose,
@@ -188,6 +198,10 @@ def prepare_relation(root: Path, cwd: Path, action: str, name: str, parent: str 
 
 def validate(root: Path, operation: dict) -> None:
     if operation["kind"] == "git":
+        targets = [str(target) if (target := storage.git_destination(root, Path(item["cwd"]), item["args"])) else None
+                   for item in operation["invocations"]]
+        if targets != operation.get("worktree_destinations", [None] * len(targets)):
+            raise RuntimeError("승인 후 worktree 생성 경로가 변경되었습니다. 다시 준비하세요.")
         actual = _loader.load("approval_policy").operation_fingerprint(Path(operation["cwd"]), operation["command"])
         if actual != operation["fingerprint"]:
             raise RuntimeError("승인 후 관련 Git 변경이 달라졌습니다. 재검토·재승인이 필요합니다.")
@@ -199,6 +213,10 @@ def validate(root: Path, operation: dict) -> None:
         if operation["target_before"] != {"branch": git.current_branch(target), "head": git.head(target), "changes": relations.content_snapshot(target)}:
             raise RuntimeError("승인 후 통합 worktree의 실제 변경이 달라졌습니다.")
     elif operation["kind"] == "relation":
+        if operation["action"] == "create":
+            target = storage.destination(root, Path(operation["cwd"]), operation["worktree"])
+            if str(target) != operation["worktree"]:
+                raise RuntimeError("승인 후 worktree 생성 경로가 변경되었습니다. 다시 준비하세요.")
         if relations.read(root) != operation["graph"] or any(relations.oid(root, ref) != head for ref, head in operation["refs"].items()):
             raise RuntimeError("승인 후 브랜치 관계 또는 commit이 변경되었습니다.")
     elif operation["kind"] == "write-recovery":
@@ -245,11 +263,7 @@ def apply_relation(root: Path, operation: dict) -> None:
         candidate = operation.get("worktree")
         if not candidate:
             raise RuntimeError("병렬 작업 생성에는 별도 linked worktree 경로를 명시하세요.")
-        destination = Path(candidate).resolve()
-        if _loader.load("project_boundary").foreign_repository(root, destination):
-            raise RuntimeError("다른 프로젝트 안에 linked worktree를 생성할 수 없습니다.")
-        if destination.exists() or destination == root or any(destination.is_relative_to(Path(item["worktree"])) for item in relations.worktrees(root)):
-            raise RuntimeError("새 linked worktree는 기존 작업 경로와 겹치지 않아야 합니다.")
+        destination = storage.destination(root, Path(operation["cwd"]), candidate)
         run(root, ["worktree", "add", "-b", name, str(destination), operation["fork"]])
     if action in {"create", "register"}:
         node = relations.register(root, graph, name, operation["parent"], operation["fork"], operation["purpose"])

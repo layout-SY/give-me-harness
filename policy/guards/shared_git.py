@@ -145,6 +145,10 @@ def git_denial(event: dict, root: Path, host: str, command: str, cwd: Path) -> s
         args = invocation.arguments
         if not args:
             continue
+        try:
+            _loader.load("worktree_storage").git_destination(root, invocation.working_directory or invocation.root, args)
+        except RuntimeError as error:
+            return str(error)
         formatting = _loader.load("formatting")
         recovering = args[0] in {"merge", "rebase"} and args[1:] in {("--abort",), ("--quit",)}
         if formatting.enabled() and args[0] in {"add", "commit", "merge", "rebase"} and not recovering:

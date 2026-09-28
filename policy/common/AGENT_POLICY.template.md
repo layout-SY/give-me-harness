@@ -96,6 +96,7 @@ Todo는 한국어로 작성하고 작업 위치, 수행 방법, 목적과 기대
 - V1/V2/V3 metadata, git-integrator, Git claim, ACTIVE/CLOSED/PRESERVED와 완료 예약은 새 세션의 권한 판정에 사용하지 않는다. 기존 기록은 이력으로 보존한다.
 - `--worktree`와 `--branch`는 시작 위치를 확인하는 선택값이고 `--task`는 작업 설명이다. branch 생성·CLOSED·소유권 인계 없이 기존 branch에서 새 세션을 시작할 수 있다.
 - 실행 위치는 도구의 `workdir` 또는 `git -C`로 명시한다. host sandbox의 파일 쓰기 권한은 별개이며 필요한 경로만 승인받는다.
+- 새 linked worktree는 `{{WORKTREE_ROOT}}/<작업명>`에 생성한다. 임시 디렉토리와 그곳을 가리키는 심볼릭 링크는 금지한다. 생성·이전 시 `.agent-policy/common/skills/policy/git-branch-strategy/references/worktree-storage.md`를 읽으며 기존 작업 공간을 자동 이동·삭제하지 않는다.
 - 자기 산출물의 논리적 세션 경로는 worktree를 옮겨도 유지한다. 다른 host·세션의 로그를 직접 수정하거나 자기 commit에 임의로 포함하지 않는다.
 - 소스와 산출물 파일 변경은 실제 대상이 드러나는 Edit/Write/apply_patch 도구를 사용한다. `.git` 내부 파일을 직접 편집하지 않고 사용자 승인 후 Git 명령으로 관리한다.
 - Git 조회에는 구현 gate를 적용하지 않는다. Git 변경은 사용자 승인과 보호 실행기를 사용한다. 완료 통합에는 세션과 독립된 직접 부모 관계·미처리 자식 검사·형제 검토를 적용하며 구현 role·독점 소유권은 요구하지 않는다.

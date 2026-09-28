@@ -61,6 +61,7 @@ class RenderingTests(unittest.TestCase):
                         path,
                     )
                     self.assertNotIn(b"{{PROJECT_NAME}}", content, path)
+                    self.assertNotIn(b"{{WORKTREE_ROOT}}", content, path)
                     self.assertNotIn(b"{{CENTRAL_ROOT}}", content, path)
                     self.assertNotIn(b"{{BASE_BRANCH}}", content, path)
                     self.assertNotIn(b"{{DEV_COMMAND}}", content, path)
@@ -71,6 +72,15 @@ class RenderingTests(unittest.TestCase):
         rendered = render_project(load_project("user-ui"))
         self.assertFalse(any("__pycache__" in path for path in rendered))
         self.assertFalse(any(path.endswith((".pyc", ".pyo")) for path in rendered))
+
+    def test_worktree_storage_uses_project_names_in_runtime_and_reference(self) -> None:
+        for project_id in ("user-ui", "admin-ui"):
+            project = load_project(project_id)
+            self.assertEqual(project.worktree_root.name, f"{project.name}-worktree")
+            rendered = render_project(project)
+            for relative in (".agent-policy/runtime/runtime_config.py",
+                             ".agent-policy/common/skills/policy/git-branch-strategy/references/worktree-storage.md"):
+                self.assertIn(str(project.worktree_root).encode(), rendered[relative])
 
     def test_project_specific_reference_catalogs_are_conditional(self) -> None:
         rendered = render_project(load_project("user-ui"))

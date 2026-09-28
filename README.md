@@ -67,6 +67,8 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 
 같은 프로젝트의 모든 branch·linked worktree에 세션과 무관하게 접근할 수 있습니다. 다른 기능 계열로 이동하면 한 번 안내하며 소유권 인계나 새 세션을 요구하지 않습니다. 병렬 구현에는 별도 linked worktree를 사용합니다. 작업 공간의 공유 접근과 별도로 완료는 자식에서 직접 부모로 수행하고 미처리 자식을 검사합니다.
 
+새 worktree는 `projects/*.json`의 `worktree_root` 아래 작업별 폴더에 생성합니다. 저장 위치는 `~/SynologyDrive/asan-worktrees/asan-metaverse-user-ui-worktree/<작업명>`과 `~/SynologyDrive/asan-worktrees/asan-metaverse-admin-ui-worktree/<작업명>`입니다. 관계 생성 명령의 `--worktree`를 생략하면 branch 이름으로 경로를 계산해 승인 전에 표시합니다. 임시 경로·다른 프로젝트 폴더·기존 경로 재사용은 생성 시 차단합니다. 명명, 보존, 기존 공간의 이전·복구는 [워크트리 저장 위치 규칙](policy/common/skills/policy/git-branch-strategy/references/worktree-storage.md)을 따릅니다. 기존 bundle을 재개해도 이 변경은 적용되지 않으며, handoff 후 새 `start`가 필요합니다.
+
 ## 세션 동작
 
 - 모든 host는 중앙 digest bundle만 사용하며 SessionStart hook이 inject context와 브랜치 context를 보고합니다.

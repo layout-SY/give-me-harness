@@ -2,6 +2,7 @@
   "id": "admin-ui",
   "name": "asan-metaverse-admin-ui",
   "path": "/Users/okand/SynologyDrive/asan-metaverse-admin-ui",
+  "worktree_root": "/Users/okand/SynologyDrive/asan-worktrees/asan-metaverse-admin-ui-worktree",
   "base_branch": "sy-main",
   "commands": {
     "dev": "npm run dev",

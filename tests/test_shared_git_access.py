@@ -122,7 +122,7 @@ class SharedGitAccessTests(unittest.TestCase):
 
     def test_creation_merge_and_former_user_only_commands_ask(self):
         for command in ("git switch -c plain-branch", "git branch -d old",
-                        "git worktree add /tmp/new-worktree", "git push origin HEAD",
+                        f"git worktree add {load_project('user-ui').worktree_root}/test-new-worktree", "git push origin HEAD",
                         "git clean -fd", "git fetch origin",
                         "git restore -- src/app.ts", "git stash push", "git config user.name Name"):
             with self.subTest(command=command):
@@ -514,11 +514,20 @@ class SharedGitAccessTests(unittest.TestCase):
                             f"npm --prefix {self.worktree} run build", f"env -C {self.worktree} git status",
                             f"cd {self.worktree}\ngit status\ngit log -1"):
                 self.assert_allowed(self.pre(host, command))
-            self.assert_asks(self.pre(host, f"git worktree add {self.base}/new-linked"), host)
+            self.assert_asks(self.pre(host, f"git worktree add {load_project('user-ui').worktree_root}/test-new-linked"), host)
         command = f"cd {self.worktree} && git add -- src/app.ts && git commit -m reviewed"
         self.assert_asks(self.pre("codex", command), "codex")
         self.run_event("codex", "user-prompt", {"prompt": "명령 실행 승인"})
         self.assert_allowed(self.pre("codex", command))
+
+    def test_temporary_worktree_creation_is_denied_for_every_host(self):
+        for host in ("codex", "claude", "opencode"):
+            for location in ("/tmp/asan-storage-test", "/private/tmp/asan-storage-test"):
+                with self.subTest(host=host, location=location):
+                    result = self.pre(host, f"git worktree add {location}")
+                    output = result.stdout + result.stderr
+                    self.assertIn("임시", output)
+                    self.assertNotIn('"ask"', output)
 
     def test_approval_cannot_override_project_boundary_or_changed_local_remote(self):
         other = self.base / "admin-ui"
