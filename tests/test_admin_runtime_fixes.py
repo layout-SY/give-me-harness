@@ -32,6 +32,11 @@ class AdminRuntimeTests(WorkflowFixture):
         record["native_session"] = "12345678-1234-1234-1234-123456789012"
         self.state_api.write(self.assignment_path, record)
         self.event["session_id"] = record["native_session"]
+        if host == "codex":
+            log = Path(launch.environment["CODEX_HOME"]) / "sessions" / f"rollout-{record['native_session']}.jsonl"
+            log.parent.mkdir(exist_ok=True)
+            log.write_text(json.dumps({"type": "session_meta", "payload": {
+                "id": record["native_session"], "cwd": str(self.root)}}) + "\n")
         return launch
 
     def test_actual_workflow_keeps_bundle_resumable_on_both_hosts(self):
@@ -91,9 +96,9 @@ class AdminRuntimeTests(WorkflowFixture):
         launches = [self.launch(), self.launch()]
         for launch in launches:
             home = Path(launch.environment["CODEX_HOME"])
-            log = home / "sessions/2026/09/09/rollout-12345678-1234-1234-1234-123456789012.jsonl"
-            log.parent.mkdir(parents=True)
-            log.write_text('{"type":"session_meta"}\n')
+            log = home / "sessions/rollout-12345678-1234-1234-1234-123456789012.jsonl"
+            log.write_text(json.dumps({"type": "session_meta", "payload": {
+                "id": "12345678-1234-1234-1234-123456789012", "cwd": str(self.root)}}) + "\n")
         before = {str(p): p.read_bytes() for launch in launches for p in Path(launch.environment["CODEX_HOME"]).rglob("*") if p.is_file()}
         rows = sessions.list_sessions(self.project, host="codex", state_root=self.directory / "state")
         self.assertEqual(len(rows), 2)

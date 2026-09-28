@@ -114,7 +114,7 @@ class InjectionTests(unittest.TestCase):
         return [value] if isinstance(value, str) else []
 
     def assert_policy_snapshot_is_renderer_subset(self, launch: InjectionLaunch) -> None:
-        rendered = render_project(self.project)
+        rendered = render_project(replace(self.project, path=self.project.path.resolve()))
         policy_root = launch.bundle_root / "policy"
         for path in policy_root.rglob("*"):
             if not path.is_file():
@@ -300,6 +300,8 @@ class InjectionTests(unittest.TestCase):
         self.assertFalse((launch.bundle_root / "claude-mcp.json").exists())
 
     def test_claude_mcp_definition_change_creates_new_bundle_and_resume_preserves_old(self) -> None:
+        (self.project_root / "AGENTS.md").unlink()
+        shutil.rmtree(self.project_root / ".agents")
         defaults = self.root / "mcp.defaults.json"
         definition = {
             "projects": ["user-ui", "admin-ui"], "roles": ["ui"],
@@ -317,12 +319,16 @@ class InjectionTests(unittest.TestCase):
             second = self.prepare("claude", role="ui")
             self.assertNotEqual(first.bundle_root, second.bundle_root)
             self.assertIn("fixture-v2", (second.bundle_root / "claude-mcp.json").read_text())
+            record_path = next(self.state_root.glob("repositories/*/assignments/" + first.environment["ASAN_AGENT_POLICY_ASSIGNMENT"] + "/assignment.json"))
+            record = json.loads(record_path.read_text())
+            record["native_session"] = "12345678-1234-1234-1234-123456789012"
+            record_path.write_text(json.dumps(record))
             resumed = prepare_injection(
                 self.project, "claude", "ui", state_root=self.state_root,
                 resume_assignment=first.environment["ASAN_AGENT_POLICY_ASSIGNMENT"],
             )
         self.assertEqual(resumed.bundle_root, first.bundle_root)
-        self.assertEqual(resumed.command, first.command)
+        self.assertEqual(resumed.command, first.command + ("--resume", record["native_session"]))
         self.assertEqual((first.bundle_root / "claude-mcp.json").read_bytes(), original)
 
     def test_claude_ui_mcp_resolves_bunx_fallback_and_rejects_missing_executable(self) -> None:
@@ -345,17 +351,23 @@ class InjectionTests(unittest.TestCase):
             self.prepare("claude", role="logic")
 
     def test_claude_mcp_upgrade_preserves_legacy_resume(self) -> None:
+        (self.project_root / "AGENTS.md").unlink()
+        shutil.rmtree(self.project_root / ".agents")
         with patch("agent_policy.injection._claude_mcp_config", return_value=None):
             legacy = self.prepare("claude", role="ui")
         current = self.prepare("claude", role="ui")
         self.assertNotEqual(legacy.bundle_root, current.bundle_root)
         self.assertIn("--mcp-config", current.command)
+        record_path = next(self.state_root.glob("repositories/*/assignments/" + legacy.environment["ASAN_AGENT_POLICY_ASSIGNMENT"] + "/assignment.json"))
+        record = json.loads(record_path.read_text())
+        record["native_session"] = "12345678-1234-1234-1234-123456789012"
+        record_path.write_text(json.dumps(record))
         resumed = prepare_injection(
             self.project, "claude", "ui", state_root=self.state_root,
             resume_assignment=legacy.environment["ASAN_AGENT_POLICY_ASSIGNMENT"],
         )
         self.assertEqual(resumed.bundle_root, legacy.bundle_root)
-        self.assertEqual(resumed.command, legacy.command)
+        self.assertEqual(resumed.command, legacy.command + ("--resume", record["native_session"]))
         self.assertNotIn("--mcp-config", resumed.command)
 
     def test_claude_mcp_executable_change_creates_new_bundle(self) -> None:

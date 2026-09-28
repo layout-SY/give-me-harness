@@ -377,7 +377,12 @@ class StateRegressionTests(WorkflowFixture):
         self.assertEqual(after.returncode, 0, after.stderr)
 
     def test_resume_pins_native_session_bundle_and_codex_home(self) -> None:
+        self.event["session_id"] = "12345678-1234-1234-1234-123456789012"
         first = self.prepare("codex")
+        transcript = Path(first.environment["CODEX_HOME"]) / "sessions/rollout.jsonl"
+        transcript.parent.mkdir()
+        transcript.write_text(json.dumps({"type": "session_meta", "payload": {
+            "id": self.event["session_id"], "cwd": str(self.root)}}) + "\n")
         self.env.update(first.environment)
         started = self.hook("session-start", "codex")
         self.assertEqual(started.returncode, 0, started.stderr)

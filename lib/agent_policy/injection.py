@@ -10,7 +10,7 @@ import subprocess
 import uuid
 import tempfile
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Final, Mapping
@@ -138,7 +138,10 @@ def compare_bundle_policy(project: ProjectConfig, bundle: Path) -> dict:
     except (OSError, ValueError):
         return {"status": "unknown", "message": "원래 bundle의 정책 비교 정보를 읽을 수 없습니다."}
     current = role_profiles_module.RUNTIME_CONTRACT
-    current_digest = source_digest(project)
+    try:
+        current_digest = source_digest(project)
+    except (OSError, PolicyError) as error:
+        return {"status": "unknown", "message": "현재 중앙 정책을 비교할 수 없습니다: " + str(error)}
     previous_git = previous.get("git", {})
     current_git = current.get("git", {})
     return {"status": "same" if manifest.get("source_digest") == current_digest else "different",
@@ -283,7 +286,8 @@ def _injection_preamble(
 
 이 세션은 소비자 저장소에 배포된 정책 파일이 아니라 중앙 정책 번들을 사용한다.
 
-- 작업 프로젝트 루트: `{project.path}`
+- Git 저장소 기준 경로: `{project.path}`
+- 실제 작업 위치는 launcher가 선택한 cwd이며 같은 저장소의 연결 worktree로 변경할 수 있다.
 - 명령 실행은 이 프로젝트와 같은 Git 저장소의 연결 worktree 안에서만 허용한다. 다른 프로젝트의 Git 조회·변경도 실행하지 않으며 해당 프로젝트의 별도 세션을 사용한다.
 - 읽기 전용 정책 스냅샷: `{policy_root}`
 - 실행 호스트: `{host}`
@@ -559,8 +563,10 @@ def _manifest_payload(
 
 def bundle_diagnostics(bundle_root: Path, digest: str) -> dict:
     result = {"valid": False, "error": "", "missing": [], "changed": [], "unexpected": [], "symlinks": [], "caches": []}
-    if bundle_root.is_symlink() or not bundle_root.is_dir():
-        return {**result, "error": "bundle root가 없거나 symlink입니다."}
+    if bundle_root.is_symlink():
+        return {**result, "error": "bundle root가 symlink입니다."}
+    if not bundle_root.is_dir():
+        return {**result, "error": f"bundle root가 없습니다: {bundle_root}"}
     manifest_path = bundle_root / BUNDLE_MANIFEST
     if manifest_path.is_symlink():
         return {**result, "error": "manifest가 symlink입니다."}
@@ -573,6 +579,10 @@ def bundle_diagnostics(bundle_root: Path, digest: str) -> dict:
     expected = manifest.get("files")
     if manifest.get("bundle_digest") != digest or not isinstance(expected, dict):
         return {**result, "error": "manifest의 bundle digest 또는 파일 목록이 다릅니다."}
+    if any(not isinstance(name, str) or Path(name).is_absolute() or ".." in Path(name).parts
+           or not isinstance(value, str) or re.fullmatch(r"[a-f0-9]{64}", value) is None
+           for name, value in expected.items()):
+        return {**result, "error": "manifest의 파일 경로 또는 해시가 올바르지 않습니다."}
     actual_files: set[str] = set()
     for path in bundle_root.rglob("*"):
         relative = path.relative_to(bundle_root).as_posix()
@@ -935,19 +945,29 @@ def prepare_injection(
     if resume_assignment is not None:
         return resume_injection(project, host, role, resume_assignment, state_root or STATE_ROOT, model, responsibility)
 
-    rendered = _role_selected_rendered(render_project(project), host, role)
-    claude_mcp_config = _claude_mcp_config(project, role) if host == "claude" else None
-    digest = _bundle_digest(rendered, host, role, project.path, claude_mcp_config)
-    selected_build_root = (build_root or BUILD_ROOT).resolve()
-    bundle_root = selected_build_root / project.id / f"{host}-{role}-{digest[:16]}"
-    files = _render_bundle_files(project, host, role, rendered, bundle_root, claude_mcp_config)
-    _install_bundle(bundle_root, project, host, role, digest, files)
-
     selected_state_root = (state_root or STATE_ROOT).resolve()
     common_result = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=project.path,
                                    text=True, capture_output=True, check=True)
     common_path = Path(common_result.stdout.strip())
     common = (common_path if common_path.is_absolute() else project.path / common_path).resolve()
+    rendered = _role_selected_rendered(render_project(project), host, role)
+    shared = json.loads(rendered[".agent-policy/common/contracts/runtime-policy.json"])["version"] == 4
+    policy_project = project
+    if shared:
+        # 정책의 저장소 기준은 수명이 짧은 작업 worktree가 아니라 primary worktree다.
+        listing = subprocess.run(["git", "worktree", "list", "--porcelain", "-z"], cwd=project.path,
+                                 text=True, capture_output=True, check=True).stdout
+        anchor = next((Path(item[9:]) for item in listing.split("\0") if item.startswith("worktree ")), project.path)
+        if anchor.is_dir() and anchor.resolve() != project.path:
+            policy_project = replace(project, path=anchor.resolve())
+            rendered = _role_selected_rendered(render_project(policy_project), host, role)
+    claude_mcp_config = _claude_mcp_config(policy_project, role) if host == "claude" else None
+    digest = _bundle_digest(rendered, host, role, policy_project.path, claude_mcp_config)
+    # build_root는 테스트/기존 호출 호환용 명시적 override다. 기본 저장소는 보존 state다.
+    selected_build_root = (build_root or selected_state_root / "bundles").resolve()
+    bundle_root = selected_build_root / project.id / f"{host}-{role}-{digest}"
+    files = _render_bundle_files(policy_project, host, role, rendered, bundle_root, claude_mcp_config)
+    _install_bundle(bundle_root, policy_project, host, role, digest, files)
     assignment_id = uuid.uuid4().hex
     assignment_root = selected_state_root / "repositories" / sha256_bytes(str(common).encode()) / "assignments" / assignment_id
     assignment_root.mkdir(mode=0o700, parents=True)
@@ -955,7 +975,9 @@ def prepare_injection(
         "version": 1, "id": assignment_id, "repository": str(common), "project": project.id,
         "host": host, "role": role, "task": task or "", "responsibility": responsibility,
         "worktree": str(project.path.resolve()), "bundle_root": str(bundle_root), "bundle_digest": digest,
-        "git_access": "shared-project" if json.loads(rendered[".agent-policy/common/contracts/runtime-policy.json"])["version"] == 4 else "legacy-integrator",
+        "project_anchor": str(policy_project.path.resolve()) if shared else None,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "git_access": "shared-project" if shared else "legacy-integrator",
     }))
     selected_source_home = (
         source_codex_home
@@ -1033,27 +1055,22 @@ def resume_injection(project: ProjectConfig, host: str, role: str, assignment: s
         raise PolicyError("재개 assignment의 저장소·host·role·책임이 요청과 다릅니다.")
     if model is not None and model != record.get("model"):
         raise PolicyError("모델 변경은 새 세션에서 지정하세요. 재개는 원래 실행 계약을 사용합니다.")
-    native = record.get("native_session")
-    if record.get("handed_off_to"):
-        raise PolicyError("이미 다른 assignment로 인계한 세션입니다.")
+    from .session_diagnostics import diagnose_assignment, record_problem
+    invalid = record_problem(record)
+    if invalid:
+        raise PolicyError(invalid)
+    assessment = diagnose_assignment(project, directory / "assignment.json", record, worktree=project.path)
+    if not assessment["resumable"]:
+        raise PolicyError("재개 조건을 충족하지 못했습니다.\n" + "\n".join(
+            item["message"] for item in assessment["reasons"]))
+    native = record["native_session"]
     bundle = Path(record["bundle_root"])
-    diagnosis = bundle_diagnostics(bundle, record["bundle_digest"])
-    if not diagnosis["valid"]:
-        raise PolicyError("원래 세션의 bundle 검증에 실패했습니다. 재개 중 다른 정책으로 교체하지 않습니다.\n"
-                          + json.dumps(diagnosis, ensure_ascii=False)
-                          + f"\n생성 캐시만 문제라면: bin/agent-policy bundle-repair --project {project.id} --assignment {assignment}")
     command = list(record["command"])
-    if native:
-        if host == "codex":
-            command[1:1] = ["resume", native]
-        else:
-            command.extend(["--resume" if host == "claude" else "--session", native])
     if host == "codex":
-        home = Path(record["environment"]["CODEX_HOME"])
-        manifest = _read_state_manifest(home)
-        if not manifest or any(not (home / relative).is_file() or sha256_bytes((home / relative).read_bytes()) != digest
-                               for relative, digest in manifest.items()):
-            raise PolicyError("원래 Codex home의 정책 파일 검증에 실패했습니다.")
+        command[1:1] = ["resume", native]
+        command.extend(["--cd", str(project.path.resolve())])
+    else:
+        command.extend(["--resume" if host == "claude" else "--session", native])
     environment = dict(record["environment"])
     environment[INJECT_PROJECT_PATH_ENV] = str(project.path.resolve())
     return InjectionLaunch(project, host, role, bundle, Path(record["system_prompt"]), tuple(command), environment,

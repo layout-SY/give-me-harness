@@ -104,6 +104,19 @@ def build_parser() -> argparse.ArgumentParser:
     sessions.add_argument("--host", choices=("codex", "claude", "opencode"))
     sessions.add_argument("--assignment")
     sessions.add_argument("--json", action="store_true")
+    resume = subparsers.add_parser("resume", help="프로젝트 전체 이력에서 원래 대화·정책·home을 선택해 재개합니다.")
+    resume.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    resume.add_argument("--host", required=True, choices=("codex", "claude", "opencode"))
+    resume.add_argument("--assignment", help="선택할 assignment ID. 생략하면 터미널에서 목록을 선택합니다.")
+    resume.add_argument("--worktree", help="실행할 같은 저장소의 기존 worktree")
+    resume.add_argument("--print-only", action="store_true", help="선택한 재개를 검증하고 실행 명령만 출력합니다.")
+    native_link = subparsers.add_parser("session-link", help="실제 메타데이터를 확인한 미연결 Codex 대화를 연결합니다.")
+    native_link.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    native_link.add_argument("--assignment", required=True)
+    native_link.add_argument("--native-session", required=True)
+    preserve = subparsers.add_parser("bundle-preserve", help="원래 경로·파일 해시를 유지할 정책 복구용 백업을 보존합니다.")
+    preserve.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    preserve.add_argument("--assignment", required=True)
     bundle_repair = subparsers.add_parser("bundle-repair", help="원본 정책이 모두 일치할 때 생성된 Python 캐시만 백업·격리합니다.")
     bundle_repair.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
     bundle_repair.add_argument("--assignment", required=True)
@@ -356,7 +369,8 @@ def run_start(
     if role is None:
         raise PolicyError("inject 모드는 --role logic|ui|orchest|review|generate 중 하나가 필요합니다.")
     selected_session_dir = normalized_session_dir(session_dir, host)
-    issues = tuple((*audit_source_contract(), *audit_project(project)))
+    # 재개는 원본 bundle을 검증한다. 현재 개발 중인 정책 audit와 결합하지 않는다.
+    issues = tuple((*audit_source_contract(), *audit_project(project))) if not resume_assignment else ()
     if issues:
         raise PolicyError("중앙 정책 audit 실패: " + "; ".join(issues))
     if task is not None:
@@ -403,6 +417,71 @@ def run_start(
     os.chdir(project.path)
     os.execvpe(launch.command[0], list(launch.command), environment)
     return 0
+
+
+def print_session(row: dict, number: int | None = None) -> None:
+    prefix = f"[{number}] " if number is not None else ""
+    print(f"{prefix}{row['assignment']}  {row['host']}/{row['role']}  {row['task'] or '(작업 설명 없음)'}")
+    print("  재개: " + ("가능" if row["resumable"] else "조건 미충족"))
+    if row.get("task_state"):
+        print(f"  과거 branch 상태(대화 상태와 별개): {row['task_state']}")
+    print(f"  native session: {row['native_session'] or '(ID 미연결; 실행 여부 미확인)'}")
+    print(f"  CODEX_HOME: {row['codex_home'] or '(해당 없음)'}")
+    for item in row["reasons"]:
+        print(f"  - {item['code']}: {item['message']}")
+    for transcript in row["transcripts"]:
+        print(f"  대화 원본(열람): {transcript}")
+    for item in row.get("native_candidates", []):
+        print(f"  연결 후보: {item['id']} (cwd: {item['cwd']})")
+        if item["linkable"]:
+            print("  연결: " + shlex.join(["bin/agent-policy", "session-link", "--project", row["project"],
+                  "--assignment", row["assignment"], "--native-session", item["id"]]))
+    for error in row.get("transcript_errors", []):
+        print(f"  대화 검사: {error}")
+    if row.get("pending_calls"):
+        print("  과거 미완료 도구 기록(실행 중 여부 미확인): " + ", ".join(row["pending_calls"]))
+    if row.get("current_pending_calls"):
+        print("  현재 계약의 미완료 도구 기록: " + ", ".join(row["current_pending_calls"]))
+    if row["resume_command"]:
+        print("  실행: " + row["resume_command"])
+    elif row["transcripts"]:
+        print("  원본 정책 복구가 불가능하면 대화·기존 handoff를 검토한 뒤 새 정책으로 start하세요. 기존 대화는 보존됩니다.")
+
+
+def run_resume(project_id: str, host: str, assignment: str | None, worktree: str | None,
+               print_only: bool = False) -> int:
+    from .sessions import assignment_record, list_sessions
+    project = select_projects(project_id)[0]
+    rows = list_sessions(project, host, assignment)
+    if not rows:
+        raise PolicyError("선택한 프로젝트·host의 세션 기록이 없습니다.")
+    if assignment:
+        row = rows[0]
+    else:
+        for number, item in enumerate(rows, 1):
+            print_session(item, number)
+        if not sys.stdin.isatty():
+            raise PolicyError("비대화형 실행에서는 --assignment ID를 지정하세요.")
+        try:
+            choice = input("재개할 번호 (Enter: 취소): ").strip()
+        except EOFError:
+            return 0
+        except KeyboardInterrupt:
+            return 130
+        if not choice:
+            return 0
+        if not choice.isdigit() or not 1 <= int(choice) <= len(rows):
+            raise PolicyError("목록에 있는 번호를 선택하세요.")
+        row = rows[int(choice) - 1]
+    selected = worktree or row.get("worktree")
+    if not selected or not Path(selected).is_dir():
+        candidates = subprocess.run(["git", "worktree", "list"], cwd=project.path,
+                                    text=True, capture_output=True, check=False).stdout.strip()
+        raise PolicyError("기존 경로가 없습니다. --worktree로 실행 위치를 선택하세요.\n" + candidates)
+    print(f"선택: {row['assignment']} / {row['host']}/{row['role']} / cwd: {selected}")
+    return run_start(project_id, host, None, print_only, worktree=selected, role=row["role"],
+                     responsibility=assignment_record(project, row["assignment"])[1].get("responsibility", "owner"),
+                     resume_assignment=row["assignment"])
 
 
 def run_collect_logs(selector: str, channel: str, quiet: bool) -> int:
@@ -456,19 +535,25 @@ def main(argv: Sequence[str] | None = None) -> None:
                 print(json.dumps(rows, ensure_ascii=False, indent=2))
             else:
                 for row in rows:
-                    status = "정상" if row["bundle"]["valid"] else "검사 실패: " + json.dumps(row["bundle"], ensure_ascii=False)
-                    print(f"{row['assignment']}  {row['host']}/{row['role']}  {row['task'] or '(task 미지정)'}  {row['task_state']}\n  bundle: {status}")
-                    if row["pending_calls"]:
-                        print("  미확인 도구: " + ", ".join(row["pending_calls"]))
-                    print(f"  native session: {row['native_session'] or '(시작 전)'}\n  CODEX_HOME: {row['codex_home'] or '(해당 없음)'}")
-                    for transcript in row["transcripts"]:
-                        print(f"  대화: {transcript}")
-                    print(f"  재개: {row['resume_command'] or '(시작 전 또는 인계됨)'}")
+                    print_session(row)
+            code = 0
+        elif arguments.command == "resume":
+            code = run_resume(arguments.project, arguments.host, arguments.assignment, arguments.worktree, arguments.print_only)
+        elif arguments.command == "session-link":
+            from .sessions import link_native_session
+            link_native_session(select_projects(arguments.project)[0], arguments.assignment, arguments.native_session)
+            print("실제 대화 메타데이터를 확인하여 native ID를 연결했습니다. 재개 조건은 별도로 검사합니다.")
+            code = 0
+        elif arguments.command == "bundle-preserve":
+            from .sessions import assignment_record
+            from .bundle_store import preserve_bundle
+            path, record = assignment_record(select_projects(arguments.project)[0], arguments.assignment)
+            print("원본 복구용 정책 보존: " + str(preserve_bundle(path, record)))
             code = 0
         elif arguments.command == "bundle-repair":
             from .sessions import repair_bundle
             paths = repair_bundle(select_projects(arguments.project)[0], arguments.assignment)
-            print(f"원본 bundle 확인 완료. 생성 캐시 {len(paths)}개 격리.")
+            print(f"원본 bundle 확인 완료. 복구 또는 캐시 격리 {len(paths)}건.")
             for path in paths:
                 print(f"  백업: {path}")
             code = 0

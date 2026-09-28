@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import shlex
 import sys
+import uuid
+from pathlib import Path
 from unittest.mock import patch
 
 from test_remediation import WorkflowFixture
@@ -18,6 +21,8 @@ class SessionReadinessTests(WorkflowFixture):
         self.runtime = self.snapshot / ".agent-policy/runtime"
         self.guard = self.module(self.runtime / "managed_policy_guard.py")
         self.event["session_id"] = launch.environment["ASAN_AGENT_POLICY_ASSIGNMENT"]
+        if host == "codex":
+            self.event["session_id"] = str(uuid.UUID(self.event["session_id"]))
         return launch
 
     def read_prerequisites(self, host: str = "claude") -> None:
@@ -131,7 +136,12 @@ class SessionReadinessTests(WorkflowFixture):
         self.assertIsNot(self.state().get("implementation_approved"), True)
 
     def test_new_start_uses_updated_runtime_while_resume_pins_original_bundle(self) -> None:
+        self.event["session_id"] = "12345678-1234-1234-1234-123456789012"
         first = self.start("codex")
+        transcript = Path(first.environment["CODEX_HOME"]) / "sessions/rollout.jsonl"
+        transcript.parent.mkdir()
+        transcript.write_text(json.dumps({"type": "session_meta", "payload": {
+            "id": self.event["session_id"], "cwd": str(self.root)}}) + "\n")
         self.hook("session-start", "codex")
         self.hook("user-prompt", "codex", prompt="Proceed")
         from agent_policy import injection

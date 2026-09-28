@@ -27,8 +27,10 @@ adapters/claude/        Claude Code 도구·훅·native agent 형식
 adapters/opencode/      OpenCode 역할·plugin 형식
 projects/               대상 경로·명령과 프로젝트별 중앙 overlay
 lib/agent_policy/       결정적 렌더링과 inject 실행 로직
-build/                  source digest별 inject 번들(생성물, Git 제외)
-state/                  inject Codex의 지속 상태(생성물, Git 제외)
+build/                  이전 세션의 inject 번들(참조 중인 원본은 보존 필요)
+state/bundles/          신규 inject 정책 원본(동일 digest 공유, 자동 정리 제외)
+state/bundle-backups/   기존 bundle의 검증된 복구용 사본
+state/repositories/     assignment·대화·승인 등의 지속 상태(Git 제외)
 bin/agent-policy        운영 CLI
 tests/                  중앙 단위 테스트
 logs/projects/          프로젝트·실행 호스트별 필수 산출물 Git 사본
@@ -49,7 +51,7 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 
 ### 세션 시작
 
-`start`는 inject 방식만 지원합니다. `--role`을 필수로 받고 공통 정본에서 해당 role에 필요한 문서·스킬과 선택한 host adapter만 골라 중앙 `build/{project}/` 아래의 불변 digest 번들로 생성합니다. 소비자 저장소의 정책 파일을 쓰거나 배포 manifest를 만들지 않습니다. 중앙 정책 audit 실패, 대상 프로젝트 부재, 선택된 worktree의 소비자 정책 출처 잔존은 시작 전에 차단합니다. role 책임은 system prompt에 명시하고 공통 guard에서 review·orchest의 source 변경을 차단합니다. Git 승인은 host·role·assignment와 무관한 작업 단위로 판정합니다.
+`start`는 inject 방식만 지원합니다. `--role`을 필수로 받고 공통 정본에서 해당 role에 필요한 문서·스킬과 선택한 host adapter만 골라 중앙 `state/bundles/{project}/` 아래의 불변 digest 번들로 생성합니다. 소비자 저장소의 정책 파일을 쓰거나 배포 manifest를 만들지 않습니다. 신규 시작은 중앙 정책 audit 실패를 차단하고, 재개는 원래 bundle을 검증합니다. 대상 프로젝트 부재와 선택 worktree의 소비자 정책 출처 잔존은 두 경로 모두 차단합니다. role 책임은 system prompt에 명시하고 공통 guard에서 review·orchest의 source 변경을 차단합니다. Git 승인은 host·role·assignment와 무관한 작업 단위로 판정합니다.
 
 - Codex: 중앙 `state/repositories/{repository-id}/assignments/{assignment-id}/codex-home/`을 `CODEX_HOME`으로 사용합니다. 사용자 `config.toml`과 `auth.json`은 내용을 복사하지 않고 심볼릭 링크로 참조하고 중앙 정책 설정은 CLI override로 적용합니다. 세션 동안 소비자 `.codex` 계층과 소비자 skill을 끄고, 프로젝트 `AGENTS.md` 자동 로드는 제한한 뒤 중앙 prompt를 developer instruction으로 한 번만 주입합니다.
 - Claude Code: 사용자 설정만 유지하고 중앙 settings, 임시 plugin, hook, skill 및 합성 prompt를 `--settings`, `--plugin-dir`, `--append-system-prompt-file`로 주입합니다.
@@ -107,6 +109,8 @@ OpenCode V2는 `permission`/`bash` 대신 `permissions`/`shell` 규칙 배열을
 
 
 ## 세션 재개와 오류 복구
+
+프로젝트 전체 이력에서 선택하려면 `bin/agent-policy resume --project user-ui --host codex`를 사용합니다. 현재 디렉터리·역할에 이력을 고정하지 않고 선택한 대화의 원래 역할·native ID·home·정책을 사용합니다. 명령별 예제와 기존 누락 기록의 복구 한계는 [세션 재개와 보존](docs/session-resume-and-retention.md)에 설명합니다. 내장 `/resume`은 선택된 CODEX_HOME의 이력을 사용합니다.
 
 Codex writable home과 승인 상태는 중앙 state의 assignment별로 분리됩니다. `start` 출력의 assignment ID를 보관하고 동일 세션은 `start --project <project> --host <host> --role <role> --resume-assignment <id>`로 재개합니다. 기존 정책 bundle을 검증하여 그대로 사용하며 새 정책으로 교체하지 않습니다. 정책 업데이트는 handoff 후 새 start로 적용합니다.
 
