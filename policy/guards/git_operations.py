@@ -497,7 +497,8 @@ def _execute(root: Path, identifier: str, execution_cwd: Path | None = None) -> 
     if not git.same_git_repository(root, execution_cwd):
         raise RuntimeError("현재 프로젝트 밖에서는 실행할 수 없습니다.")
     grant_path = operation_path(root, identifier).with_suffix(".grant.json")
-    ticket = state.read(grant_path, max_age=120)
+    # Waiting between approval and execution does not invalidate this reservation.
+    ticket = state.read(grant_path)
     if not ticket or ticket.get("fingerprint") != operation["fingerprint"]:
         raise RuntimeError("이 작업의 사용자 승인과 도구 실행 예약이 필요합니다.")
     # Credentials for this one tool invocation; never branch/worktree ownership.

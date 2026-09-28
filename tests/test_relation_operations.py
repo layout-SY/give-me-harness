@@ -188,6 +188,109 @@ class RelationOperationTests(unittest.TestCase):
         self.assertEqual(self.git("log", "-1", "--format=%s"), "opencode")
         self.assertFalse((self.repository / "claims").exists())
 
+    def backdate_state(self, operations, path):
+        record = operations.state.read(path)
+        self.assertTrue(record, path)
+        record["created_at"] = 0
+        operations.state.write(path, record)
+
+    def test_command_approval_does_not_expire_before_or_after_user_response(self):
+        operations = self.module("git_operations")
+        approval = self.module("approval_policy")
+        with patch.dict(os.environ, self.env, clear=True):
+            for host in ("codex", "opencode"):
+                with self.subTest(host=host):
+                    event = {"session_id": host + "-test"}
+                    operation = operations.prepare_git(self.root, self.root,
+                        f"git commit --allow-empty -m delayed-{host}", host, event)
+                    command = operations.command(operation)
+                    requested = self.event("pre-tool", command, host=host)
+                    self.assertIn("명령 실행 승인", requested.stdout + requested.stderr)
+                    path = approval.approval_state_path(event, self.root, host)
+                    self.backdate_state(operations, path)
+                    self.event("user-prompt", host=host, prompt="명령 실행 승인")
+                    self.assertTrue(operations.state.read(path).get("approved"))
+                    self.backdate_state(operations, path)
+                    permitted = self.event("pre-tool", command, host=host)
+                    self.assertEqual(permitted.returncode, 0, permitted.stdout + permitted.stderr)
+                    self.assertNotIn('"deny"', permitted.stdout)
+                    self.assertFalse(path.exists())
+                    executed = self.operation_cli("execute", operation["id"])
+                    self.assertEqual(executed.returncode, 0, executed.stderr)
+                    self.assertEqual(self.git("log", "-1", "--format=%s"), f"delayed-{host}")
+                    repeated = self.operation_cli("execute", operation["id"])
+                    self.assertNotEqual(repeated.returncode, 0)
+                    self.assertIn("승인", repeated.stderr)
+
+    def test_execution_reservation_does_not_expire_or_allow_reuse(self):
+        operations = self.module("git_operations")
+        with patch.dict(os.environ, self.env, clear=True):
+            for host in ("codex", "claude", "opencode"):
+                with self.subTest(host=host):
+                    operation = operations.prepare_git(self.root, self.root,
+                        f"git commit --allow-empty -m reserved-{host}", host, {"session_id": host})
+                    operations.grant(self.root, operation, host, {"session_id": host})
+                    path = operations.operation_path(self.root, operation["id"]).with_suffix(".grant.json")
+                    self.backdate_state(operations, path)
+                    executed = self.operation_cli("execute", operation["id"])
+                    self.assertEqual(executed.returncode, 0, executed.stderr)
+                    self.assertEqual(self.git("log", "-1", "--format=%s"), f"reserved-{host}")
+                    self.assertFalse(path.exists())
+                    repeated = self.operation_cli("execute", operation["id"])
+                    self.assertNotEqual(repeated.returncode, 0)
+                    self.assertIn("승인", repeated.stderr)
+
+    def test_old_command_approval_still_honors_revocation_and_changed_state(self):
+        operations = self.module("git_operations")
+        approval = self.module("approval_policy")
+        with patch.dict(os.environ, self.env, clear=True):
+            for host in ("codex", "opencode"):
+                for invalidation in ("cancel", "changed-head"):
+                    with self.subTest(host=host, invalidation=invalidation):
+                        event = {"session_id": host + "-test"}
+                        operation = operations.prepare_git(self.root, self.root,
+                            "git commit --allow-empty -m approved", host, event)
+                        command = operations.command(operation)
+                        self.event("pre-tool", command, host=host)
+                        self.event("user-prompt", host=host, prompt="명령 실행 승인")
+                        path = approval.approval_state_path(event, self.root, host)
+                        self.assertTrue(operations.state.read(path).get("approved"))
+                        self.backdate_state(operations, path)
+                        if invalidation == "cancel":
+                            self.event("user-prompt", host=host, prompt="명령 실행 승인 취소")
+                            self.assertFalse(path.exists())
+                        else:
+                            self.git("commit", "--allow-empty", "-qm", "external change")
+                        denied = self.event("pre-tool", command, host=host)
+                        # Codex can report a native hook denial with exit code 0.
+                        self.assertTrue(denied.returncode != 0 or '"deny"' in denied.stdout,
+                                        denied.stdout + denied.stderr)
+                        self.assertFalse(operations.operation_path(self.root, operation["id"]).with_suffix(".grant.json").exists())
+                        executed = self.operation_cli("execute", operation["id"])
+                        self.assertNotEqual(executed.returncode, 0)
+                        self.assertIn("승인", executed.stderr)
+                        if invalidation == "changed-head":
+                            self.assertIn("변경", denied.stdout + denied.stderr)
+                        self.assertNotEqual(self.git("log", "-1", "--format=%s"), "approved")
+
+    def test_old_execution_reservation_keeps_identity_and_change_checks(self):
+        operations = self.module("git_operations")
+        with patch.dict(os.environ, self.env, clear=True):
+            operation = operations.prepare_git(self.root, self.root,
+                "git commit --allow-empty -m approved", "codex", {"session_id": "codex-test"})
+            operations.grant(self.root, operation, "codex", {"session_id": "codex-test"})
+            path = operations.operation_path(self.root, operation["id"]).with_suffix(".grant.json")
+            self.backdate_state(operations, path)
+            for context in ({"ASAN_AGENT_POLICY_HOST": "claude"}, {"ASAN_AGENT_POLICY_ASSIGNMENT": "a" * 32}):
+                with self.subTest(context=context), patch.dict(os.environ, context):
+                    with self.assertRaisesRegex(RuntimeError, "다른 도구 실행"):
+                        operations.execute(self.root, operation["id"])
+                    self.assertTrue(path.exists())
+            self.git("commit", "--allow-empty", "-qm", "external change")
+            with self.assertRaisesRegex(RuntimeError, "변경|재검토"):
+                operations.execute(self.root, operation["id"])
+            self.assertEqual(self.git("log", "-1", "--format=%s"), "external change")
+
     def completion(self, operations, source="K", target="A", strategy="ff-only", cleanup=False, cwd=None):
         evidence = operations.review.collect(self.root, source, target, strategy, ["git diff --check"], cleanup)
         report = {key: "실제 fixture 비교; 의미 검증은 이 검사 범위 밖" for key in operations.review.REPORT_FIELDS}

@@ -21,7 +21,6 @@ exec(compile(_loader_path.read_bytes(), str(_loader_path), "exec"), _loader.__di
 load_runtime_module = _loader.load
 
 _runtime_config = load_runtime_module("runtime_config")
-APPROVAL_MAX_AGE_SECONDS = _runtime_config.APPROVAL_MAX_AGE_SECONDS
 APPROVAL_WORD_PATTERN = _runtime_config.APPROVAL_WORD_PATTERN
 ARTIFACT_SESSIONS_PREFIXES = _runtime_config.ARTIFACT_SESSIONS_PREFIXES
 COMMAND_APPROVAL_PHRASE = _runtime_config.COMMAND_APPROVAL_PHRASE
@@ -69,7 +68,8 @@ def harness_state_path(event: dict[str, Any], root: Path, host: str) -> Path | N
 
 
 def load_approval_state(path: Path | None) -> dict[str, Any]:
-    return load_json_state(path, max_age=APPROVAL_MAX_AGE_SECONDS)
+    # Command approval is consumed or revoked by events, never by elapsed time.
+    return load_json_state(path)
 
 
 def write_approval_state(path: Path | None, state: dict[str, Any]) -> None:

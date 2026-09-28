@@ -21,7 +21,6 @@ PROJECT_ROOT: Final = Path("{{PROJECT_PATH}}")
 DEV_COMMAND: Final = "{{DEV_COMMAND}}"
 BUILD_COMMAND: Final = "{{BUILD_COMMAND}}"
 COMMAND_APPROVAL_PHRASE: Final = "명령 실행 승인"
-APPROVAL_MAX_AGE_SECONDS: Final = 30 * 60
 IMPLEMENTATION_APPROVAL_PHRASES: Final = frozenset(
     {
         "진행",
