@@ -1,13 +1,15 @@
 ---
 name: hook-use-fetch-adapter
-description: {{PROJECT_NAME}}의 useFetchAdapter 훅(src/shared/ui/table/hooks/useFetchAdapter.ts) 사용 및 수정 가이드. 목록 조회, 행 매핑, 페이지네이션·탭 카운트와 debounce·throttle을 다룰 때 사용.
+description: {{PROJECT_NAME}}의 useFetchAdapter 훅에 대한 과거 참고 자료. 해당 훅이 실제로 존재하는 브랜치에서만 사용.
 ---
 
 # useFetchAdapter
 
+현재 admin-ui 작업 브랜치에서는 사용처 없는 훅으로 제거되었다. 아래 내용은 기존 구현 참고용이며, 파일이 없으면 이 훅의 사용이나 복원을 요구하지 않는다.
+
 ## 대상
 
-- `src/shared/ui/table/hooks/useFetchAdapter.ts`
+<!-- 비활성 참조: src/shared/ui/table/hooks/useFetchAdapter.ts (사용처 없는 훅으로 제거됨) -->
 - `src/shared/api/common/dto.ts` (`TableApiResponseDto`, `TablePagination`, `TableItemCountMap`)
 - `src/shared/lib/utils/performance.util.ts` (`debounce`, `throttle`)
 

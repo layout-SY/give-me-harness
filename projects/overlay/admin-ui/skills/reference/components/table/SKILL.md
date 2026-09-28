@@ -11,7 +11,7 @@ description: {{PROJECT_NAME}}의 공용 Table(src/shared/ui/table) 사용 및 �
 - `src/shared/ui/table/table.css`
 - `src/shared/ui/table/index.ts`
 - `src/shared/ui/table/interface/columnDef.ts`
-- `src/shared/ui/table/hooks/useFetchAdapter.ts`
+<!-- 비활성 참조: src/shared/ui/table/hooks/useFetchAdapter.ts (사용처 없는 훅으로 제거됨) -->
 - `src/shared/ui/table/utils/commonCell.tsx`
 - `src/shared/ui/table/utils/resolveRowNumber.ts`
 
@@ -51,7 +51,7 @@ description: {{PROJECT_NAME}}의 공용 Table(src/shared/ui/table) 사용 및 �
 
 - 목록 화면은 이 컴포넌트를 재사용한다. 표 마크업을 직접 작성하지 않는다.
 - 화면정의서에 순번 열이 없으면 `showRowNumber={false}`를 전달한다.
-- 서버 페이징 연동은 `useFetchAdapter`를 함께 사용한다.
+<!-- useFetchAdapter가 실제로 존재하는 브랜치에서만 서버 페이징에 함께 사용한다. -->
 - 셀 표현이 `commonCell`의 `type`으로 표현되면 `custom` 대신 `accessor`를 쓴다.
 
 ## 수정 규칙
