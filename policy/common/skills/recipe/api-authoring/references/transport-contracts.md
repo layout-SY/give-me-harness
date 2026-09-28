@@ -11,6 +11,22 @@
 | 응답 parser      | unknown을 검증하고 UI 모델로 변환          | envelope, 목록·상세·mutation별 성공 body             |
 | Query / mutation | 실패를 throw로 변환, 캐시·비동기 상태 소유 | key·retry·invalidation·오류 표시                     |
 
+## 공통 응답 DTO 재사용
+
+API 연결 시 현재 프로젝트의 `src/shared/api/common/`과 인접 API의 import·사용처를 먼저 확인한다. 서버 응답 계약이 일치하는 공통 DTO·schema가 있으면 반드시 import하여 재사용하고, 동일한 envelope·pagination 타입이나 schema를 도메인마다 복제하지 않는다. 다음 경로는 각 프로젝트에서 확인할 시작점이며 작업 시 실제 export와 계약을 다시 확인한다.
+
+| 프로젝트 | 응답 경계 | 기존 자산 |
+| --- | --- | --- |
+| admin-ui | `code`, `message`, `data` envelope | `src/shared/api/common/response.dto.ts`의 `ApiResponseDto<TData>` |
+| admin-ui | `items`, `total`, `page`, `size` 목록 payload | `src/shared/api/common/response.dto.ts`의 `PageResponseDto<TItem>`, `createPageResponseSchema(itemSchema)` |
+| user-ui | 기존 client·mapper의 서버 응답 정규화 | `src/shared/api/common/api-result/types.ts`의 `ServerResponse<TData>`, `ApiResult<TData>` |
+| user-ui·admin-ui | `content`, `count`, `pagination` 테이블 payload | 각 프로젝트의 `src/shared/api/common/dto.ts`에 있는 `TableApiResponseDto<TItem, TKey>`, `TablePagination`, `TableItemCountMap<TKey>` |
+
+- admin-ui의 목록 계약이 `items/total/page/size`이면 도메인 항목 DTO·schema를 `PageResponseDto<TItem>`·`createPageResponseSchema(itemSchema)`에 전달한다. `content/count/pagination` 계약은 `TableApiResponseDto`를 사용한다. 필드명이나 nullable 의미가 다른 응답을 공통 타입에 억지로 맞추지 않는다.
+- user-ui는 기존 `ServerResponse<TData>`와 `toServerResponse`·`toApiResult` 정규화 경로를 재사용한다. 정규화 타입의 모든 필드가 원본 응답에 존재한다고 가정하지 않으며, admin-ui의 `response.dto.ts`가 user-ui에도 있다고 가정하거나 복사하지 않는다.
+- `ApiClient`의 `client.get<TData>`·`post<TData, TBody>` 등에 전달하는 응답 제네릭은 envelope 내부의 payload 타입이다. client가 envelope를 처리하므로 `client.get<ApiResponseDto<Payload>>` 또는 `client.get<ServerResponse<Payload>>`로 이중 래핑하지 않는다. 도메인별 `*ResponseDto`는 고유 payload를 정의하거나 공통 목록 DTO의 타입 별칭으로 조합한다.
+- 계약에 맞는 자산이 없거나 확장이 필요하면 차이와 확장·신규 작성 대안을 사용자에게 확인받는다. 공통 DTO 재사용은 런타임 검증을 대신하지 않으며, 기존 parser 경계에서 한 번 검증하는 규칙을 유지한다.
+
 ## ApiResult와 parser
 
 - `ApiResult<T>` 타입 선언만으로 서버 응답이 검증되지는 않는다. 외부 값은 `unknown`에서 parser로 좁힌다. user-ui의 `mapApiResult(result, parser)`처럼 API 내부에서 검증하는 기존 경로도 허용한다. **Query 캐시나 UI 모델에 들어가기 전 정확히 한 검증 경계**를 두며 동일 응답을 중복 parse하지 않는다.
