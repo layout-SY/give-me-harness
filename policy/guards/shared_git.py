@@ -22,6 +22,7 @@ protocol = _loader.load("event_protocol")
 boundary = _loader.load("project_boundary")
 branch = config.branch_guard
 state = config.runtime_state
+names = _loader.load("artifact_names")
 
 
 def commit_paths(args: tuple[str, ...]) -> tuple[str, ...]:
@@ -44,7 +45,7 @@ def commit_paths(args: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(result)
 
 
-def protected_path(root: Path, relative: str, host: str, event: dict) -> str | None:
+def protected_path(root: Path, relative: str, host: str, event: dict, *, selecting: bool = False) -> str | None:
     """소스 위치와 독립된 host/session 경계. Git 병합은 기존 기록 전달만 허용한다."""
     parts = Path(relative).parts
     if not parts:
@@ -57,9 +58,41 @@ def protected_path(root: Path, relative: str, host: str, event: dict) -> str | N
     prefix = artifacts.artifact_sessions_prefix(host)
     if relative.startswith(prefix):
         record = artifacts.session_binding_record(event, root, host)
-        directory = record.get("directory") or os.environ.get(config.SESSION_DIR_ENV, "").strip("/")
+        directory = record.get("directory")
+        if not directory and not (selecting and os.environ.get(config.SESSION_DIR_MODE_ENV) == "suggested"):
+            directory = os.environ.get(config.SESSION_DIR_ENV, "").strip("/")
         if directory and relative != directory and not relative.startswith(directory.rstrip("/") + "/"):
             return f"다른 세션의 산출물은 읽기 전용입니다: {relative}"
+    return None
+
+
+def artifact_name_denial(root: Path, host: str, logical: str, event: dict) -> str | None:
+    """첫 선택에만 기존 claim·worktree·중앙 기록과 이름 충돌을 검사한다."""
+    common = branch.git_common_directory(root) or root
+    owner = state.owner_id(host, paths.event_session_id(event))
+    resource = "artifact:" + host + ":" + logical
+    owned = False
+    for path in (state.repository_state(common) / "claims").glob("*.json"):
+        record = state.read(path)
+        if names.name_key(record.get("resource", "")) != names.name_key(resource):
+            continue
+        if record.get("owner") != owner:
+            return f"다른 세션에서 사용 중인 산출물 이름입니다: {logical}. 다른 이름을 선택하세요."
+        owned = True
+    # 실패한 쓰기의 일부 파일이나 같은 assignment의 기존 예약은 계속 복구할 수 있다.
+    if owned:
+        return None
+    prefix = artifacts.artifact_sessions_prefix(host)
+    roots = [Path(item["worktree"]) / prefix for item in _loader.load("branch_relations").worktrees(root)]
+    project = os.environ.get(config.INJECT_PROJECT_ENV)
+    if project:
+        roots.append(config.CENTRAL_ROOT / "logs/projects" / project / host / "sessions")
+    key = names.name_key(Path(logical).name)
+    for parent in roots:
+        if parent.exists():
+            for child in parent.iterdir():
+                if names.name_key(child.name) == key:
+                    return f"이미 기록이 있는 산출물 이름입니다: {child}. 기존 기록을 보존하고 다른 이름을 선택하세요."
     return None
 
 
@@ -84,6 +117,11 @@ def bind_artifacts(event: dict, root: Path, host: str, contexts: list) -> str | 
     existing = state.read(state.repository_state(common) / "claims" / (state.digest(resource) + ".json"))
     if existing and existing.get("owner") != state.owner_id(host, paths.event_session_id(event)):
         return f"다른 세션의 산출물은 읽기 전용입니다: {logical}"
+    if (not artifacts.session_binding_record(event, root, host).get("directory")
+            and os.environ.get(config.SESSION_DIR_MODE_ENV) in {"suggested", "explicit"}):
+        denial = artifact_name_denial(root, host, logical, event)
+        if denial:
+            return denial
     artifacts._BINDING_DRAFT[binding_path] = {
         "directory": logical, "worktree": str(target), "branch": "", "task": "",
         "contract_version": "4", "merge_target": "",
@@ -306,7 +344,7 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
         if context is None:
             protocol.emit_denial(host, f"현재 프로젝트의 worktree 밖에 있는 변경 대상입니다: {raw}")
             return
-        denial = protected_path(*context, host, event)
+        denial = protected_path(*context, host, event, selecting=True)
         if not denial and context[1].startswith(artifacts.artifact_sessions_prefix(host)):
             denial = artifacts.artifact_layout_denial(*context, host)
         if denial:

@@ -307,6 +307,8 @@ def check_session(event: dict[str, Any], host: str) -> None:
 
     record = session_binding_record(event, root, host)
     focus = _artifact_policy.binding_worktree(root, record)
+    if branch_guard.SHARED_GIT_ACCESS:
+        messages.append(_artifact_policy.session_directory_context(event, root, host))
     messages.append(_approval_policy.readiness_context(event, focus if focus.is_dir() else root, host))
     context = branch_guard.branch_context(focus if focus.is_dir() else root)
     if context:
@@ -383,6 +385,8 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
     if mode == "branch-context":
         root = repository_root(event)
         focus = _artifact_policy.binding_worktree(root, session_binding_record(event, root, host))
+        if branch_guard.SHARED_GIT_ACCESS:
+            print(_artifact_policy.session_directory_context(event, root, host))
         print(_approval_policy.readiness_context(event, focus if focus.is_dir() else root, host))
         context = branch_guard.branch_context(focus if focus.is_dir() else root)
         if context:

@@ -33,7 +33,8 @@ inject system prompt에 `--role`이 있으면 해당 값은 이번 세션에서 
 
 ## 5. Claude 산출물과 handoff
 
-- Claude Code 세션 산출물의 정본은 `.claude/logs/sessions/{YYYY-MM-DD-task-slug}/`다.
+- Claude Code 세션 산출물의 정본은 `.claude/logs/sessions/{세션에서-정한-이름}/`다. 첫 `Write` 전에 현재 작업을 설명하는 이름을 직접 정한다. 예: `.claude/logs/sessions/회의실-예약-UI/plan.md`. 날짜·일련번호·assignment ID를 폴더 이름에 넣을 의무는 없다.
+- `ASAN_SESSION_DIR_MODE=suggested`이면 `ASAN_SESSION_DIR`는 자동 추천값이다. 첫 산출물을 다른 유효한 새 이름으로 작성할 수 있다. `--session-dir`를 지정했다면 그 경로를 따른다. 첫 쓰기에서 선택한 위치는 runtime이 저장하며 재개·압축 후에도 안내된 같은 이름을 사용한다. 이름 충돌 시 기존 기록을 수정하지 말고 새 이름을 선택한다.
 - 산출물 스키마는 `.claude/templates/`, 부분 역할 인계는 `.claude/templates/handoff.template.md`를 사용한다.
 - 기존 변경의 commit·merge만 수행하는 요청은 공통 문서화 정책의 예외에 따라 새 세션에서도 산출물을 작성하지 않는다. 일반 작업의 전체 책임자는 계획·최종 결과를, 부분 기여자는 `handoff.md`를 기록한다.
 - handoff의 `next_role`은 다음 역할의 제안이며 자동 권한이 아니다.

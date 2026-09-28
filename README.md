@@ -61,6 +61,10 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 
 기본 세션 cwd는 `projects/*.json`의 프로젝트 경로입니다. 승인된 격리 worktree에서 시작할 때는 `--worktree <path> --branch task/<name>`을 사용합니다. `--session-dir`은 선택 host에 맞춰 `.codex/logs/sessions/<task>`, `.claude/logs/sessions/<task>` 또는 `.opencode/logs/sessions/<task>`를 지정합니다. 도구는 지정 경로가 같은 Git 저장소인지와 현재 branch가 일치하는지만 확인하며 branch를 임의 전환하지 않습니다.
 
+`--session-dir`를 생략하면 산출물을 처음 작성하는 세션이 폴더 이름을 정할 수 있습니다. 예를 들어 Claude에 “산출물 폴더 이름은 `회의실-예약-UI`로 해줘”라고 지시하면 첫 `Write`를 `.claude/logs/sessions/회의실-예약-UI/plan.md`에 수행합니다. 자동 생성한 날짜·role·일련번호 경로는 추천값이며 필수가 아닙니다. 한글·영문 등 문자나 숫자로 시작하는 1~128자 이름에 문자·숫자·`._-`를 사용할 수 있습니다 (최대 255바이트).
+
+첫 쓰기의 이름은 예약되며 성공 후 재개·압축·worktree 이동에도 유지됩니다. 다른 세션의 예약이나 worktree·중앙 아카이브에 남은 이름과 충돌하면 다른 이름을 선택합니다. 기존 산출물의 자동 이동·이름 변경은 하지 않으며 재개 시 `--session-dir`로 저장된 위치를 덮어쓰지 않습니다. 변경된 정책은 새 inject 세션부터 적용됩니다. 기존 세션은 원래 bundle과 기록 경로를 유지합니다.
+
 같은 프로젝트의 모든 branch·linked worktree에 세션과 무관하게 접근할 수 있습니다. 다른 기능 계열로 이동하면 한 번 안내하며 소유권 인계나 새 세션을 요구하지 않습니다. 병렬 구현에는 별도 linked worktree를 사용합니다. 작업 공간의 공유 접근과 별도로 완료는 자식에서 직접 부모로 수행하고 미처리 자식을 검사합니다.
 
 ## 세션 동작

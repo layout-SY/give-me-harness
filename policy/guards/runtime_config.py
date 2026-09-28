@@ -59,6 +59,7 @@ HOST_ARTIFACT_SESSIONS_PREFIXES: Final = {
 }
 ARTIFACT_SESSIONS_PREFIXES: Final = tuple(HOST_ARTIFACT_SESSIONS_PREFIXES.values())
 SESSION_DIR_ENV: Final = "ASAN_SESSION_DIR"
+SESSION_DIR_MODE_ENV: Final = "ASAN_SESSION_DIR_MODE"
 TASK_ENV: Final = "ASAN_AGENT_POLICY_TASK"
 ARTIFACT_RESPONSIBILITY_ENV: Final = "ASAN_ARTIFACT_RESPONSIBILITY"
 INJECT_MODE_ENV: Final = "ASAN_AGENT_POLICY_MODE"
@@ -144,7 +145,6 @@ PORTFOLIO_HEADINGS: Final = (
     "이력서·포트폴리오 문구",
 )
 PORTFOLIO_FIELDS: Final = ("작업 유형", "관련 도메인/서비스", "문제 출처")
-SESSION_NAME_PATTERN: Final = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{1,127}")
 READ_EVIDENCE_TOOLS: Final = frozenset(
     {"glob", "grep", "read", "search", "skill", "webfetch", "websearch"}
 )

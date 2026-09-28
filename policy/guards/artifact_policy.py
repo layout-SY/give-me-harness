@@ -26,7 +26,7 @@ PORTFOLIO_FIELDS = _runtime_config.PORTFOLIO_FIELDS
 PORTFOLIO_HEADINGS = _runtime_config.PORTFOLIO_HEADINGS
 REQUIRED_ARTIFACTS = _runtime_config.REQUIRED_ARTIFACTS
 SESSION_DIR_ENV = _runtime_config.SESSION_DIR_ENV
-SESSION_NAME_PATTERN = _runtime_config.SESSION_NAME_PATTERN
+valid_session_name = load_runtime_module("artifact_names").valid_session_name
 SHELL_TOOLS = _runtime_config.SHELL_TOOLS
 STRUCTURED_MUTATION_TOOLS = _runtime_config.STRUCTURED_MUTATION_TOOLS
 TABLE_SEPARATOR = _runtime_config.TABLE_SEPARATOR
@@ -78,7 +78,7 @@ def artifact_session_directory(root: Path, raw_path: str, host: str) -> Path | N
         return None
     remainder = relative.removeprefix(prefix)
     parts = Path(remainder).parts
-    if len(parts) < 2 or SESSION_NAME_PATTERN.fullmatch(parts[0]) is None:
+    if len(parts) < 2 or not valid_session_name(parts[0]):
         return None
     candidate = root / prefix / parts[0]
     try:
@@ -96,7 +96,7 @@ def artifact_layout_denial(root: Path, raw_path: str, host: str) -> str | None:
     if relative is None or not relative.startswith(prefix):
         return None
     parts = Path(relative.removeprefix(prefix)).parts
-    if len(parts) < 2 or SESSION_NAME_PATTERN.fullmatch(parts[0]) is None:
+    if len(parts) < 2 or not valid_session_name(parts[0]):
         return f"세션 산출물 경로가 올바르지 않습니다: {relative}"
     artifact_parts = parts[1:]
     known = {*REQUIRED_ARTIFACTS, HANDOFF_ARTIFACT, *branch_guard.RUNTIME_CONTRACT["artifacts"].get("optional", [])}
@@ -125,7 +125,7 @@ def declared_session_directory(root: Path, host: str) -> Path | None:
         return None
     remainder = relative.removeprefix(prefix)
     parts = Path(remainder).parts
-    if len(parts) != 1 or SESSION_NAME_PATTERN.fullmatch(parts[0]) is None:
+    if len(parts) != 1 or not valid_session_name(parts[0]):
         return None
     return target
 
@@ -222,6 +222,20 @@ def bound_session_directory(event: dict[str, Any], root: Path, host: str) -> Pat
         if candidate is not None:
             return candidate
     return declared_session_directory(root, host)
+
+
+def session_directory_context(event: dict[str, Any], root: Path, host: str) -> str:
+    record = session_binding_record(event, root, host)
+    if record.get("directory"):
+        return (f"세션 산출물 경로: {record['directory']}\n"
+                f"마지막 기록 위치: {binding_worktree(root, record)}\n"
+                "재개·압축·worktree 이동 후에도 이 폴더 이름을 유지하세요.")
+    declared = os.environ.get(SESSION_DIR_ENV, "")
+    if os.environ.get(_runtime_config.SESSION_DIR_MODE_ENV) == "suggested":
+        return (f"세션 산출물 이름은 아직 선택하지 않았습니다. 산출물을 작성할 때 {artifact_sessions_prefix(host)} 아래에 "
+                "작업을 설명하는 새 폴더 이름을 선택할 수 있습니다. "
+                f"자동 추천 경로: {declared}. 날짜·일련번호는 필수가 아닙니다.")
+    return f"지정된 세션 산출물 경로: {declared}" if declared else ""
 
 
 def integrated_artifact_owner(event: dict[str, Any], root: Path, host: str, record: dict,
@@ -789,7 +803,7 @@ def documentation_denial(event: dict[str, Any], root: Path, host: str) -> str | 
         prefix = artifact_sessions_prefix(host)
         return (
             "현재 세션에 귀속된 산출물 디렉터리가 없습니다. "
-            f"{prefix}{{YYYY-MM-DD-task-slug}}/에 인계 문서를 작성하세요."
+            f"{prefix}{{session-name}}/에 인계 문서를 작성하세요."
         )
     handoff_complete = artifact_has_content(session / HANDOFF_ARTIFACT)
     full_issues = artifact_issues(session)
@@ -958,11 +972,20 @@ def complete_binding(event: dict[str, Any], root: Path, host: str) -> None:
             if key not in roots:
                 roots.append(key)
             write_json_state(sources_path, sources)
-    if outcome is False and pending.get("new_claim") and isinstance(binding, dict):
+    release_resource = pending.get("new_claim")
+    if outcome is False and branch_guard.SHARED_GIT_ACCESS and isinstance(binding, dict):
+        logical = binding.get("directory")
+        remaining = any(other_path != pending_path and other.get("binding", {}).get("directory") == logical
+                        for other_path, other in pending_bindings(path))
+        committed = load_json_state(path).get("directory") == logical
+        # 마지막 실패 결과에서 해제한다. 다른 진행 중인 쓰기와 성공한 binding이
+        # 사용하는 이름은 파일이 아직 보이지 않아도 보호한다.
+        release_resource = "artifact:" + host + ":" + logical if logical and not remaining and not committed else ""
+    if outcome is False and release_resource and isinstance(binding, dict):
         directory = Path(binding.get("worktree", str(root))) / binding.get("directory", "")
         if not directory.exists():
             common = branch_guard.git_common_directory(root) or root.resolve()
-            claim_path = runtime_state.repository_state(common) / "claims" / f"{runtime_state.digest(pending['new_claim'])}.json"
+            claim_path = runtime_state.repository_state(common) / "claims" / f"{runtime_state.digest(release_resource)}.json"
             claim = load_json_state(claim_path)
             if claim.get("owner") == runtime_state.owner_id(host, event_session_id(event)):
                 claim_path.unlink(missing_ok=True)

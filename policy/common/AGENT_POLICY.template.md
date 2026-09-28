@@ -72,9 +72,9 @@ Todo는 한국어로 작성하고 작업 위치, 수행 방법, 목적과 기대
 
 세션 산출물 정본은 실행 호스트별로 분리한다.
 
-- Codex: `.codex/logs/sessions/{YYYY-MM-DD-task-slug}/`
-- Claude Code: `.claude/logs/sessions/{YYYY-MM-DD-task-slug}/`
-- OpenCode: `.opencode/logs/sessions/{YYYY-MM-DD-task-slug}/`
+- Codex: `.codex/logs/sessions/{session-name}/`
+- Claude Code: `.claude/logs/sessions/{session-name}/`
+- OpenCode: `.opencode/logs/sessions/{session-name}/`
 
 ### 산출물 책임
 
@@ -87,6 +87,7 @@ Todo는 한국어로 작성하고 작업 위치, 수행 방법, 목적과 기대
 ### 세션과 작업 위치
 
 - assignment는 host·role·native session과 자기 산출물 경로를 식별한다. branch·worktree의 독점 권한이 아니다.
+- 산출물 폴더 이름은 첫 산출물을 작성하는 세션이 정한다. 날짜·일련번호는 필수가 아니며 `--session-dir`로 직접 지정한 이름은 존중한다. 자동 추천 경로와 첫 쓰기 후 저장된 실제 경로를 구분하고, 상세 규칙은 `documentation`을 따른다.
 - 프로젝트의 기본 checkout, 기존 branch, 부모·자식·형제 branch와 모든 연결 worktree에서 같은 세션으로 작업할 수 있다. 기준 branch도 동일하게 사용자 Git 승인 규칙을 따른다.
 - 명령 실행 경계는 launcher가 지정한 세션 프로젝트다. `user-ui` 세션에서 `admin-ui`를 대상으로 하는 명령과 그 반대는 조회를 포함해 실행하지 않는다. 다른 프로젝트 작업은 해당 프로젝트의 별도 세션에서 수행한다.
 - 실제 `workdir`, `cd`, `git -C`, Git 저장소 옵션과 패키지 명령의 실행 경로를 확인한다. 연결 worktree는 경로의 상하 관계가 아니라 같은 Git common directory인지로 판정한다. 프로젝트 밖 대상은 Git 승인 전에 차단하며 사용자 변경 승인으로 이 경계를 확장하지 않는다.

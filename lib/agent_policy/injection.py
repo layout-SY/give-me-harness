@@ -943,6 +943,8 @@ def prepare_injection(
         raise PolicyError(f"대상 프로젝트를 찾을 수 없습니다: {project.path}")
 
     if resume_assignment is not None:
+        if session_dir is not None:
+            raise PolicyError("재개 시 --session-dir로 기존 산출물 위치를 변경할 수 없습니다. 저장된 세션 경로를 사용하세요.")
         return resume_injection(project, host, role, resume_assignment, state_root or STATE_ROOT, model, responsibility)
 
     selected_state_root = (state_root or STATE_ROOT).resolve()
@@ -984,13 +986,14 @@ def prepare_injection(
         or Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
     ).resolve()
     codex_overrides: tuple[str, ...] = ()
-    # task는 브랜치 권한이 아닌 자유로운 설명이다. 파일 경로에는 안전한
-    # 짧은 slug만 사용하고 한글 설명 등은 role과 assignment로 구분한다.
+    # task는 자유로운 설명이다. 자동 경로는 충돌 없는 추천값이며 실제 이름은
+    # 첫 산출물 쓰기에서 선택한다. 명시적으로 지정한 경로는 그대로 유지한다.
     session_slug = re.sub(r"[^a-z0-9]+", "-", (task or role).removeprefix("task/").casefold()).strip("-")[:64] or role
     environment = {
         "ASAN_AGENT_POLICY_ASSIGNMENT": assignment_id,
         "ASAN_AGENT_POLICY_HOST": host,
         "ASAN_SESSION_DIR": session_dir or (artifact_session_root(host) + "/" + datetime.now(timezone.utc).strftime("%Y-%m-%d") + "-" + session_slug + "-" + assignment_id[:8]),
+        "ASAN_SESSION_DIR_MODE": "explicit" if session_dir or not shared else "suggested",
         "ASAN_AGENT_POLICY_STATE_ROOT": str(selected_state_root),
         INJECT_MODE_ENV: "inject",
         INJECT_PROJECT_ENV: project.id,

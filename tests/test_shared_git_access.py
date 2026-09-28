@@ -19,6 +19,7 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "lib"))
 from agent_policy.core import load_project, render_project
 from agent_policy.injection import prepare_injection
+from agent_policy.log_mirror import assignment_log_sources, collect_project_logs
 
 
 class SharedGitAccessTests(unittest.TestCase):
@@ -50,12 +51,13 @@ class SharedGitAccessTests(unittest.TestCase):
     def git(self, *args, root=None):
         return subprocess.check_output(["git", *args], cwd=root or self.root, text=True).strip()
 
-    def run_event(self, host, mode, event, *, role="logic"):
+    def run_event(self, host, mode, event, *, role="logic", environment=None):
         self.call += 1
         env = {k: v for k, v in os.environ.items() if not k.startswith("ASAN_")}
         env.update(ASAN_AGENT_POLICY_ROLE=role, ASAN_AGENT_POLICY_STATE_ROOT=str(self.state),
                    ASAN_SESSION_DIR=f".{host}/logs/sessions/shared-session",
                    ASAN_AGENT_POLICY_TASK="task/old-closed-task")
+        env.update(environment or {})
         result = subprocess.run([sys.executable, "-I", str(self.guard), mode, host],
             cwd=self.root, env=env, text=True, capture_output=True,
             input=json.dumps({"cwd": str(self.root), "session_id": f"{host}-session",
@@ -221,6 +223,137 @@ class SharedGitAccessTests(unittest.TestCase):
         other = self.run_event("codex", "pre-tool", {"tool_name": "Write", "tool_input": {
             "file_path": str(self.worktree / ".codex/logs/sessions/another/final-summary.md"), "content": "변경"}})
         self.assertIn("읽기 전용", other.stdout + other.stderr)
+
+    def test_session_can_choose_artifact_name_on_first_write_and_keep_it_after_restart(self):
+        environment = {"ASAN_SESSION_DIR_MODE": "suggested"}
+        for host, name in (("claude", "회의실-예약-UI"), ("codex", "reservation-logic"),
+                           ("opencode", "예약")):
+            for index, target in enumerate((self.root, self.worktree)):
+                path = target / f".{host}/logs/sessions/{name}/plan.md"
+                event = {"tool_name": "Write", "tool_call_id": f"{host}-write-{index}",
+                         "tool_input": {"file_path": str(path), "content": "선택한 작업 이름의 기록"}}
+                self.assert_allowed(self.run_event(host, "pre-tool", event, environment=environment))
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("선택한 작업 이름의 기록")
+                self.assert_allowed(self.run_event(host, "post-tool", {
+                    **event, "tool_response": {"success": True}}, environment=environment))
+                # Every hook runs in a fresh process; neither restart nor a worktree move resets the name.
+                other = target / f".{host}/logs/sessions/another-name/plan.md"
+                denied = self.run_event(host, "pre-tool", {"tool_name": "Write", "tool_input": {
+                    "file_path": str(other), "content": "다른 이름"}}, environment=environment)
+                self.assertIn("읽기 전용", denied.stdout + denied.stderr)
+            bindings = [json.loads(path.read_text()) for path in self.state.glob(
+                "repositories/*/sessions/*/session-binding.json")]
+            self.assertTrue(any(record["directory"] == f".{host}/logs/sessions/{name}"
+                                and record["worktree"] == str(self.worktree.resolve()) for record in bindings))
+            resumed = self.run_event(host, "session-start", {}, environment=environment)
+            self.assertIn(name, resumed.stdout)
+
+    def artifact_event(self, name, *, session="claude-session", call="artifact-write", target=None):
+        return {"session_id": session, "tool_name": "Write", "tool_call_id": call,
+                "tool_input": {"file_path": str((target or self.root) / ".claude/logs/sessions" / name / "plan.md"),
+                               "content": "현재 작업에 대한 기록"}}
+
+    def test_artifact_name_reservation_blocks_other_sessions_and_aliases_before_file_creation(self):
+        environment = {"ASAN_SESSION_DIR_MODE": "suggested"}
+        first = self.artifact_event("Reservation-UI")
+        self.assert_allowed(self.run_event("claude", "pre-tool", first, environment=environment))
+        for name in ("Reservation-UI", "reservation-ui"):
+            denied = self.run_event("claude", "pre-tool", self.artifact_event(
+                name, session="other-session", target=self.worktree), environment=environment)
+            self.assertTrue(denied.returncode != 0 or '"deny"' in denied.stdout)
+            self.assertIn("다른 세션", denied.stdout + denied.stderr)
+        self.assertEqual(len(list(self.state.glob("repositories/*/claims/*.json"))), 1)
+
+    def test_failed_first_artifact_write_releases_name_for_retry(self):
+        environment = {"ASAN_SESSION_DIR_MODE": "suggested"}
+        first = self.artifact_event("first-attempt")
+        self.assert_allowed(self.run_event("claude", "pre-tool", first, environment=environment))
+        self.assert_allowed(self.run_event("claude", "post-tool", {
+            **first, "tool_response": {"success": False}}, environment=environment))
+        self.assertFalse(list(self.state.glob("repositories/*/claims/*.json")))
+        self.assert_allowed(self.run_event("claude", "pre-tool", self.artifact_event(
+            "chosen-name", call="retry"), environment=environment))
+        self.assert_allowed(self.run_event("claude", "pre-tool", self.artifact_event(
+            "first-attempt", session="another-session"), environment=environment))
+
+    def test_artifact_name_stays_reserved_until_all_pending_writes_fail(self):
+        environment = {"ASAN_SESSION_DIR_MODE": "suggested"}
+        first = self.artifact_event("pending-name", call="first")
+        second = self.artifact_event("pending-name", call="second")
+        for event in (first, second):
+            self.assert_allowed(self.run_event("claude", "pre-tool", event, environment=environment))
+        self.assert_allowed(self.run_event("claude", "post-tool", {
+            **first, "tool_response": {"success": False}}, environment=environment))
+        denied = self.run_event("claude", "pre-tool", self.artifact_event(
+            "pending-name", session="another-session"), environment=environment)
+        self.assertTrue(denied.returncode != 0 or '"deny"' in denied.stdout,
+                        "진행 중인 두 번째 쓰기의 이름 예약을 먼저 해제하면 안 됩니다.")
+        self.assert_allowed(self.run_event("claude", "post-tool", {
+            **second, "tool_response": {"success": False}}, environment=environment))
+        self.assertFalse(list(self.state.glob("repositories/*/claims/*.json")))
+        self.assert_allowed(self.run_event("claude", "pre-tool", self.artifact_event(
+            "pending-name", session="another-session"), environment=environment))
+
+    def test_custom_name_does_not_adopt_unowned_history_in_any_worktree(self):
+        environment = {"ASAN_SESSION_DIR_MODE": "suggested"}
+        for index, target in enumerate((self.root, self.worktree)):
+            name = f"previous-session-{index}"
+            path = target / ".claude/logs/sessions" / name / "plan.md"
+            path.parent.mkdir(parents=True)
+            path.write_text("이전 세션의 원본")
+            denied = self.run_event("claude", "pre-tool", self.artifact_event(name), environment=environment)
+            self.assertIn("이미 기록", denied.stdout + denied.stderr)
+            self.assertEqual(path.read_text(), "이전 세션의 원본")
+        self.assertFalse(list(self.state.glob("repositories/*/claims/*.json")))
+
+    def test_custom_name_does_not_reuse_archived_directory(self):
+        central = self.base / "central"
+        archive = central / "logs/projects/user-ui/claude/sessions/previous-session"
+        archive.mkdir(parents=True)
+        (archive / "final-summary.md").write_text("보관한 원본")
+        configuration = self.guard.with_name("runtime_config.py")
+        lines = configuration.read_text().splitlines()
+        configuration.write_text("\n".join(
+            f"CENTRAL_ROOT: Final = Path({str(central)!r})" if line.startswith("CENTRAL_ROOT: Final =") else line
+            for line in lines) + "\n")
+        denied = self.run_event("claude", "pre-tool", self.artifact_event("previous-session"),
+            environment={"ASAN_SESSION_DIR_MODE": "suggested", "ASAN_AGENT_POLICY_PROJECT": "user-ui"})
+        self.assertIn("이미 기록", denied.stdout + denied.stderr)
+        self.assertFalse(list(self.state.glob("repositories/*/claims/*.json")))
+
+    def test_explicit_artifact_name_and_other_host_boundary_remain_enforced(self):
+        environment = {"ASAN_SESSION_DIR_MODE": "explicit"}
+        denied = self.run_event("claude", "pre-tool", self.artifact_event("other-name"), environment=environment)
+        self.assertIn("읽기 전용", denied.stdout + denied.stderr)
+        self.assert_allowed(self.run_event("claude", "pre-tool", self.artifact_event("shared-session"), environment=environment))
+        foreign = self.artifact_event("other-host")
+        foreign["tool_input"]["file_path"] = str(self.root / ".codex/logs/sessions/other-host/plan.md")
+        denied = self.run_event("claude", "pre-tool", foreign, environment={"ASAN_SESSION_DIR_MODE": "suggested"})
+        self.assertIn("다른 host", denied.stdout + denied.stderr)
+
+    def test_custom_artifact_name_flows_to_assignment_log_mirror(self):
+        assignment = "a" * 32
+        project = replace(load_project("user-ui"), path=self.root.resolve())
+        common = Path(self.git("rev-parse", "--absolute-git-dir")).resolve()
+        record_root = self.state / "repositories" / hashlib.sha256(str(common).encode()).hexdigest() / "assignments" / assignment
+        record_root.mkdir(parents=True)
+        environment = {"ASAN_SESSION_DIR_MODE": "suggested", "ASAN_AGENT_POLICY_ASSIGNMENT": assignment}
+        (record_root / "assignment.json").write_text(json.dumps({
+            "repository": str(common), "project": "user-ui", "host": "claude", "role": "logic",
+            "worktree": str(self.root.resolve()), "environment": {"ASAN_SESSION_DIR": ".claude/logs/sessions/shared-session"}}))
+        event = self.artifact_event("회의실-예약-UI", target=self.worktree)
+        self.assert_allowed(self.run_event("claude", "pre-tool", event, environment=environment))
+        path = Path(event["tool_input"]["file_path"])
+        path.parent.mkdir(parents=True)
+        path.write_text("실제 작업 계획")
+        self.assert_allowed(self.run_event("claude", "post-tool", {
+            **event, "tool_response": {"success": True}}, environment=environment))
+        sources = assignment_log_sources(project, "claude", assignment, self.state)
+        self.assertEqual(sources, (path.parent.resolve(),))
+        archive = self.base / "archive"
+        collect_project_logs(project, "claude", archive, sources)
+        self.assertEqual((archive / "user-ui/claude/sessions/회의실-예약-UI/plan.md").read_text(), "실제 작업 계획")
 
     def test_logging_in_another_worktree_keeps_the_approved_plan(self):
         def write_log(target, name, call):

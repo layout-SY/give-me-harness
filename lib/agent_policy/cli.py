@@ -33,6 +33,7 @@ from .injection import (
 )
 from .log_mirror import assignment_log_sources, collect_project_logs, selected_channels
 from .role_profiles import ARTIFACT_RESPONSIBILITIES, INJECT_ROLES, artifact_session_root
+from .runtime import load_runtime
 
 
 def project_argument(parser: argparse.ArgumentParser) -> None:
@@ -282,8 +283,8 @@ def normalized_session_dir(value: str | None, host: str) -> str | None:
         raise PolicyError(
             f"--session-dir는 {root.as_posix()}/<task> 형식의 상대 경로여야 합니다."
         )
-    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{1,127}", path.parts[-1]) is None:
-        raise PolicyError("--session-dir 작업 이름이 올바르지 않습니다.")
+    if not load_runtime("artifact_names").valid_session_name(path.parts[-1]):
+        raise PolicyError("--session-dir 이름은 한글·영문 등 문자나 숫자로 시작하고 문자·숫자·._-만 사용할 수 있습니다 (1~128자, 최대 255바이트).")
     return path.as_posix()
 
 
@@ -412,8 +413,6 @@ def run_start(
         return 0
     environment = dict(os.environ)
     environment.update(launch.environment)
-    if selected_session_dir is not None:
-        environment["ASAN_SESSION_DIR"] = selected_session_dir
     os.chdir(project.path)
     os.execvpe(launch.command[0], list(launch.command), environment)
     return 0

@@ -84,6 +84,7 @@ class InjectionTests(unittest.TestCase):
         role: str = "logic",
         task: str | None = None,
         responsibility: str = "owner",
+        session_dir: str | None = None,
     ) -> InjectionLaunch:
         return prepare_injection(
             self.project,
@@ -95,6 +96,7 @@ class InjectionTests(unittest.TestCase):
             source_codex_home=self.source_codex_home,
             task=task,
             responsibility=responsibility,
+            session_dir=session_dir,
         )
 
     @staticmethod
@@ -741,6 +743,29 @@ class InjectionTests(unittest.TestCase):
         self.assertNotIn("..", escaped.environment["ASAN_SESSION_DIR"])
         with self.assertRaises(PolicyError):
             self.prepare("claude", task="invalid\ntask")
+
+    def test_artifact_directory_default_is_suggested_and_explicit_name_is_preserved(self) -> None:
+        launch = self.prepare("claude")
+        self.assertEqual(launch.environment.get("ASAN_SESSION_DIR_MODE"), "suggested")
+        for name in ("회의실-예약-UI", "예약", "A", "reservation-ui"):
+            with self.subTest(name=name):
+                directory = f".claude/logs/sessions/{name}"
+                self.assertEqual(normalized_session_dir(directory, "claude"), directory)
+                explicit = self.prepare("claude", session_dir=directory)
+                self.assertEqual(explicit.environment["ASAN_SESSION_DIR"], directory)
+                self.assertEqual(explicit.environment.get("ASAN_SESSION_DIR_MODE"), "explicit")
+
+    def test_artifact_directory_rejects_unsafe_names(self) -> None:
+        for name in ("..", ".hidden", "../outside", "nested/name", "back\\slash", "name\nline", "name\x00", "$(pwd)",
+                     "a" * 129, "가" * 86):
+            with self.subTest(name=name), self.assertRaises(PolicyError):
+                normalized_session_dir(f".claude/logs/sessions/{name}", "claude")
+
+    def test_resume_does_not_override_saved_artifact_directory(self) -> None:
+        with self.assertRaisesRegex(PolicyError, "--session-dir"):
+            prepare_injection(self.project, "claude", "logic", None,
+                state_root=self.state_root, resume_assignment="a" * 32,
+                session_dir=".claude/logs/sessions/overridden")
 
     def test_start_parser_is_inject_only_and_sync_commands_are_absent(self) -> None:
         default = build_parser().parse_args(
