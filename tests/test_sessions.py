@@ -93,6 +93,18 @@ class SessionResumeTests(unittest.TestCase):
         self.assertEqual(resumed.bundle_root, self.launch.bundle_root)
         self.assertTrue(self.rows()[0]["resume_command"])
 
+    def test_resume_refreshes_native_worktree_directories_without_changing_assignment(self):
+        root = self.fixture.project_root
+        subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.test",
+                        "commit", "--allow-empty", "-qm", "base"], cwd=root, check=True)
+        linked = self.fixture.root / "created-after-launch"
+        subprocess.run(["git", "worktree", "add", "-qb", "later", str(linked)], cwd=root, check=True)
+        resumed = self.resume()
+        added = [resumed.command[index + 1] for index, arg in enumerate(resumed.command) if arg == "--add-dir"]
+        self.assertEqual(added, [str(linked.resolve())])
+        self.assertEqual(resumed.environment["ASAN_AGENT_POLICY_ASSIGNMENT"], self.record_path.parent.name)
+        self.assertEqual(resumed.bundle_root, self.launch.bundle_root)
+
     def test_catalog_is_read_only_and_spans_homes(self):
         self.fixture.prepare("codex", role="ui")
         before = {str(p): p.read_bytes() for p in self.fixture.state_root.rglob("*") if p.is_file()}

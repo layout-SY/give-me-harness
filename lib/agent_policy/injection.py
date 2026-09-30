@@ -885,12 +885,25 @@ def _prepare_codex_home(
     return codex_home, tuple(overrides)
 
 
+def _additional_workspaces(project: ProjectConfig) -> tuple[Path, ...]:
+    """중앙 Git 경계 안의 현재 worktree와 설정된 생성 루트만 전달한다."""
+    listing = subprocess.run(["git", "worktree", "list", "--porcelain", "-z"], cwd=project.path,
+                             text=True, capture_output=True, check=True).stdout
+    candidates = {Path(item[9:]).resolve() for item in listing.split("\0") if item.startswith("worktree ")}
+    if project.worktree_root is not None and project.worktree_root.is_dir():
+        candidates.add(project.worktree_root.resolve())
+    primary = project.path.resolve()
+    return tuple(sorted((path for path in candidates if path.is_dir() and path != primary
+                         and not path.is_relative_to(primary)), key=str))
+
+
 def _host_command(
     host: str,
     model: str | None,
     bundle_root: Path,
     prompt: str,
     codex_overrides: tuple[str, ...] = (),
+    workspaces: tuple[Path, ...] = (),
 ) -> tuple[str, ...]:
     command = list(HOST_COMMANDS[host])
     if host == "codex":
@@ -920,6 +933,9 @@ def _host_command(
             command.extend(("--mcp-config", str(bundle_root / "claude-mcp.json")))
     if model:
         command.extend(("--model", model))
+    if host in {"codex", "claude"}:
+        for directory in workspaces:
+            command.extend(("--add-dir", str(directory)))
     return tuple(command)
 
 
@@ -1029,11 +1045,12 @@ def prepare_injection(
 
     prompt_path = bundle_root / "system-prompt.md"
     prompt = prompt_path.read_text(encoding="utf-8")
-    command = _host_command(host, model, bundle_root, prompt, codex_overrides)
+    workspaces = _additional_workspaces(project) if shared else ()
+    command = _host_command(host, model, bundle_root, prompt, codex_overrides, workspaces)
     record_path = assignment_root / "assignment.json"
     record = json.loads(record_path.read_bytes())
     record.update({"command": list(command), "environment": environment, "model": model,
-                   "system_prompt": str(prompt_path)})
+                   "system_prompt": str(prompt_path), "additional_workspaces": [str(path) for path in workspaces]})
     atomic_write(record_path, _json_bytes(record))
     return InjectionLaunch(
         project=project,
@@ -1078,6 +1095,12 @@ def resume_injection(project: ProjectConfig, host: str, role: str, assignment: s
     native = record["native_session"]
     bundle = Path(record["bundle_root"])
     command = list(record["command"])
+    if record.get("git_access") == "shared-project" and host in {"codex", "claude"}:
+        # 새 linked worktree를 반영하고 더 이상 등록되지 않은 이전 경로는 제거한다.
+        command = [arg for index, arg in enumerate(command)
+                   if arg != "--add-dir" and (index == 0 or command[index - 1] != "--add-dir")]
+        for directory in _additional_workspaces(project):
+            command.extend(("--add-dir", str(directory)))
     if host == "codex":
         command[1:1] = ["resume", native]
         command.extend(["--cd", str(project.path.resolve())])

@@ -77,6 +77,24 @@ class InjectionTests(unittest.TestCase):
             if path.is_file()
         }
 
+    def test_shared_launcher_passes_only_project_worktree_directories_to_native_hosts(self):
+        subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.test",
+                        "commit", "--allow-empty", "-qm", "base"], cwd=self.project_root, check=True)
+        linked = self.root / "linked worktree"
+        subprocess.run(["git", "worktree", "add", "-qb", "linked", str(linked)],
+                       cwd=self.project_root, check=True)
+        storage = self.root / "project-worktrees"
+        storage.mkdir()
+        self.project = replace(self.project, worktree_root=storage)
+        for host in ("codex", "claude"):
+            launch = self.prepare(host)
+            added = [launch.command[index + 1] for index, arg in enumerate(launch.command) if arg == "--add-dir"]
+            self.assertEqual(set(added), {str(linked.resolve()), str(storage.resolve())})
+            self.assertNotIn(str(self.root.resolve()), added)
+            self.assertNotIn(str(self.state_root.resolve()), added)
+            self.assertNotIn("--dangerously-bypass-approvals-and-sandbox", launch.command)
+            self.assertNotIn("--dangerously-skip-permissions", launch.command)
+
     def prepare(
         self,
         host: str,
