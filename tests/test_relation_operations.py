@@ -409,6 +409,21 @@ class RelationOperationTests(unittest.TestCase):
         self.git("commit", "-qm", name, root=root)
         return self.git("rev-parse", "HEAD", root=root)
 
+    def test_stale_merge_review_reports_branch_expected_and_current_head(self):
+        self.seed_tree()
+        self.git("switch", "-q", "A")
+        operations = self.module("git_operations")
+        with patch.dict(os.environ, self.env, clear=True):
+            evidence = operations.review.collect(self.root, "K", "A", "merge", ["git diff --check"], False)
+            report = {"evidence_digest": evidence["evidence_digest"],
+                      **{key: "검토 완료" for key in operations.review.REPORT_FIELDS}}
+            current = self.commit_file(self.root, "src/parent.ts", "export const changed = true;\n")
+            with self.assertRaises(RuntimeError) as failure:
+                operations.prepare_completion(self.root, self.root, evidence, report)
+            message = str(failure.exception)
+            for value in ("A", evidence["target_head"], current, "src/parent.ts", "재검토", "보류"):
+                self.assertIn(value, message)
+
     def test_real_completion_cleanup_and_deleted_sibling_history(self):
         self.seed_tree()
         self.git("switch", "-q", "A")

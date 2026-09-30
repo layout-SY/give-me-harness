@@ -576,6 +576,13 @@ def record_user_prompt(event: dict[str, Any], root: Path, host: str) -> None:
         path = approval_state_path(event, root, host)
         pending = load_approval_state(path)
         explicit = is_implementation_approval(prompt)
+        cancel_git = normalize_prompt(prompt) in {
+            "명령 실행 승인 취소", "git 승인 취소", "revoke git approval", "cancel git approval"}
+        if cancel_git or (pending and DENIAL_WORD_PATTERN.search(prompt)):
+            load_runtime_module("git_operations").revoke_consent(root, host, event)
+            if path:
+                path.unlink(missing_ok=True)
+            pending = {}
         if pending and prompt.strip() == COMMAND_APPROVAL_PHRASE and not DENIAL_WORD_PATTERN.search(prompt):
             pending["approved"] = True
             pending["created_at"] = time.time()

@@ -175,3 +175,28 @@ def require_report(evidence: dict, report: dict) -> None:
 
 def current(root: Path, evidence: dict) -> bool:
     return evidence["snapshot"] == snapshot(root, evidence["source"], evidence["target"])
+
+
+def change_message(root: Path, evidence: dict) -> str:
+    """검토 근거와 현재 실제 상태의 차이를 표시한다. 의미적 영향은 다시 검토한다."""
+    before, after = evidence["snapshot"], snapshot(root, evidence["source"], evidence["target"])
+    lines = ["검토한 HEAD·변경·하위 작업이 달라져 현재 병합 요청을 차단했습니다."]
+    for identifier in sorted(set(before) | set(after)):
+        old, new = before.get(identifier, {}), after.get(identifier, {})
+        if old == new:
+            continue
+        name = (new.get("relation") or old.get("relation") or {}).get("name", identifier)
+        old_git, new_git = old.get("git") or {}, new.get("git") or {}
+        old_head, new_head = old_git.get("head"), new_git.get("head")
+        lines.append(f"- {name}: 기대 HEAD={old_head or '없음'}, 현재 HEAD={new_head or '없음'}")
+        if old_head and new_head and old_head != new_head:
+            files = git._output(root, "diff", "--name-status", old_head, new_head, "--").splitlines()
+            lines.extend("  " + value for value in files[:20])
+            if len(files) > 20:
+                lines.append(f"  외 {len(files) - 20}개 파일: 두 HEAD의 전체 diff를 확인하세요.")
+        if old_git.get("worktrees") != new_git.get("worktrees"):
+            lines.append("  worktree·staged·unstaged·untracked 상태가 변경됐습니다. 현재 diff를 대조하세요.")
+        if old.get("relation") != new.get("relation") or old.get("past_integrations") != new.get("past_integrations"):
+            lines.append("  관계·하위 작업·기존 통합 기록이 변경됐습니다. graph와 검토 참여 대상을 대조하세요.")
+    lines.append("선택 가능한 다음 조치: 변경 commit·계약 영향을 재검토하여 새 검토를 승인받거나 병합을 보류하세요. 기존 승인을 반복해도 이 차이는 해소되지 않습니다.")
+    return "\n".join(lines)

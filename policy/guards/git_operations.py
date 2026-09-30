@@ -158,8 +158,10 @@ def prepare_write_recovery(root: Path, cwd: Path, identifier: str, reason: str) 
 
 def prepare_completion(root: Path, cwd: Path, evidence: dict, report: dict) -> dict:
     review.require_report(evidence, report)
-    if evidence["repository"] != str(git.git_common_directory(root)) or not review.current(root, evidence):
-        raise RuntimeError("검토한 저장소 또는 변경이 달라졌습니다. 재검토하세요.")
+    if evidence["repository"] != str(git.git_common_directory(root)):
+        raise RuntimeError("검토한 저장소와 현재 Git common directory가 다릅니다. 해당 프로젝트에서 재검토하세요.")
+    if not review.current(root, evidence):
+        raise RuntimeError(review.change_message(root, evidence))
     allowed = set(git.RUNTIME_CONTRACT["git"]["validation_commands"])
     if any(value not in allowed for value in evidence["verification"]):
         raise RuntimeError("프로젝트에 등록된 검증 명령을 사용하세요.")
@@ -207,7 +209,8 @@ def validate(root: Path, operation: dict) -> None:
             raise RuntimeError("승인 후 관련 Git 변경이 달라졌습니다. 재검토·재승인이 필요합니다.")
     elif operation["kind"] == "completion":
         if not review.current(root, operation["evidence"]):
-            raise RuntimeError("승인 후 관련 HEAD·변경·하위 작업이 달라졌습니다. 형제 검토를 갱신하세요.")
+            raise RuntimeError(review.change_message(root, operation["evidence"])
+                + f"\noperation={operation['id']}, stage={operation['stage']}. 이전 실행·검증 결과는 show로 확인하세요.")
         relations.completion_check(root, relations.read(root), operation["evidence"]["source"], operation["evidence"]["target"])
         target = Path(operation["target_worktree"])
         if operation["target_before"] != {"branch": git.current_branch(target), "head": git.head(target), "changes": relations.content_snapshot(target)}:
@@ -226,12 +229,42 @@ def validate(root: Path, operation: dict) -> None:
             raise RuntimeError("종료 확인 후 도구 기록 또는 변경이 달라졌습니다. 복구 근거를 재검토하세요.")
 
 
+def consent_path(root: Path, host: str, event: dict) -> Path | None:
+    return state.session_path(git.git_common_directory(root), host,
+        _loader.load("tool_paths").event_session_id(event), "operation-consent")
+
+
+def consent_context(root: Path, host: str, event: dict) -> dict:
+    return {"host": host, "assignment": os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT", ""),
+            "session": _loader.load("tool_paths").event_session_id(event),
+            "epoch": state.read(consent_path(root, host, event)).get("epoch", 0)}
+
+
+def revoke_consent(root: Path, host: str, event: dict) -> None:
+    path = consent_path(root, host, event)
+    with state.locked(relations.directory(root) / "locks/git.lock"):
+        state.write(path, {"epoch": state.read(path).get("epoch", 0) + 1})
+
+
+def resumable(root: Path, operation: dict, host: str, event: dict) -> bool:
+    """미실행 Git만 재예약한다. Claude의 승인 전 grant는 승인 근거가 아니다."""
+    authorized = operation.get("authorized", {})
+    context = consent_context(root, host, event)
+    if (operation.get("kind") != "git" or operation.get("stage") != "prepared"
+            or operation.get("results") or authorized.get("fingerprint") != operation["fingerprint"]
+            or context["session"] == "missing-session-id" or authorized.get("consent") != context):
+        return False
+    validate(root, operation)
+    return True
+
+
 def grant(root: Path, operation: dict, host: str, event: dict) -> None:
     # This is an operation execution reservation, not a branch owner/claim.
     state.write(operation_path(root, operation["id"]).with_suffix(".grant.json"),
         {"fingerprint": operation["fingerprint"], "host": host, "event": event,
          "assignment": os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT", ""),
-         "created_at": time.time(), "cwd": operation["cwd"]})
+         "created_at": time.time(), "cwd": operation["cwd"],
+         "consent": consent_context(root, host, event)})
 
 
 def run(root: Path, args: list[str]) -> subprocess.CompletedProcess:
@@ -520,15 +553,24 @@ def _execute(root: Path, identifier: str, execution_cwd: Path | None = None) -> 
     if (current_host and ticket.get("host") != current_host or
             ticket.get("assignment", "") != os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT", "")):
         raise RuntimeError("다른 도구 실행의 승인 예약입니다. 현재 호스트의 execute 요청으로 예약하세요.")
-    grant_path.unlink()
     with state.locked(relations.directory(root) / "locks/git.lock"):
+        consent = consent_context(root, ticket["host"], ticket["event"])
+        if ticket.get("consent", {**consent, "epoch": 0}) != consent:
+            raise RuntimeError("Git 실행 승인이 취소·철회되었습니다. 현재 작업을 다시 보고하고 승인받으세요.")
         operation = load(root, identifier)
         if operation["stage"] in {"cleaned", "done", "retained"}:
+            grant_path.unlink()
             return operation
         if operation["stage"] != "prepared":
             raise RuntimeError("중단된 실행 기록입니다. 같은 operation ID로 recover를 사용하세요. 새 commit을 다시 실행하지 않습니다.")
         validate(root, operation)
-        operation["authorized"] = {"at": time.time(), "fingerprint": operation["fingerprint"]}
+        # 실제 승인된 runner 진입에서만 지속 동의를 남긴다. preflight 실패와
+        # 이미 시작한 Git을 stage로 구분하며, 호출 ticket은 다시 사용하지 않는다.
+        operation["authorized"] = {"at": time.time(), "fingerprint": operation["fingerprint"], "consent": consent}
+        if operation["kind"] == "git" and "reason" in operation:
+            operation["previous_failure"] = operation.pop("reason")
+        save(root, operation)
+        grant_path.unlink()
         try:
             if operation["kind"] == "git":
                 denial = _loader.load("shared_git").git_denial(ticket["event"], root, ticket["host"], operation["command"], Path(operation["cwd"]))

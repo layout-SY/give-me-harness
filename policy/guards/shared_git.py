@@ -305,6 +305,11 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
                 if cwd.resolve() != Path(operation["cwd"]):
                     protocol.emit_denial(host, "승인 대상의 실제 실행 위치와 다릅니다. 해당 workdir에서 실행하세요.")
                     return
+                if operation["stage"] != "prepared":
+                    protocol.emit_denial(host, f"operation={operation['id']}, stage={operation['stage']}: 이미 시작하거나 완료된 실행입니다. "
+                        "show로 실제 결과를 확인하세요. 동일 Git 명령 전체를 재승인·반복하지 않습니다. "
+                        "중단된 completion 작업은 recover 가능 여부를 확인하세요.")
+                    return
                 operations.validate(root, operation)
                 if operation["kind"] == "git":
                     denial = git_denial(event, root, host, operation["command"], cwd)
@@ -327,7 +332,10 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
                     message += f"\n관계 변경: {operation['action']} {operation['name']} → {operation.get('parent') or operation.get('new_name') or ''}"
                 elif operation["kind"] == "write-recovery":
                     message += f"\n결과 미확인 도구 정리: {operation['write_id']}\n종료 확인 근거: {operation['reason']}"
-                if host == "claude":
+                if operations.resumable(root, operation, host, event):
+                    operations.grant(root, operation, host, event)
+                    protocol.emit_operation_resume(host, "Git 미실행을 확인한 동일 작업의 기존 승인으로 재예약했습니다.\n" + notice)
+                elif host == "claude":
                     operations.grant(root, operation, host, event)
                     protocol.emit_operation_approval(host, message + "\n호스트 권한 요청에서 승인하세요.")
                 elif approval.operation_allowed(event, cwd, host, command):

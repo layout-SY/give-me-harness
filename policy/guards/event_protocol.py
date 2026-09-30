@@ -114,6 +114,16 @@ def emit_operation_approval(host: str, message: str) -> None:
     raise SystemExit(2)
 
 
+def emit_operation_resume(host: str, message: str) -> None:
+    """검증된 기존 동의만 재사용한다. 일반 안내를 native 승인으로 바꾸지 않는다."""
+    if host == "claude":
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+            "permissionDecision": "allow", "permissionDecisionReason": message,
+            "additionalContext": message}}, ensure_ascii=False))
+        return
+    emit_notice(host, message)
+
+
 def emit_denial(host: str, message: str) -> None:
     if host == "codex":
         json.dump(
