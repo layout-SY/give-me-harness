@@ -12,9 +12,9 @@ description: 코딩, 승인, 검증, 리뷰, 문서화 및 재사용에 관한 �
 - `type-definition`: 계약 및 데이터 타입 규칙.
 - `publishing`: UI 구조, 접근성 및 이벤트 계약.
 - `styles`: 공용 스타일링 및 자산 재사용.
-- `ui-library`: 외부 UI 어댑터 경계.
+- `ui-library`: UI 계획의 항목별 자산 선정 문서, 외부 UI 어댑터 계약과 라이브러리별 사용 스킬.
 - `validation`: 폼 검증 및 요청 데이터 매핑.
-- `data-fetch-layer`: 요청 계층의 책임 경계.
+- `data-fetch-layer`: 요청 계층과 UI 없는 controller의 양방향 계약·책임 경계.
 - `hook-extraction`: 상태를 가진 로직의 추출 여부 결정.
 - `abstraction-strategy`: 추상화 전에 필요한 근거.
 - `refactoring`: 동작을 보존하는 정리.

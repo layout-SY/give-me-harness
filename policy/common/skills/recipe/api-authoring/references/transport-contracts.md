@@ -2,14 +2,15 @@
 
 ## 표준 경로
 
-`화면 → 도메인 hook / query·mutation options → 도메인 API factory → ApiClient → Axios`를 기본으로 사용한다. API factory는 React 상태, 모달, 라우팅, QueryClient를 소유하지 않는다. 기존 feature/entities 경계를 유지하고 앱에서 연결된 이웃 구현을 참조한다. 미연결 레거시 파일의 존재만으로 표준을 판단하지 않는다.
+`화면 → UI 없는 controller → 도메인 hook / query·mutation options → 도메인 API factory → ApiClient → Axios`를 기본으로 사용한다. controller의 양방향 UI 계약과 선행 구현에 따른 적용·불일치 질문 기준은 [controller 계약](ui-controller.md)을 따른다. API factory는 React 상태, 모달, 라우팅, QueryClient를 소유하지 않는다. 기존 feature/entities 경계를 유지하고 앱에서 연결된 이웃 구현을 참조한다. 미연결 레거시 파일의 존재만으로 표준을 판단하지 않는다.
 
 | 계층             | 책임                                       | 검토할 계약                                          |
 | ---------------- | ------------------------------------------ | ---------------------------------------------------- |
 | 요청 DTO·mapper  | 허용 필드 선택, ID·query·payload 검증      | 누락 / undefined / null, 배열 직렬화, 날짜·숫자 표현 |
 | API factory      | URL·method·config·signal·body 연결         | 인증, path encoding, multipart 필드명                |
-| 응답 parser      | unknown을 검증하고 UI 모델로 변환          | envelope, 목록·상세·mutation별 성공 body             |
+| 응답 parser      | unknown을 검증하고 도메인 데이터로 변환    | envelope, 목록·상세·mutation별 성공 body             |
 | Query / mutation | 실패를 throw로 변환, 캐시·비동기 상태 소유 | key·retry·invalidation·오류 표시                     |
+| Controller       | 응답→UI 데이터·상태, UI 입력·동작→요청 계약 연결 | 선행 UI/controller 계약, 매핑·불일치·사용자 확인 |
 
 ## 공통 응답 DTO 재사용
 

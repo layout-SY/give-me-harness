@@ -709,6 +709,26 @@ class InjectionTests(unittest.TestCase):
             ).exists()
         )
 
+    def test_ui_asset_and_controller_guidance_reaches_every_host_and_role(self) -> None:
+        before = self.consumer_snapshot()
+        skill_root = "policy/.agent-policy/common/skills"
+        for host in ("codex", "claude", "opencode"):
+            for role in ("logic", "orchest", "ui", "generate", "review"):
+                with self.subTest(host=host, role=role):
+                    launch = self.prepare(host, role=role)
+                    for relative in (
+                        "policy/ui-library/SKILL.md",
+                        "policy/ui-library/references/ui-asset-plan.template.md",
+                        "policy/ui-library/references/external-ui-library-skill.template.md",
+                        "reference/libraries/SKILL.md",
+                        "recipe/api-authoring/references/ui-controller.md",
+                    ):
+                        bundled = launch.bundle_root / skill_root / relative
+                        self.assertTrue(bundled.is_file(), f"{host}/{role}: {relative}")
+                        source = CENTRAL_ROOT / "policy/common/skills" / relative
+                        self.assertEqual(bundled.read_bytes(), source.read_bytes())
+        self.assertEqual(self.consumer_snapshot(), before)
+
     def test_inject_requires_role_and_session_dir_matches_host(self) -> None:
         with (
             patch("agent_policy.cli.select_projects", return_value=(self.project,)),

@@ -1,6 +1,6 @@
 ---
 name: recipe-api-authoring
-description: FSD 경계에서 typed Axios API, DTO/parser, TanStack Query 및 MSW 계약을 일관되게 조립합니다.
+description: FSD 경계에서 typed API·DTO/parser·Query와 UI 없는 controller의 양방향 계약을 조립합니다.
 ---
 
 # API 작성 레시피
@@ -11,7 +11,7 @@ description: FSD 경계에서 typed Axios API, DTO/parser, TanStack Query 및 MS
 
 ## 절차
 
-1. `src/shared/ui/`와 기존 `shared/api`, 동일 feature의 인접 구현을 먼저 확인합니다.
+1. `src/shared/ui/`와 기존 `shared/api`, 동일 feature의 인접 구현 및 다른 도메인의 controller·공개 타입·mapper·UI 사용처를 먼저 확인합니다.
 2. 공통 정책의 추측 금지 규칙에 따라 endpoint, 인증, 요청/응답 envelope, 오류, pagination, 상태 vocabulary와 ID의 의미·출처·관계·전달 방식을 근거로 확인합니다. 현재 프로젝트에서 필요한 항목을 확인하지 못하거나 서비스 정책·기획이 모호하면 누락된 결정을 모두 사용자에게 질문하고 답변을 기다립니다. 요구사항에 직접 적혀 있지 않은 데이터가 필요해 보여도 그 API나 조회 방식을 임의로 정하지 않습니다.
 3. 외부 요청/응답 형태는 `*RequestDto`, `*QueryDto`, `*ResponseDto`로 정의하고 UI 모델과 분리합니다. 응답 DTO를 작성하기 전에 [전송 계약의 공통 응답 DTO 재사용 규칙](references/transport-contracts.md)을 확인하고, 현재 프로젝트의 공통 envelope·pagination DTO와 schema를 계약에 맞게 import하여 조합합니다. 도메인 DTO에는 고유 payload를 정의하고, `ApiClient`가 처리하는 envelope를 중복으로 감싸지 않습니다.
 4. 알 수 없는 응답 값은 parser에서 좁힌 뒤 도메인 모델로 변환합니다.
@@ -21,12 +21,14 @@ description: FSD 경계에서 typed Axios API, DTO/parser, TanStack Query 및 MS
 8. mutation 성공 시 영향받는 최소 key만 무효화합니다. 기존 범용 요청 hook인 `useApi`로 신규 query hook을 다시 감싸지 않습니다.
 9. MSW handler는 확인된 실제 endpoint, envelope, query/path parsing과 동일하게 작성하고 success·empty·error·상태별 fixture를 제공합니다. 미확정 서비스 계약을 mock·fixture로 먼저 만들지 않습니다. backend 계약이 아직 없다면 사용자에게 계약과 mock 허용 범위를 먼저 확인받습니다.
 10. 요청 DTO mapper는 허용 필드만 명시적으로 옮기며 RHF form value를 그대로 전송하지 않습니다.
-11. 실제 Axios 표면을 통해 happy path와 오류 경계를 확인하고 `npm run build`, `npm run lint`를 실행합니다.
+11. UI와 API를 연결할 때는 [controller 계약](references/ui-controller.md)에 따라 UI 없는 controller를 구현하거나 기존 controller를 확장합니다. Logic 선행이면 UI가 controller 계약에 맞추고, UI 선행이면 Logic이 기존 UI 계약에 맞춰 controller를 구현합니다. 후자의 UI 항목과 controller·요청/응답 DTO가 일치하지 않으면 사용자에게 차이·대안·영향을 질문하고 답변 전 해당 연결을 진행하지 않습니다.
+12. 실제 Axios 표면의 happy path·오류 경계와 controller의 응답→UI·UI→요청 계약을 화면 없이 검증하고, 현재 프로젝트에서 제공하는 build·lint·test 명령을 실행합니다.
 
 ## 상황별 참조
 
 - 공통 응답 DTO 재사용, DTO 검증, nullable 응답, 인증, 취소, multipart 또는 fetch 예외를 다룰 때 [전송 계약](references/transport-contracts.md)을 읽습니다.
 - Query key, mutation 캐시, 낙관적 갱신 또는 `useApi` 동시 호출을 다룰 때 [Query와 명령형 요청](references/query-mutation.md)을 읽습니다.
+- UI·Logic의 구현 순서, 양방향 계약, controller 구현·인계와 불일치 질문 기준은 [controller 계약](references/ui-controller.md)을 읽습니다.
 - 스택과 사용 가능한 client 메서드는 현재 `package.json`·lockfile·소스에서 확인합니다. 이전 프로젝트의 프레임워크 버전이나 상태 라이브러리를 가정하지 않습니다.
 
 ## 명명 예시
@@ -52,3 +54,4 @@ export const proposalApi = (client: ApiClient) => ({
 - query key와 invalidation 범위가 데이터 의존성을 정확히 반영합니다.
 - MSW와 실제 backend가 같은 공개 계약을 사용합니다.
 - 미확정 계약과 UI 부수 효과가 transport 함수에 숨겨져 있지 않습니다.
+- API에 연결할 UI에는 UI 없는 controller의 양방향 계약이 있고, 선행 구현에 따른 기준과 불일치에 대한 사용자 답변이 기록되어 있습니다.

@@ -8,7 +8,8 @@ Logic 역할은 화면 표현 밖의 기능 동작과 데이터 흐름을 담당
 - hook, util, lib, store, atom 또는 상태 머신과 도메인 상태 전이
 - 데이터 조회·가공·캐시·영속성 및 업무 규칙
 - 확인된 scope 안의 `App.tsx`, `main.tsx`, feature barrel, 패키지·빌드 설정과 기능 통합
-- UI 역할이 제공한 최신 props/callback 계약을 다시 읽고 기능을 연결하는 작업
+- UI 없는 controller를 구현·확장해 응답→UI 데이터·상태와 UI 입력·동작→API 요청 계약을 제공하는 작업
+- `api-authoring/references/ui-controller.md`에 따라 Logic 선행이면 controller 계약을 UI에 제공하고, UI 선행이면 기존 props·입력·callback 계약에 맞춰 controller를 구현한다. 후자의 UI 항목과 controller·DTO 불일치는 사용자에게 확인받고 연결한다.
 - 변경 동작을 입증하는 타입 검사, lint, build와 필요한 기존 테스트
 
 ## 경계

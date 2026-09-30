@@ -7,7 +7,7 @@
 ## 기능 작업
 
 1. Planner가 요청과 handoff를 분류하고 기본 역할, scope와 검증을 제안한다.
-2. UI가 포함되면 Publisher가 재사용 자산과 props/callback 계약을 정의한다.
+2. UI가 포함되면 Publisher가 재사용 자산과 props/callback 계약을 확인한다. Logic 선행이면 제공된 controller 계약에 맞추고, UI 선행이면 UI 계약을 Logic에 제공한다. 양쪽 연결과 불일치 질문은 `api-authoring/references/ui-controller.md`를 따른다.
 3. 사용자 승인 후 Implementer/Generator가 확인된 역할과 scope를 구현한다.
 4. Watcher가 현재 변경을 판정한다.
 5. 한 작업자가 전체를 맡으면 검증·산출물·merge 단계로 진행한다. 역할이 분리되면 부분 결과를 handoff한다. role이 없는 다음 세션은 역할을 다시 확인하고, inject 세션은 handoff와 일치하는 `--role`로 시작한다.
@@ -25,7 +25,8 @@ Planner → Refactorer → Watcher 순서를 기본으로 한다. 공개 계약�
 
 ## Logic·UI 분리 작업
 
-- Planner가 Logic과 UI의 예상 기여 범위, props/callback·DTO·hook 계약과 통합 순서를 제안한다. 파일 소유권을 만들지 않으며 형제 통합 순서는 변경 검토와 사용자 승인으로 결정한다.
+- Planner가 Logic과 UI의 예상 기여 범위, 선행 구현·계약 제공자, props/callback·DTO·controller 계약과 통합 순서를 제안한다. 파일 소유권을 만들지 않으며 형제 통합 순서는 변경 검토와 사용자 승인으로 결정한다.
+- 계약 적용 방향은 `api-authoring/references/ui-controller.md`를 따른다. `controller -> UI`에서 항목이 일치하지 않으면 사용자 답변 전 해당 연결을 진행하지 않는다. DTO의 정확성을 근거로 기존 UI 계약을 임의 변경하지 않는다.
 - handoff에 역할별 목적지 branch·worktree 절대 경로·기준 HEAD·직접 부모와 상세 작업을 연결해 기록한다. 보내는 현재 위치만 적거나 역할 이름만으로 다음 할 일을 대신하지 않는다.
 - UI·Logic이 같은 결과물을 순차로 연결하면 같은 branch·worktree를 공유할 수 있다. 소스 수정과 Git 변경을 순차 실행하고 역할 전환 전에 commit·staged·unstaged·untracked 변경과 선행 작업의 완료를 확인한다.
 - 실제 병렬 수정이나 별도 변경 이력·검증이 필요하면 작업별 child branch와 linked worktree를 사용한다. 역할·세션 수만으로 작업 공간을 나누지 않는다. 각 작업의 부모·자식 관계, 직접 부모 통합 순서, 형제 변경 검토와 승인을 handoff에 명시한다.

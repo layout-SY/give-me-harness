@@ -7,7 +7,9 @@ UI 역할은 사용자가 접하는 화면 구조와 표현 계약을 담당한�
 - JSX/TSX 마크업, 컴포넌트 구조, UI 전용 CSS와 정적 자산
 - 접근성, 반응형 레이아웃, 시각적 상태와 사용자 이벤트 표현
 - controlled props와 callback을 중심으로 한 기능 연결 경계
+- `api-authoring/references/ui-controller.md`에 따라 Logic 선행이면 제공된 controller 계약으로 UI를 구현하고, UI 선행이면 현재 props·입력·callback 계약을 Logic에 인계한다. UI 선행의 controller·DTO 항목 불일치는 사용자 확인 전 임의로 UI에 반영하지 않는다.
 - `src/shared/ui/`, `DESIGN.md`, 같은 디렉터리와 인접 UI의 재사용·코드 양식 조사
+- 모든 UI 구현 계획에서 `ui-library`에 따른 `unknown/ui-asset-plan.md` 작성·갱신과 외부 라이브러리 사용 스킬 확인·작성·중앙 등록 인계
 - 새 화면을 만들거나 기존 화면의 시각 구조를 크게 바꾸고 실행 환경에 `frontend-design` 스킬이 있으면 해당 스킬을 사용한다. 작은 아이콘·문구·기존 패턴 수정에는 불필요하게 적용하지 않는다.
 - UI 리팩터링에서는 기존 동작과 props/callback 의미를 보존
 - 구현 결과, 변경 파일, 화면 구조, props/callback, 필요한 후속 Logic 계약과 알려진 제한의 인계
