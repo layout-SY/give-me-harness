@@ -1,5 +1,10 @@
 # 계획
 
+승인 영역은 목표·범위·역할·계약·검증 기준이다. 진행 결과는 종료 표식 아래에 기록한다.
+진행 기록에 새 요구를 적는 것으로 승인 범위를 확대할 수 없다.
+
+<!-- asan-plan:approval:start:v1 -->
+
 ## 목표
 
 ## 작업 유형
@@ -7,6 +12,9 @@
 - feature | refactor | hybrid | publish-only | audit-only | documentation
 
 ## 범위
+
+- 대상 repository·branch·worktree:
+- 포함할 작업과 변경 대상:
 
 ## 제외 사항
 
@@ -16,7 +24,7 @@
 
 - 제안 역할:
 - 역할 판단 근거:
-- 사용자 역할 확인:
+- 사용자에게 확인할 역할:
 - 승인할 Git 작업:
 - 산출물 책임: owner | contributor
 
@@ -44,6 +52,16 @@ UI와 API를 연결하면 `api-authoring/references/ui-controller.md`에 따라 
 ## 검증
 
 ## 위험 요소 및 결정 사항
+
+<!-- asan-plan:approval:end:v1 -->
+
+## 진행 기록 (해시 제외)
+
+- 단계별 상태·완료한 작업:
+- 실행한 검증·결과·근거:
+- 장애·미확인 사항·인계 출처:
+- UI 라이브러리 스킬 등록 상태·계약 질문에 대한 답변:
+- 새 답변으로 범위·계약·완료 기준이 바뀌면 승인 영역에 반영하고 변경분을 재승인받는다.
 
 ## 승인
 

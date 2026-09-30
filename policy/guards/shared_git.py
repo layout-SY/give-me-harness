@@ -399,10 +399,15 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
         if role and role not in branch.RUNTIME_CONTRACT["capabilities"]["source_write"]:
             protocol.emit_denial(host, f"{role} 역할은 source를 변경할 수 없습니다. Git 변경 권한과 구현 역할은 별개입니다.")
             return
-        denial = approval.implementation_gate_denial(event, root, host)
-        if denial:
-            protocol.emit_denial(host, denial)
+        if not contexts:
+            protocol.emit_denial(host, "구조화된 쓰기의 변경 대상 파일 경로를 확인할 수 없습니다.")
             return
+        for target in dict.fromkeys(location for location, relative in contexts
+                                   if not relative.startswith(config.ARTIFACT_SESSIONS_PREFIXES)):
+            denial = approval.implementation_gate_denial(event, target, host)
+            if denial:
+                protocol.emit_denial(host, denial)
+                return
     categories = paths.protected_operation_categories(command) if shell else ()
     if categories:
         operation = operations.prepare_git(root, cwd, command, host, event)

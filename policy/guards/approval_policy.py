@@ -67,6 +67,56 @@ def harness_state_path(event: dict[str, Any], root: Path, host: str) -> Path | N
     return transient_state_path(event, root, host, "harness-state-v3")
 
 
+PREPARATION_FLAGS = ("skill_confirmed", "exploration_completed", "ui_exploration_completed")
+
+
+def preparation_path(event: dict[str, Any], root: Path, host: str) -> Path | None:
+    key = hashlib.sha256(str(root.resolve()).encode()).hexdigest()
+    return transient_state_path(event, root, host, "readiness-worktree-" + key)
+
+
+def load_preparation(event: dict[str, Any], root: Path, host: str) -> dict[str, Any]:
+    scope = {"worktree": str(root.resolve()), "branch": branch_guard.current_branch(root),
+             "head": branch_guard.head(root), "role": os.environ.get(INJECT_ROLE_ENV, "")}
+    record = load_json_state(preparation_path(event, root, host))
+    return record if record.get("scope") == scope else {"scope": scope}
+
+
+def record_preparation(event: dict[str, Any], root: Path, host: str) -> None:
+    """승인과 별도로 실제 탐색 위치를 기록한다. 다른 worktree 읽기는 참조다."""
+    cwd = shell_working_directory(Path(str(event.get("cwd") or root)), event.get("tool_input") or {})
+    context = repository_target(root, str(cwd))
+    execution_root = context[0] if context else root
+    targets = resolved_evidence_targets(event, cwd)
+    locations = {execution_root}
+    for target in targets:
+        candidate = repository_target(root, str(target))
+        if candidate:
+            locations.add(candidate[0])
+    for location in locations:
+        record = load_preparation(event, location, host)
+        call = event_protocol.tool_call_id(event)
+        if call and call in record.get("processed_calls", []):
+            continue
+        if location == execution_root and is_skill_evidence(event, execution_root):
+            record["skill_confirmed"] = True
+        if normalized_tool_name(event) in READ_EVIDENCE_TOOLS | SHELL_TOOLS:
+            for target in targets:
+                candidate = repository_target(root, str(target))
+                relative = candidate[1] if candidate and candidate[0] == location else ""
+                if relative == "src" or relative.startswith("src/"):
+                    record["exploration_completed"] = True
+                if relative == "src/shared/ui" or relative.startswith("src/shared/ui/"):
+                    record["ui_exploration_completed"] = True
+                if location == execution_root and target_in_injected_policy(target) and "reference/" in target.as_posix():
+                    record["exploration_completed"] = True
+                    if "reference/components" in target.as_posix():
+                        record["ui_exploration_completed"] = True
+        if call:
+            record["processed_calls"] = (record.get("processed_calls", []) + [call])[-256:]
+        write_json_state(preparation_path(event, location, host), record)
+
+
 def load_approval_state(path: Path | None) -> dict[str, Any]:
     # Command approval is consumed or revoked by events, never by elapsed time.
     return load_json_state(path)
@@ -254,6 +304,25 @@ def requires_ui_exploration(event: dict[str, Any], root: Path, host: str) -> boo
     return "ui" in task_context(event, root, host)["values"].get("roles", ())
 
 
+def plan_fingerprint(plan: Path | None) -> tuple[str, str]:
+    if plan is None or not plan.is_file() or plan.is_symlink():
+        return "", "현재 세션의 plan.md 작성"
+    data = plan.read_bytes()
+    start, end = "<!-- asan-plan:approval:start:v1 -->", "<!-- asan-plan:approval:end:v1 -->"
+    content = data.decode("utf-8")
+    if "asan-plan:approval:" in content:
+        lines = content.splitlines()
+        if (lines.count(start) != 1 or lines.count(end) != 1
+                or content.count("asan-plan:approval:") != 2 or lines.index(start) >= lines.index(end)):
+            return "", "plan.md 승인 영역의 시작·종료 표식을 각각 한 줄에 한 번씩 작성"
+        selected = "\n".join(line.rstrip() for line in lines[lines.index(start) + 1:lines.index(end)]).strip()
+        if not selected:
+            return "", "plan.md 승인 영역의 목표·범위·계약·검증 기준 작성"
+        return hashlib.sha256(("asan-plan-approval-v1\n" + selected).encode("utf-8")).hexdigest(), ""
+    # 기존 계획은 기존 승인과 호환되는 전체 파일 비교를 유지한다.
+    return (hashlib.sha256(data).hexdigest(), "") if content.strip() else ("", "현재 세션의 plan.md 작성")
+
+
 def approval_scope(event: dict[str, Any], root: Path, host: str) -> dict[str, Any]:
     context = task_context(event, root, host)
     directory = _artifact_policy.bound_session_directory(event, root, host)
@@ -267,10 +336,11 @@ def approval_scope(event: dict[str, Any], root: Path, host: str) -> dict[str, An
         context = _tool_paths.repository_target(root, raw) if raw else None
         if context and context[1].startswith(_artifact_policy.artifact_sessions_prefix(host)):
             plan = Path(raw)
-    plan_digest = hashlib.sha256(plan.read_bytes()).hexdigest() if plan and plan.is_file() and not plan.is_symlink() else ""
+    plan_digest, plan_error = plan_fingerprint(plan)
     if branch_guard.SHARED_GIT_ACCESS:
         return {"task": "session", "role": os.environ.get(INJECT_ROLE_ENV, ""),
-                "contract": "", "plan": plan_digest, "plan_path": str(plan) if plan else "", "source_scopes": []}
+                "contract": "", "plan": plan_digest, "plan_path": str(plan) if plan else "",
+                "plan_error": plan_error, "source_scopes": []}
     return {"task": context["task"], "role": os.environ.get(INJECT_ROLE_ENV, ""),
             "contract": str(context["task_values"].get("contract-sha256") or ""), "plan": plan_digest,
             "source_scopes": list(context["values"].get("scope") or context["task_values"].get("scope") or ())}
@@ -287,7 +357,7 @@ def load_harness_state(event: dict[str, Any], root: Path, host: str) -> dict[str
             state = {}
     state["assignment_scope"] = scope
     approved_scope = state.get("implementation_scope", {})
-    if approved_scope.get("plan") and approved_scope["plan"] != scope["plan"]:
+    if (approved_scope.get("plan") or branch_guard.SHARED_GIT_ACCESS) and approved_scope.get("plan") != scope["plan"]:
         state["implementation_approved"] = False
     approved_sources = approved_scope.get("source_scopes", [])
     if state.get("implementation_approved") and not approved_sources and scope["source_scopes"]:
@@ -298,6 +368,9 @@ def load_harness_state(event: dict[str, Any], root: Path, host: str) -> dict[str
         parent == "." or candidate == parent or (not any(token in parent for token in "*?[") and candidate.startswith(parent.rstrip("/") + "/"))
         for parent in approved_sources) for candidate in scope["source_scopes"]):
         state["implementation_approved"] = False
+    if branch_guard.SHARED_GIT_ACCESS:
+        preparation = load_preparation(event, root, host)
+        state.update({key: preparation.get(key, False) for key in PREPARATION_FLAGS})
     return state
 
 
@@ -314,11 +387,14 @@ def readiness_context(event: dict[str, Any], root: Path, host: str) -> str:
     context = task_context(event, root, host)
     requirements = readiness_requirements(event, root, host)
     missing = [label for key, label in requirements.items() if state.get(key) is not True]
+    if branch_guard.SHARED_GIT_ACCESS and state["assignment_scope"].get("plan_error"):
+        missing.append(state["assignment_scope"]["plan_error"])
     if branch_guard.SHARED_GIT_ACCESS:
         return "\n".join([
             "[SESSION_READINESS]", "- git_access: shared-project",
             "- branch_creation_required: false",
             f"- role: {os.environ.get(INJECT_ROLE_ENV, '') or '미지정'}",
+            f"- preparation_worktree: {root.resolve()}",
             *(f"- {key}: {str(state.get(key) is True).lower()}" for key in requirements),
             f"- 소스 구현 준비: {', '.join(missing) or '완료'}",
             "- 모든 branch/worktree에서 Git 변경은 사용자 승인, 조회는 자유입니다.",
@@ -350,6 +426,9 @@ def record_post_tool(event: dict[str, Any], root: Path, host: str) -> None:
     if path is None:
         return
     if not event_protocol.tool_succeeded(event):
+        return
+    if branch_guard.SHARED_GIT_ACCESS:
+        record_preparation(event, root, host)
         return
     state = load_harness_state(event, root, host)
     call = event_protocol.tool_call_id(event)
@@ -623,6 +702,8 @@ def implementation_gate_denial(
     state = load_harness_state(event, root, host)
     missing = [label for key, label in readiness_requirements(event, root, host).items()
                if state.get(key) is not True]
+    if branch_guard.SHARED_GIT_ACCESS and state["assignment_scope"].get("plan_error"):
+        missing.append(state["assignment_scope"]["plan_error"])
 
     raw_input = event.get("tool_input")
     tool_input = raw_input if isinstance(raw_input, dict) else {}
@@ -642,7 +723,7 @@ def implementation_gate_denial(
     if not missing:
         return None
     if branch_guard.SHARED_GIT_ACCESS:
-        return ("소스 구현 준비가 필요합니다: " + ", ".join(dict.fromkeys(missing))
+        return (f"소스 구현 준비가 필요합니다 ({root.resolve()}): " + ", ".join(dict.fromkeys(missing))
                 + ". 승인한 계획과 성공한 스킬·탐색 근거를 확인하세요. Git 변경 승인은 별도로 처리합니다.")
     return (
         "공통 구현 gate의 필수 조건이 누락되었습니다: "

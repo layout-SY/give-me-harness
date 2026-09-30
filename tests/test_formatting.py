@@ -37,9 +37,19 @@ class FormattingTests(unittest.TestCase):
                  "tool_input": {"file_path": str(path), "content": content}}
         if session:
             event["session_id"] = session
+        plan = self.root / self.env.get("ASAN_SESSION_DIR", f".{host}/logs/sessions/shared-session") / "plan.md"
+        if not plan.is_file():
+            log = {"tool_name": "Write", "tool_call_id": f"plan-{self.calls}", "tool_input": {
+                "file_path": str(plan), "content": "코드 변경과 공통 formatter 검증 계획"}}
+            if session:
+                log["session_id"] = session
+            self.fixture.assert_allowed(self.hook("pre-tool", log, host=host))
+            plan.parent.mkdir(parents=True, exist_ok=True)
+            plan.write_text(log["tool_input"]["content"])
+            self.fixture.assert_allowed(self.hook("post-tool", {**log, "tool_response": {"success": True}}, host=host))
         # Existing implementation approval remains independently required.
         for tool, args in (("Skill", {"skill": "policy"}), ("Read", {"file_path": "src/app.ts"})):
-            self.hook("post-tool", {**({"session_id": session} if session else {}), "tool_name": tool,
+            self.hook("post-tool", {**({"session_id": session} if session else {}), "cwd": str(root or self.root), "tool_name": tool,
                 "tool_input": args, "tool_response": {"success": True}}, host=host)
         self.hook("user-prompt", {**({"session_id": session} if session else {}), "prompt": "진행"}, host=host)
         self.fixture.assert_allowed(self.hook("pre-tool", event, host=host))

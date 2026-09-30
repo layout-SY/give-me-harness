@@ -139,10 +139,17 @@ class SharedGitAccessTests(unittest.TestCase):
 
     def test_source_approval_survives_worktree_switch_but_other_host_artifacts_are_read_only(self):
         for host in ("codex", "claude", "opencode"):
+            plan = self.root / f".{host}/logs/sessions/shared-session/plan.md"
+            plan.parent.mkdir(parents=True, exist_ok=True)
+            plan.write_text("같은 프로젝트의 기본·연결 worktree에서 기능 구현과 검증\n")
             for tool, arg in (("Skill", {"skill": "policy"}), ("Read", {"file_path": "src/app.ts"})):
                 self.run_event(host, "post-tool", {"tool_name": tool, "tool_input": arg,
                                                      "tool_response": {"success": True}})
             self.run_event(host, "user-prompt", {"prompt": "진행"})
+            # 구현 승인은 유지하되 새 대상의 스킬·탐색은 다시 확인한다.
+            for tool, arg in (("Skill", {"skill": "policy"}), ("Read", {"file_path": "src/app.ts"})):
+                self.run_event(host, "post-tool", {"cwd": str(self.worktree), "tool_name": tool,
+                    "tool_input": arg, "tool_response": {"success": True}})
             self.assert_allowed(self.run_event(host, "pre-tool", {"tool_name": "Edit", "tool_input": {
                 "file_path": str(self.worktree / "src/app.ts"), "old_string": "1", "new_string": "2"}}))
             other = "claude" if host != "claude" else "codex"
@@ -370,6 +377,9 @@ class SharedGitAccessTests(unittest.TestCase):
                 "tool_response": {"success": True}})
         self.run_event("codex", "user-prompt", {"prompt": "진행"})
         write_log(self.worktree, "final-summary.md", "other-log")
+        for tool, data in (("Skill", {"skill": "policy"}), ("Read", {"file_path": "src/app.ts"})):
+            self.run_event("codex", "post-tool", {"cwd": str(self.worktree), "tool_name": tool,
+                "tool_input": data, "tool_response": {"success": True}})
         self.assert_allowed(self.run_event("codex", "pre-tool", {"tool_name": "Edit", "tool_input": {
             "file_path": str(self.worktree / "src/app.ts"), "old_string": "1", "new_string": "2"}}))
 
