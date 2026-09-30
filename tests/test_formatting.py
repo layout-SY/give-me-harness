@@ -276,6 +276,12 @@ class FormattingTests(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("심볼릭 링크", result.stderr)
         self.assertEqual(outside.read_text(), "export const privateValue={value:7};\n")
+        first = self.hook("format-stop", {})
+        self.assertEqual(json.loads(first.stdout)["decision"], "block")
+        repeated = self.hook("format-stop", {"stop_hook_active": True})
+        self.fixture.assert_allowed(repeated)
+        self.assertNotIn('"block"', repeated.stdout)
+        self.assertIn("심볼릭 링크", repeated.stdout)
 
     def assert_unconfirmed_write_is_not_formatted(self, response):
         path = self.write("src/unconfirmed.ts", "export const value={n:1};\n")
@@ -329,6 +335,53 @@ class FormattingTests(unittest.TestCase):
         result = self.runner()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(owned.read_text(), "export const value = { n: 3 };\n")
+
+    def test_recovered_call_stays_resolved_after_another_session_edits_and_commits(self):
+        self.test_recovered_unknown_write_can_be_finished_by_a_successful_edit()
+        self.write("src/unconfirmed.ts", "export const value={n:4};\n", session="next-session")
+        validation = {"session_id": "next-session", "tool_call_id": "next-validation",
+                      "tool_name": "Bash", "tool_input": {"command": "npm run lint"}}
+        self.fixture.assert_allowed(self.hook("pre-tool", validation))
+        self.hook("post-tool", {**validation, "tool_response": {"exit_code": 0}})
+        self.fixture.git("add", "--", "src/unconfirmed.ts")
+        self.fixture.git("commit", "-qm", "next session change")
+        owned = self.write("src/msw.ts", "export const msw={enabled:true};\n")
+        result = self.runner()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(owned.read_text(), "export const msw = { enabled: true };\n")
+
+    def test_stop_persists_recovery_evidence_for_legacy_calls_even_without_pending_files(self):
+        self.test_recovered_unknown_write_can_be_finished_by_a_successful_edit()
+        legacy = next(self.fixture.state.glob("repositories/*/formatting/v1/calls/*.json"))
+        value = json.loads(legacy.read_text())
+        for item in value["files"]:
+            item.pop("resolved_by", None)
+        legacy.write_text(json.dumps(value))
+        self.fixture.assert_allowed(self.hook("format-stop", {}))
+        self.assertTrue(all(item.get("resolved_by") for item in json.loads(legacy.read_text())["files"]))
+
+    def test_stop_runs_formatter_without_a_validation_command(self):
+        for host in ("codex", "claude", "opencode"):
+            with self.subTest(host=host):
+                path = self.write(f"src/stop-{host}.ts", "export const value={n:1};\n", host=host)
+                linked = self.write(f"src/stop-linked-{host}.ts", "export const linked={n:2};\n", host=host, root=self.worktree)
+                result = self.hook("format-stop", {}, host=host)
+                self.fixture.assert_allowed(result)
+                self.assertNotIn('"block"', result.stdout)
+                self.assertEqual(path.read_text(), "export const value = { n: 1 };\n")
+                self.assertEqual(linked.read_text(), "export const linked = { n: 2 };\n")
+
+    def test_duplicate_patch_targets_have_one_unknown_diagnostic_and_known_failure_releases_them(self):
+        path = self.write("src/duplicate.ts", "export const value={n:1};\n", host="codex")
+        event = {"tool_name": "apply_patch", "tool_call_id": "duplicate-patch", "tool_input": {"command":
+            f"*** Begin Patch\n*** Update File: {path}\n@@\n-a\n+b\n*** Update File: {path}\n@@\n-b\n+c\n*** End Patch"}}
+        self.fixture.assert_allowed(self.hook("pre-tool", event, host="codex"))
+        stopped = self.hook("format-stop", {}, host="codex")
+        self.assertEqual(json.loads(stopped.stdout)["reason"].count(str(path)), 1)
+        self.hook("post-tool", {**event, "tool_response":
+            "apply_patch verification failed: invalid patch: multiple operations target the same file"}, host="codex")
+        result = self.runner("codex")
+        self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_native_launcher_prompt_has_an_executable_formatter_trigger_for_each_host(self):
         from dataclasses import replace

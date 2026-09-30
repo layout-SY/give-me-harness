@@ -63,7 +63,7 @@ const evaluate = (directory, mode, payload = {}) =>
       "opencode",
     ],
     JSON.stringify({ cwd: directory, ...payload }),
-    mode === "pre-tool" ? 60000 : 10000,
+    mode === "pre-tool" || mode === "format-stop" ? 60000 : 10000,
   );
 
 const collectLogs = () =>

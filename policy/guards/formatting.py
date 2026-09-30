@@ -104,10 +104,14 @@ def record_before(root: Path, event: dict, host: str, contexts: list) -> None:
     if not enabled():
         return
     selected = []
+    seen = set()
     for worktree, relative in contexts:
         if Path(relative).suffix.casefold() not in SETTINGS["extensions"] or any(part in EXCLUDED for part in Path(relative).parts):
             continue
         path = safe_path(root, worktree.resolve(), str(worktree / relative))
+        if path in seen:
+            continue
+        seen.add(path)
         token = uuid.uuid4().hex
         value = {"path": str(path), "worktree": str(worktree.resolve()), "token": token,
                  "owner": state.owner_id(host, paths.event_session_id(event)), "call": protocol.tool_call_id(event),
@@ -144,6 +148,8 @@ def record_after(root: Path, event: dict, host: str) -> None:
             else:
                 writer_path(root, path).unlink(missing_ok=True)
     state.write(record_path, record)
+    if protocol.tool_outcome(event) is True:
+        resolve_superseded_calls(root, event, host)
     pending.unlink(missing_ok=True)
 
 
@@ -186,6 +192,7 @@ def require_before_validation(root: Path, event: dict, host: str, command_text: 
     allowed = [shlex.split(value) for value in git.RUNTIME_CONTRACT["git"]["validation_commands"]]
     for location, words in contexts or ():
         if any(list(words[:len(expected)]) == expected for expected in allowed):
+            resolve_superseded_calls(root, event, host)
             target = paths.git_top_level(location)
             if target and unconfirmed_calls(root, event, host, target):
                 raise RuntimeError("결과 미확인 코드 쓰기를 확인한 뒤 포맷·검증하세요.")
@@ -232,11 +239,35 @@ def require_for_trigger(root: Path, event: dict, host: str, action: str, cwd: Pa
         raise FormattingRequired(target)
 
 
+def resolve_superseded_calls(root: Path, event: dict, host: str) -> None:
+    """호출 종료 확인 + 후속 정상 저장 근거를 영구 보존한다. events lock 안에서만 호출한다."""
+    owner = state.owner_id(host, paths.event_session_id(event))
+    confirmed = state.read(session_path(root, event, host)).get("files", {})
+    relations = _loader.load("branch_relations")
+    active = {path.stem for path in (relations.directory(root) / "writes").glob("*.json")}
+    for path in (directory(root) / "calls").glob("*.json"):
+        record = state.read(path)
+        changed = False
+        for item in record.get("files", []):
+            if item.get("owner") != owner or item.get("resolved_by"):
+                continue
+            identifier = relations.digest([host, paths.event_session_id(event), item["call"], item["worktree"]])
+            latest = confirmed.get(item["path"], {})
+            if (identifier not in active and latest.get("status") in {"pending", "formatted", "ignored"}
+                    and latest.get("token") != item["token"]
+                    and state.read(writer_path(root, Path(item["path"]))).get("token") == latest.get("token")
+                    and file_hash(safe_path(root, Path(item["worktree"]), item["path"])) == latest.get("sha256")):
+                item["resolved_by"] = {"call": latest["call"], "token": latest["token"],
+                                       "sha256": latest["sha256"], "reason": "completed-write-supersedes-recovered-call"}
+                changed = True
+        if changed:
+            state.write(path, record)
+
+
 def unconfirmed_calls(root: Path, event: dict, host: str, worktree: Path | None = None) -> list[str]:
     if not enabled():
         return []
     owner = state.owner_id(host, paths.event_session_id(event))
-    confirmed = state.read(session_path(root, event, host)).get("files", {})
     relations = _loader.load("branch_relations")
     active = {path.stem for path in (relations.directory(root) / "writes").glob("*.json")}
     unresolved = []
@@ -245,15 +276,10 @@ def unconfirmed_calls(root: Path, event: dict, host: str, worktree: Path | None 
             if item.get("owner") != owner or (worktree and item["worktree"] != str(worktree.resolve())):
                 continue
             identifier = relations.digest([host, paths.event_session_id(event), item["call"], item["worktree"]])
-            latest = confirmed.get(item["path"], {})
-            # write-recovery로 이전 프로세스 종료를 확인하고 정상 수정 도구로
-            # 마무리했을 때만 이전 미확인 기록을 대체한다. 단순 재시도로 우회하지 않는다.
-            if (identifier not in active and latest.get("status") in {"pending", "formatted", "ignored"}
-                    and latest.get("token") != item["token"]
-                    and state.read(writer_path(root, Path(item["path"]))).get("token") == latest.get("token")):
+            if identifier not in active and item.get("resolved_by"):
                 continue
             unresolved.append(item["path"])
-    return unresolved
+    return list(dict.fromkeys(unresolved))
 
 
 def check(root: Path, event: dict, host: str, worktree: Path | None = None) -> str | None:
@@ -300,6 +326,7 @@ def apply(root: Path, event: dict, host: str, worktree: Path) -> dict:
     try:
         with state.locked(events_lock), state.locked(relations.directory(root) / "locks/git.lock"):
             state.bind_native_session(common, host, paths.event_session_id(event))
+            resolve_superseded_calls(root, event, host)
             if unconfirmed_calls(root, event, host, worktree):
                 raise RuntimeError("결과 미확인 코드 쓰기를 먼저 확인한 뒤 포맷하세요.")
             items = pending_files(root, event, host, worktree)

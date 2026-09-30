@@ -393,7 +393,10 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
             print(context)
         return
     if mode == "format-stop":
-        message = load_runtime_module("formatting").check(repository_root(event), event, host)
+        try:
+            message = event.get("_format_stop_error") or load_runtime_module("formatting").check(repository_root(event), event, host)
+        except (RuntimeError, OSError, ValueError) as error:
+            message = f"Stop 포맷 미완료: {error}"
         if host == "opencode":
             if message:
                 print(message, file=sys.stderr)
@@ -558,6 +561,23 @@ def main() -> None:
         root = repository_root(event)
         common = branch_guard.git_common_directory(root) or root.resolve()
         formatting = load_runtime_module("formatting")
+        if mode == "format-stop" and formatting.enabled() and not event.get("stop_hook_active"):
+            time_limit = 50
+            signal.alarm(time_limit)
+            try:
+                with runtime_state.locked(runtime_state.repository_state(common) / "events.lock"):
+                    runtime_state.bind_native_session(common, host, event_session_id(event))
+                    formatting.resolve_superseded_calls(root, event, host)
+                    uncertain = formatting.unconfirmed_calls(root, event, host)
+                    locations = list(dict.fromkeys(item["worktree"] for item in formatting.pending_files(root, event, host)))
+                if not uncertain:
+                    # Prettier는 events lock 밖에서 계산한다. apply가 전후 상태를 다시 검사한다.
+                    for location in locations:
+                        formatting.apply(root, event, host, Path(location))
+            except Exception as error:
+                event["_format_stop_error"] = f"Stop 자동 포맷 미완료: {error}"
+            time_limit = 8
+            signal.alarm(time_limit)
         for attempt in range(3):
             try:
                 with runtime_state.locked(runtime_state.repository_state(common) / "events.lock"):

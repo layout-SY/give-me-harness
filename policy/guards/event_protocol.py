@@ -64,8 +64,11 @@ def tool_outcome(event: dict) -> bool | None:
             continue
         # Codex Bash 도구 결과의 프로세스 상태. 실행 중 결과는 완료로 보지 않는다.
         match = re.search(r"(?:Process exited with code|exit code[: ]+)\s*(-?\d+)", value, re.I)
-        if str(event.get("tool_name", "")).casefold() == "apply_patch" and value.startswith("Success. Updated the following files:"):
-            success = True
+        if str(event.get("tool_name", "")).rsplit(".", 1)[-1].casefold() == "apply_patch":
+            if value.startswith(("apply_patch verification failed:", "Failed to find expected lines", "Invalid patch:")):
+                return False
+            if value.startswith("Success. Updated the following files:"):
+                success = True
         if match:
             if int(match.group(1)) != 0:
                 return False
