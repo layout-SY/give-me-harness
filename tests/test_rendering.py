@@ -363,12 +363,11 @@ class RenderingTests(unittest.TestCase):
 
     def test_project_overlay_is_rendered_with_project_metadata(self) -> None:
         admin = render_project(load_project("admin-ui"))
-        overlay_paths = tuple(
-            path
-            for path in admin
-            if path.startswith(".agents/skills/reference/")
-            and path.count("/") > 4
-        )
+        # 공통 reference의 라이브러리·컴포넌트도 하위 폴더를 사용한다.
+        # 디렉터리 깊이가 아닌 실제 프로젝트 overlay 원본을 검증한다.
+        overlay_root = CENTRAL_ROOT / "projects/overlay/admin-ui/skills"
+        overlay_paths = tuple(".agents/skills/" + path.relative_to(overlay_root).as_posix()
+                              for path in overlay_root.rglob("SKILL.md"))
         self.assertTrue(overlay_paths)
         for path in overlay_paths:
             content = admin[path]

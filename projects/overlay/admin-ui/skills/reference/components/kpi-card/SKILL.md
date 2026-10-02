@@ -27,7 +27,7 @@ HeroUI를 쓰지 않는 단순 표시 컴포넌트다.
 
 - 대시보드 지표 타일에 사용한다. 카드 레이아웃을 새로 만들지 않는다.
 - 숫자 포맷(천 단위 구분, 단위 표기)은 소비처가 처리해 `value`로 넘긴다. 컴포넌트는 포맷하지 않는다.
-- 증감 화살표 같은 장식이 필요하면 `value`에 엘리먼트로 구성한다.
+- 증감률은 현재 worktree에 공용 TrendBadge가 있다면 `caption`에 재사용한다. `.agent-policy/common/skills/reference/components/trend-badge/SKILL.md`의 브랜치별 가용성을 확인한다. 판매자 작업 브랜치에 추가된 `icon`·`trend` 슬롯은 실제 카드 코드에 존재할 때만 사용한다.
 - `tone`은 `StatusBadge`의 `StatusBadgeColor`와 이름이 겹치지만 **다른 타입이다.** 값을 서로 옮겨 쓰지 않는다.
 
 ## 수정 규칙
