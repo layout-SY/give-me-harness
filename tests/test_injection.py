@@ -646,6 +646,8 @@ class InjectionTests(unittest.TestCase):
         self.assertTrue(any("collect-logs" in command for command in claude_stop))
         self.assertTrue(any("format-stop" in command for command in claude_stop))
         self.assertFalse(any("documentation-stop" in command for command in claude_stop))
+        denied = [handler["command"] for group in claude_hooks["PermissionDenied"] for handler in group["hooks"]]
+        self.assertTrue(any("write-denied claude" in command for command in denied))
 
         opencode = self.prepare("opencode")
         plugin = (opencode.bundle_root / "opencode-home/plugins/agent-policy.js").read_text(

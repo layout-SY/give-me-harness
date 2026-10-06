@@ -82,6 +82,54 @@ def worktree_snapshot(root: Path) -> dict:
             "branch": git(root, "branch", "--show-current"), "status": changes, "files": files}
 
 
+def assignment_writes(project: ProjectConfig, assignment: str, *, reconcile: bool = False,
+                      state_root: Path | None = None) -> dict:
+    """기존 bundle을 바꾸지 않고 central state만 정리한다. 파일 존재·lint 성공은 근거가 아니다."""
+    if re.fullmatch(r"[a-f0-9]{32}", assignment) is None:
+        raise PolicyError("유효한 assignment ID가 필요합니다.")
+    state, receipts = load_runtime("runtime_state"), load_runtime("write_receipts")
+    repository = repository_state(project, state_root)
+    with state.locked(repository / "events.lock"):
+        record = state.read(repository / "assignments" / assignment / "assignment.json")
+        if (record.get("project") != project.id or record.get("repository") != str(common_directory(project.path))
+                or not record.get("native_session")):
+            raise PolicyError("assignment의 프로젝트·native session을 확인할 수 없습니다.")
+        host, session = record["host"], record["native_session"]
+        writes = receipts.pending_writes(repository, host, session)
+        for item in writes:
+            source = state.read(receipts.call_path(repository, assignment, item["call"]))
+            item["paths"] = [v["path"] for v in source.get("files", []) if v.get("worktree") == item["worktree"]]
+        confirmed, transcript, transcript_error = {}, None, None
+        if reconcile and host != "claude":
+            raise PolicyError("자동 거절 대조는 Claude의 확인된 native 형식만 지원합니다.")
+        if host == "claude" and re.fullmatch(r"[a-f0-9-]{36}", session):
+            home = Path(record.get("environment", {}).get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude")
+            candidates = list((home / "projects").glob(f"*/{session}.jsonl"))
+            if len(candidates) == 1:
+                transcript = candidates[0]
+                if transcript.is_symlink() or transcript.parent.is_symlink() or not transcript.is_file():
+                    raise PolicyError("native 대화 원본의 일반 파일 경로를 확인할 수 없습니다.")
+                try:
+                    confirmed = receipts.denied_transcript_calls(transcript, session)
+                except (OSError, ValueError, RuntimeError) as error:
+                    if reconcile:
+                        raise PolicyError(str(error)) from error
+                    transcript_error = str(error)
+        if reconcile and transcript is None:
+            raise PolicyError("원래 native session의 대화 원본을 하나로 확인할 수 없습니다.")
+        recovered = []
+        for item in sorted(writes, key=lambda v: v.get("created_at", 0), reverse=True):
+            evidence = confirmed.get(item["call"], {})
+            item["denial_confirmed"] = bool(evidence and (
+                item["paths"] and set(item["paths"]) == {evidence.get("path")}
+                or not item["paths"] and evidence.get("tool") == "Bash"))
+            if reconcile and item["denial_confirmed"]:
+                recovered.extend(receipts.cancel_unexecuted(repository, host, session, assignment, item["call"], evidence))
+        return {"assignment": assignment, "host": host, "session": session, "writes": writes,
+                "recovered": recovered, "remaining": receipts.pending_writes(repository, host, session),
+                "transcript": str(transcript) if transcript else None, "transcript_error": transcript_error}
+
+
 def recover_assignment(project: ProjectConfig, assignment: str, call_id: str, outcome: str,
                        approved_sha256: str | None = None, state_root: Path | None = None) -> tuple[Path, str]:
     if re.fullmatch(r"[a-f0-9]{32}", assignment) is None or outcome not in {"confirmed", "cancelled"}:

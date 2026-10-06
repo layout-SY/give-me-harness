@@ -19,6 +19,24 @@
 
 코드와 문서의 보장 범위를 구분한다. 필수 산출물을 만들었다는 사실만으로 실제 작업 범위·품질을 증명했다고 간주하지 않는다.
 
+## 2026-09-30 판매자 UI의 반복 포맷 차단
+
+관리자 `feature/ec-seller-ui`, Claude assignment `67bb25959468413fb94f579f2eaecd4a`, native session `c4cc0ffa-4df7-4879-960f-951115025535`의 중앙 writes와 실제 native JSONL을 대조했다. 06:02–06:15 UTC에 남은 Write 17건은 모두 `toolDenialKind=automode-unavailable`, `is_error=true`였다. 같은 세션의 기본 worktree에는 실행 전 거절된 타입 검사 Bash 1건도 남았다. 파일이 나중에 정상 작성됐다는 사실과 별개로, 이 원래 호출들은 실행 전에 거절됐다.
+
+Claude 2.1.285는 실행 전 auto-mode 거절을 `PermissionDenied` 이벤트로 통지한다. 기존 adapter는 `PostToolUse`/`PostToolUseFailure`만 연결해 이 종료를 놓쳤다. 중앙이 PreTool에서 만든 예약이 남으므로 formatter의 `assert_idle` 차단은 상태에 맞는 동작이었다. 이번 결함은 Prettier 실행 실패나 사용자의 강제 종료가 아니라 **native 거절 이벤트 누락**이다. [공식 이벤트 계약](https://code.claude.com/docs/en/hooks#permissiondenied).
+
+반영: `PermissionDenied → write-denied` 연결, 원본 예약·거절 근거 receipt 보존, 해당 call의 예약만 종료, 최신 성공 저장과 다른 주체의 writer 보존. 실패한 호출의 파일을 성공·포맷 완료로 기록하지 않으며, 거절된 동작의 자동 재승인·재실행을 요청하지 않는다. 단순 실행 실패는 부분 변경 가능성이 있어 이 경로를 사용하지 않는다.
+
+중앙 `writes --project ... --assignment ...`는 기록 ID·경로·거절 확인 여부를 출력한다. `--reconcile-denied`는 원래 Claude 대화의 session·source assistant UUID·call·명시적 classifier 거절·파일 경로를 대조해 과거 예약만 복구한다. 대화 원본이 없거나 중복·불일치하거나 일반 도구 실패면 예약을 유지한다. 쓰기 전후 코드 변경을 추정해서 지우지 않는다. 복구 receipt는 `branch-relations/v1/write-receipts/`에 남긴다.
+
+회귀 범위: 거절 이벤트 후 정상 포맷, 후속 성공 저장 보존, 다른 미확인 호출 유지, 역순 거절의 writer 복원, native 근거 불일치·symlink 거부, 셸 검증 예약 복구, inject hook 등록. 기존 bundle 파일은 수정하지 않는다. 신규 이벤트 처리는 새 inject부터 적용하며 과거 state 복구는 별도다. orchestration의 주체 분리는 여전히 후속 범위다.
+
+실제 복구 결과: 18건(판매자 worktree Write 17 + 기본 worktree 타입 검사 Bash 1)을 원본 거절 근거로 종료했다. 복구 직후 해당 assignment의 writes는 0건이고 정상 저장 receipt 89개는 현재 파일 SHA·writer와 모두 일치했다. 원래 세션 bundle의 명시적 포맷 트리거로 89개 파일 처리, `npm run lint`, `npm run build`, 마지막 `formatting.py check` 모두 통과했다. 빌드의 tsconfig-paths 안내와 chunk 크기 경고는 남아 있다. 실행 결과는 중앙 `state/recovery-runs/ec-seller-format-20260930.json`, 개별 거절 근거는 `write-receipts`에 보존했다. 원래 handoff의 포맷 미완료 기록은 당시의 이력이므로 덮어쓰지 않았다.
+
+함께 인계된 [TrendBadge](../policy/common/skills/reference/components/trend-badge/SKILL.md), [lucide-react](../policy/common/skills/reference/libraries/lucide-react/SKILL.md), [HeroUI](../policy/common/skills/reference/libraries/heroui/SKILL.md) 초안은 실제 코드·lockfile·설치본과 대조해 중앙에 등록했다. HeroUI는 선언 `^3.2.3`과 실제 `3.2.4`를 구분했고, TrendBadge에 direction prop이 없고 null 처리는 호출부 책임임을 명시했다. 등록 당시 TrendBadge·line-icons는 판매자 브랜치의 미커밋 자산이었다. 2026-10-02 판매자 커밋 `b6fc92d2eed80a4920cc4681bda7f44a3565a8f5`에 포함된 것을 재확인해 스킬을 갱신했다. 기본 관리자 브랜치의 가용 자산으로 단정하지 않는다. 별도 overlay나 감사 예외 없이 공통 reference에 관리자·작업 브랜치 한정 확인 범위를 적고, 기존 KpiCard 안내에서도 실제 슬롯 존재를 확인하게 했다. 세션 초안의 당시 미등록 표시는 이력으로 유지하며 중앙 정본과 카탈로그를 새 inject 세션에서 사용한다.
+
+최종 검증: 기본 unittest discovery와 같은 388개를 24개 파일별 subprocess로 실행했다. 초기 실행에서 공통 reference 하위 문서를 모두 관리자 overlay로 간주하던 렌더링 테스트 1건이 실패했다. 실제 overlay 원본 목록을 확인하도록 수정한 뒤 렌더링 24개를 재검증했고, 마지막 변경이 있는 거절·조회·포맷 검사 2개도 재검증해 모두 통과했다. 중앙 contract와 두 프로젝트 audit, diff 공백 검사도 통과했다. 결과 집계는 `state/recovery-runs/ec-seller-policy-verification-20260930.json`에 남겼다. 아래 기존 381개 검증 기록은 이전 보강의 이력이다.
+
 ## 2. 계획 해시: 세션 폐쇄가 아니라 승인 범위 변경 감지
 
 도입 이력: `e60ade9`의 [당시 개선 보고 F04·F05](runtime-remediation-2026-09-08.md)는 compact·resume·질문에는 승인을 유지하고 task·role·계약·계획 변경에 재승인을 요구했다. 계획 전체 바이트를 선택하거나 진행 표시까지 승인을 해제해야 한다는 별도 요구는 확인하지 못했다. `3184d3b`의 [V4 전환](shared-git-access-2026-09-10.md)은 branch/worktree 소유권을 없애되 계획 비교와 다른 worktree에 로그를 쓰는 경우의 기존 계획 fallback을 유지했다.

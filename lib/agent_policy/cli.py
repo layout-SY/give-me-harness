@@ -123,6 +123,11 @@ def build_parser() -> argparse.ArgumentParser:
     bundle_repair.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
     bundle_repair.add_argument("--assignment", required=True)
 
+    writes = subparsers.add_parser("writes", help="쓰기 예약 ID·대상을 조회하고 native 실행 전 거절만 복구합니다.")
+    writes.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
+    writes.add_argument("--assignment", required=True)
+    writes.add_argument("--reconcile-denied", action="store_true", help="원본 Claude 대화의 classifier 거절 근거가 일치하는 예약만 해제합니다.")
+
     recovery = subparsers.add_parser("assignment-recover", help="미확인 tool 결과의 현재 상태를 검토한 뒤 귀속 예약만 복구합니다.")
     recovery.add_argument("--project", required=True, choices=("user-ui", "admin-ui"))
     recovery.add_argument("--assignment", required=True)
@@ -556,6 +561,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             print(f"원본 bundle 확인 완료. 복구 또는 캐시 격리 {len(paths)}건.")
             for path in paths:
                 print(f"  백업: {path}")
+            code = 0
+        elif arguments.command == "writes":
+            from .recovery import assignment_writes
+            result = assignment_writes(select_projects(arguments.project)[0], arguments.assignment,
+                                       reconcile=arguments.reconcile_denied)
+            print(json.dumps(result, ensure_ascii=False, indent=2))
             code = 0
         elif arguments.command == "assignment-recover":
             from .recovery import recover_assignment

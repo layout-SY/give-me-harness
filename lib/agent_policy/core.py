@@ -645,6 +645,8 @@ def audit_source_contract() -> tuple[str, ...]:
             if "documentation-stop" in stop_serialized:
                 issues.append(f"{project_id}: {host} blocking documentation Stop hook remains")
         opencode_plugin = rendered[".opencode/plugins/agent-policy.js"].decode("utf-8")
+        if "write-denied claude" not in json.dumps(claude_hooks.get("PermissionDenied", ())):
+            issues.append(f"{project_id}: Claude 실행 전 거절 예약 복구 hook missing")
         for marker in ('"chat.message"', '"tool.execute.before"', '"tool.execute.after"'):
             if marker not in opencode_plugin:
                 issues.append(f"{project_id}: OpenCode common guard event missing: {marker}")

@@ -79,6 +79,8 @@ CLOSED를 요구하지 않는다. 통합·검증 실패 기록은 다음 형제 
 
 미확인 쓰기·중단된 검증은 호스트 실행 기록과 실제 프로세스를 확인한다. 실행이 종료됐음을 확인한 뒤 `write-recovery --id <도구 기록 ID> --reason <종료 확인 근거>`를 준비하고 같은 Git 승인 경로로 기록을 해소한다. 시간 경과만으로 종료로 간주하거나 native Git lock을 제거하지 않는다. 이 복구는 파일을 복원·삭제하지 않는다.
 
+기록 ID를 모르면 같은 bundle의 `git_operations.py writes`를 해당 worktree에서 실행해 ID·host·session·call을 조회한다. 중앙에서는 `bin/agent-policy writes --project <project> --assignment <id>`로 대상 경로까지 확인한다. Claude의 실행 전 안전 검사 거절은 `PermissionDenied`에서 실패한 호출의 예약만 해제한다. 후속 정상 쓰기나 포맷 성공으로 바꾸지 않는다. 구형 세션에 남은 classifier 거절은 중앙의 같은 `writes` 명령에 `--reconcile-denied`를 붙여 원본 native 대화의 session·call·거절 종류·원래 호출·대상 경로가 일치할 때만 정리한다. 일반 실패·진행 중·근거 없는 결과는 기존 명시적 복구 대상이다. lint·build 통과나 파일 존재는 호출 종료 근거가 아니다.
+
 ## 기존 bundle과 적용
 
 V3 소유권·완료 workflow를 재활성화하지 않는다. 기존 bundle을 resume하면 원래 정책이 유지된다. 현재 bundle과 중앙 정책의 차이를 확인한 뒤 기존 작업을 handoff하고 새 inject assignment로 적용한다. 소비자 설정·정책 사본을 직접 수정하지 않는다. 중앙 로그를 자동 삭제하거나 stage·commit하지 않는다.

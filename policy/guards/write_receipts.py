@@ -1,0 +1,120 @@
+"""실행 전 거절된 호출만 종료한다. 코드·성공 receipt·승인 상태는 변경하지 않는다."""
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+from types import ModuleType
+
+_source = Path(__file__).with_name("runtime_state.py")
+state = ModuleType("write_receipt_state")
+state.__file__ = str(_source)
+exec(compile(_source.read_bytes(), str(_source), "exec"), state.__dict__)
+
+
+def call_path(repository: Path, owner: str, call: str) -> Path:
+    return repository / "formatting/v1/calls" / (state.digest(owner + ":" + call) + ".json")
+
+
+def pending_writes(repository: Path, host: str | None = None, session: str | None = None) -> list[dict]:
+    result = []
+    for path in sorted((repository / "branch-relations/v1/writes").glob("*.json")):
+        value = state.read(path)
+        if (host is None or value.get("host") == host) and (session is None or value.get("session") == session):
+            result.append({**value, "id": path.stem})
+    return result
+
+
+def cancel_unexecuted(repository: Path, host: str, session: str, owner: str, call: str, evidence: dict) -> list[str]:
+    """호출자는 native 거절 근거를 검증하고 events.lock을 보유해야 한다."""
+    if not call or host != "claude" or not session:
+        raise RuntimeError("실행 전 거절된 Claude 호출 식별자가 필요합니다.")
+    directory = repository / "branch-relations/v1"
+    with state.locked(directory / "locks/git.lock"):
+        writes = [item for item in pending_writes(repository, host, session) if item.get("call") == call]
+        source = call_path(repository, owner, call)
+        record = state.read(source)
+        files = record.get("files", [])
+        if any(item.get("owner") != owner or item.get("call") != call for item in files):
+            raise RuntimeError("쓰기 호출의 소유자와 포맷 기록이 다릅니다.")
+        if not writes and not files:
+            return []
+        # 삭제 전에 근거와 원본을 보존한다. 중단 후 같은 호출의 재처리는 멱등이다.
+        receipt = directory / "write-receipts" / (state.digest(host + ":" + session + ":" + call) + ".json")
+        if not receipt.exists():
+            state.write(receipt, {"outcome": "not-executed", "host": host, "session": session,
+                                 "owner": owner, "call": call, "writes": writes, "formatting": record,
+                                 "evidence": evidence})
+        if files:
+            record["not_executed"] = True
+            for item in files:
+                item["resolved_by"] = {"reason": "permission-denied-before-execution", "receipt": str(receipt)}
+            state.write(source, record)
+            for item in files:
+                writer = repository / "formatting/v1/writers" / (state.digest(item["path"]) + ".json")
+                if state.read(writer).get("token") != item["token"]:
+                    continue  # 후속 쓰기 또는 다른 세션의 소유권을 덮어쓰지 않는다.
+                previous = item.get("previous_writer", {})
+                visited = set()
+                while previous.get("token") and previous["token"] not in visited:
+                    visited.add(previous["token"])
+                    prior = state.read(call_path(repository, previous["owner"], previous["call"]))
+                    if not prior.get("not_executed"):
+                        break
+                    match = next((v for v in prior.get("files", []) if v.get("token") == previous["token"]), {})
+                    previous = match.get("previous_writer", {})
+                if previous:
+                    state.write(writer, previous)
+                else:
+                    writer.unlink(missing_ok=True)
+        for item in writes:
+            (directory / "writes" / (item["id"] + ".json")).unlink(missing_ok=True)
+        return [item["id"] for item in writes]
+
+
+def denied_transcript_calls(path: Path, session: str) -> dict[str, dict]:
+    """native JSONL의 실행 전 classifier 거절만 인정한다. 일반 tool 오류는 제외한다."""
+    if path.stat().st_size > 32 * 1024 * 1024:
+        raise RuntimeError("대화 원본이 자동 대조 크기 한도를 초과했습니다. 개별 write-recovery를 사용하세요.")
+    uses, results, ambiguous = {}, {}, set()
+    with path.open() as stream:
+        for number, line in enumerate(stream, 1):
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue  # 기록 중인 마지막 줄은 종료 근거로 사용하지 않는다.
+            if row.get("sessionId") != session or row.get("isSidechain"):
+                continue
+            content = row.get("message", {}).get("content")
+            if not isinstance(content, list):
+                continue
+            for block in content:
+                if not isinstance(block, dict):
+                    continue
+                call = block.get("id") or block.get("tool_use_id")
+                if not call:
+                    continue
+                if row.get("type") == "assistant" and block.get("type") == "tool_use":
+                    value = {"uuid": row.get("uuid"), "name": block.get("name"), "input": block.get("input", {})}
+                    if call in uses and uses[call] != value:
+                        ambiguous.add(call)
+                    uses[call] = value
+                elif row.get("type") == "user" and block.get("type") == "tool_result":
+                    if call in results:
+                        ambiguous.add(call)
+                    results[call] = {"line": number, "source": row.get("sourceToolAssistantUUID"),
+                        "kind": row.get("toolDenialKind"), "error": block.get("is_error"),
+                        "text": block.get("content"), "uuid": row.get("uuid")}
+    confirmed = {}
+    for call, result in results.items():
+        use = uses.get(call, {})
+        if (call not in ambiguous and use.get("name") in {"Write", "Edit", "Bash"}
+                and use.get("uuid") and result["source"] == use["uuid"]
+                and result["kind"] == "automode-unavailable" and result["error"] is True
+                and isinstance(result["text"], str)
+                and result["text"].startswith("The server-side auto mode classifier gave no verdict")):
+            confirmed[call] = {"path": use["input"].get("file_path"), "tool": use["name"],
+                               "input_sha256": hashlib.sha256(json.dumps(use["input"], sort_keys=True).encode()).hexdigest(),
+                               "transcript": str(path),
+                               "line": result["line"], "uuid": result["uuid"], "kind": result["kind"]}
+    return confirmed

@@ -83,6 +83,15 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 
 ## 코드 자동 포맷
 
+Claude의 실행 전 auto-mode 거절은 `PermissionDenied`에서 해당 쓰기 예약만 해제합니다. 성공·실행 실패 이벤트와 별개이며 안전 검사 거절을 재승인하지 않습니다. 구형 bundle의 누락 기록은 중앙에서 다음과 같이 조회·복구합니다.
+
+```sh
+bin/agent-policy writes --project admin-ui --assignment <assignment-id>
+bin/agent-policy writes --project admin-ui --assignment <assignment-id> --reconcile-denied
+```
+
+두 번째 명령은 원본 Claude 대화의 명시적 classifier 거절과 호출·대상이 일치하는 예약만 정리하고 근거를 보존합니다. 파일 존재·빌드 성공·시간 경과로 종료를 추정하지 않습니다. 소비자에서는 현재 bundle의 `git_operations.py writes`로 worktree의 복구 ID를 조회할 수 있습니다. 일반 미확인 결과는 종료를 확인한 뒤 기존 `write-recovery` 승인 절차를 사용합니다.
+
 중앙 저장소에서 `bin/agent-policy formatter-install`을 한 번 실행하면 `state/tools/prettier/3.7.4/`에 고정 버전 Prettier만 설치합니다. package-lock의 배포 무결성을 확인하고 설치 스크립트를 실행하지 않습니다. 소비자와 worktree의 package.json·node_modules는 변경하지 않습니다. 각 세션은 이 공용 설치를 사용하며 실행 중 자동 다운로드하지 않습니다.
 
 자동 포맷 회귀 테스트도 임시 Git 저장소에서 이 실제 엔진을 사용하므로, 새 개발 환경에서는 위 설치 후 `python3 -m unittest discover -s tests -v`를 실행합니다. 테스트 자체는 패키지를 다운로드하지 않습니다.
@@ -95,7 +104,7 @@ bin/agent-policy start --project user-ui --host opencode --mode inject --role lo
 
 프로젝트의 Prettier 설정과 ignore 파일을 따르며 수정하지 않은 파일, host 정책·로그, node_modules·dist·build는 제외합니다. 포맷 후 다시 수정하거나 설정이 바뀌면 다시 확인합니다. 문법 오류·설정 누락·동시 변경·진행 중인 쓰기·stage된 대상은 원본을 덮어쓰지 않고 미완료 사유를 표시합니다. 여러 파일 중 하나라도 Prettier 계산에 실패하면 결과를 반영하지 않습니다. 포맷은 전체 파일에 적용되므로 같은 파일 안의 기존 공백도 달라질 수 있습니다.
 
-Codex·Claude의 Stop은 누락을 한 번 알리고 같은 오류로 반복 차단하지 않습니다. OpenCode는 idle 알림으로 표시합니다. 검증·Git 실행 전 검사와 시스템 프롬프트의 완료 절차를 함께 사용하며, 강제 종료까지 포맷 성공으로 간주하지 않습니다. 코드 수정 없는 commit·merge 요청은 대상 파일·필수 문서를 생성하지 않습니다. 기존 bundle을 재개하면 원래 정책을 유지하므로 새 inject 세션에서 적용합니다.
+공용 formatter가 활성화된 새 bundle의 Stop/idle은 정상 저장된 자기 변경을 실제 포맷합니다. Codex·Claude의 첫 Stop 실패는 원인을 알리고 같은 오류로 반복 차단하지 않습니다. OpenCode는 idle 알림으로 표시합니다. 검증·Git 실행 전 검사와 시스템 프롬프트의 완료 절차를 함께 사용하며, 강제 종료까지 포맷 성공으로 간주하지 않습니다. 코드 수정 없는 commit·merge 요청은 대상 파일·필수 문서를 생성하지 않습니다. 기존 bundle을 재개하면 원래 정책을 유지하므로 새 inject 세션에서 적용합니다.
 
 ## 역할과 병렬 세션
 

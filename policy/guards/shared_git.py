@@ -345,7 +345,7 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
                 else:
                     protocol.emit_operation_approval(host, message + "\n명령 실행 승인으로 답하세요. 구현 승인은 별개입니다.")
                 return
-            if invocation[0] not in {"prepare", "review", "complete", "relation", "show", "graph", "write-recovery"}:
+            if invocation[0] not in {"prepare", "review", "complete", "relation", "show", "graph", "writes", "write-recovery"}:
                 protocol.emit_denial(host, "지원하지 않는 보호 실행기 동작입니다.")
             return
     if shell and paths.unsupported_workflow_invocation(command, root):

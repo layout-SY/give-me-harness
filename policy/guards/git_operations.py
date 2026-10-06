@@ -669,6 +669,7 @@ def main() -> None:
     recovery = commands.add_parser("write-recovery")
     recovery.add_argument("--id", required=True)
     recovery.add_argument("--reason", required=True)
+    commands.add_parser("writes", help="현재 worktree의 쓰기 예약 ID·호스트·세션·호출을 조회합니다.")
     args = parser.parse_args()
     cwd = Path.cwd().resolve()
     root = config.PROJECT_ROOT.resolve()
@@ -690,6 +691,11 @@ def main() -> None:
                                   args.purpose or "", args.new_name, args.worktree)
     elif args.action == "graph":
         result = relations.read(root)
+    elif args.action == "writes":
+        repository = state.repository_state(git.git_common_directory(root))
+        worktree = _loader.load("tool_paths").git_top_level(cwd)
+        result = {"writes": [item for item in _loader.load("write_receipts").pending_writes(repository)
+                             if Path(item.get("worktree", "")) == worktree]}
     elif args.action == "write-recovery":
         result = prepare_write_recovery(root, cwd, args.id, args.reason)
     elif args.action == "show":

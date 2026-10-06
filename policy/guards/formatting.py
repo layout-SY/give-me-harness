@@ -127,7 +127,7 @@ def record_after(root: Path, event: dict, host: str) -> None:
         return
     pending = call_path(root, event, host)
     source = state.read(pending)
-    if not source:
+    if not source or source.get("not_executed"):
         return
     record_path = session_path(root, event, host)
     record = state.read(record_path)

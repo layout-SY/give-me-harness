@@ -415,6 +415,17 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
     if mode == "user-prompt":
         record_user_prompt(event, repository_root(event), host)
         return
+    if mode == "write-denied":
+        if host != "claude" or event.get("hook_event_name") != "PermissionDenied":
+            raise ValueError("native Claude PermissionDenied 이벤트만 실행 전 거절 근거로 인정합니다.")
+        root = repository_root(event)
+        common = branch_guard.git_common_directory(root) or root.resolve()
+        session = event_session_id(event)
+        load_runtime_module("write_receipts").cancel_unexecuted(
+            runtime_state.repository_state(common), host, session, runtime_state.owner_id(host, session),
+            _event_protocol.tool_call_id(event), {"event": "PermissionDenied", "reason": event.get("reason")})
+        print("{}")
+        return
     if mode == "post-tool":
         load_runtime_module("formatting").record_after(repository_root(event), event, host)
         complete_binding(event, repository_root(event), host)
@@ -555,7 +566,7 @@ def main() -> None:
             event = _event_protocol.normalize_tool_result(event)
         if mode == "pre-tool" and (not event.get("tool_name") or not isinstance(event.get("tool_input"), dict)):
             raise ValueError("PreToolUse에는 tool_name과 object 형식 tool_input이 필요합니다.")
-        if (os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT") and mode in {"pre-tool", "post-tool", "user-prompt"}
+        if (os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT") and mode in {"pre-tool", "post-tool", "write-denied", "user-prompt"}
                 and event_session_id(event) == "missing-session-id"):
             raise ValueError("launcher assignment의 실제 host session ID가 필요합니다.")
         root = repository_root(event)

@@ -63,6 +63,17 @@
       ]
     }
   ],
+  "PermissionDenied": [
+    {
+      "hooks": [
+        {
+          "type": "command",
+          "command": "write-denied",
+          "timeout": 10
+        }
+      ]
+    }
+  ],
   "PostToolUseFailure": [
     {
       "hooks": [

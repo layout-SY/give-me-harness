@@ -427,6 +427,7 @@ def _replace_guard_commands(value: object, runtime: Path, host: str) -> object:
         "user-prompt",
         "pre-tool",
         "post-tool",
+        "write-denied",
         "format-stop",
         "documentation-stop",
     ):

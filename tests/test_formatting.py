@@ -58,6 +58,48 @@ class FormattingTests(unittest.TestCase):
         self.fixture.assert_allowed(self.hook("post-tool", {**event, "tool_response": {"success": True}}, host=host))
         return path
 
+    def test_permission_denial_releases_only_denied_call_and_keeps_later_save(self):
+        path = self.write("src/denied.ts", "export const n={value:1};\n")
+        denied = {"tool_name": "Write", "tool_call_id": "denied-before-execution",
+                  "tool_input": {"file_path": str(path), "content": "never written"}}
+        self.fixture.assert_allowed(self.hook("pre-tool", denied))
+        path = self.write("src/denied.ts", "export const n={value:2};\n")
+        waiting = {**denied, "tool_call_id": "still-waiting",
+                   "tool_input": {"file_path": str(self.root / "src/waiting.ts"), "content": "pending"}}
+        self.fixture.assert_allowed(self.hook("pre-tool", waiting))
+        lookup = [sys.executable, "-I", str(self.fixture.guard.with_name("git_operations.py")), "writes"]
+        self.fixture.assert_allowed(self.hook("pre-tool", {"tool_name": "Bash",
+            "tool_input": {"command": shlex.join(lookup)}}))
+        environment = {key: value for key, value in os.environ.items() if not key.startswith("ASAN_")}
+        environment["ASAN_AGENT_POLICY_STATE_ROOT"] = str(self.fixture.state)
+        listed = subprocess.run(lookup, cwd=self.root / "src", env=environment, text=True, capture_output=True, check=True)
+        self.assertEqual({v["call"] for v in json.loads(listed.stdout)["writes"]},
+                         {"denied-before-execution", "still-waiting"})
+        response = self.hook("write-denied", {**denied, "hook_event_name": "PermissionDenied",
+                                             "reason": "Classifier unavailable"})
+        self.fixture.assert_allowed(response)
+        self.assertNotIn("retry", response.stdout)
+        # 중복/늦은 실패 callback도 후속 정상 저장을 unconfirmed로 되돌리지 않는다.
+        self.fixture.assert_allowed(self.hook("post-tool", {**denied, "hook_event_name": "PostToolUseFailure",
+                                                            "error": "denied before execution"}))
+        writes = list(self.fixture.state.glob("repositories/*/branch-relations/v1/writes/*.json"))
+        self.assertEqual([json.loads(p.read_text())["call"] for p in writes], ["still-waiting"])
+        self.assertNotEqual(self.runner().returncode, 0)
+        self.fixture.assert_allowed(self.hook("write-denied", {**waiting, "hook_event_name": "PermissionDenied"}))
+        self.assertEqual(self.runner().returncode, 0)
+        self.assertEqual(path.read_text(), "export const n = { value: 2 };\n")
+
+    def test_permission_denial_restores_previous_writer_without_marking_new_file_successful(self):
+        path = self.write("src/previous.ts", "export const n={value:1};\n")
+        for target in (path, self.root / "src/never-created.ts"):
+            denied = {"tool_name": "Write", "tool_call_id": "denied-" + target.name,
+                      "tool_input": {"file_path": str(target), "content": "never written"}}
+            self.fixture.assert_allowed(self.hook("pre-tool", denied))
+            self.fixture.assert_allowed(self.hook("write-denied", {**denied, "hook_event_name": "PermissionDenied"}))
+        self.assertEqual(self.runner().returncode, 0)
+        self.assertFalse((self.root / "src/never-created.ts").exists())
+        self.assertEqual(path.read_text(), "export const n = { value: 1 };\n")
+
     def test_validation_trigger_formats_only_successfully_modified_files(self):
         owned = self.write("src/owned.ts", "export const owned={value:1};\n")
         untouched = self.root / "src/other.ts"
