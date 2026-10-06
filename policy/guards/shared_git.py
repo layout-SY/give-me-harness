@@ -287,8 +287,9 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
         formatting.require_for_trigger(root, event, host, action, format_cwd)
         return
     if shell:
-        invocation = operations.invocation(command)
-        if invocation is not None:
+        execution = operations.invocation_context(command, cwd)
+        if execution is not None:
+            cwd, invocation = execution
             denial = boundary.directory_denial(root, cwd)
             if denial:
                 protocol.emit_denial(host, denial)
@@ -305,7 +306,9 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
                         protocol.emit_denial(host, "승인받아 시작한 동일 완료 작업만 복구할 수 있습니다.")
                     return
                 if cwd.resolve() != Path(operation["cwd"]):
-                    protocol.emit_denial(host, "승인 대상의 실제 실행 위치와 다릅니다. 해당 workdir에서 실행하세요.")
+                    protocol.emit_denial(host, "승인 대상의 실제 실행 위치와 다릅니다. "
+                        f"승인 위치={operation['cwd']}, 훅 확인 위치={cwd}. "
+                        "host가 workdir를 생략할 때는 다음 명시적 경로 명령을 사용하세요: " + operations.command(operation))
                     return
                 if operation["stage"] != "prepared":
                     protocol.emit_denial(host, f"operation={operation['id']}, stage={operation['stage']}: 이미 시작하거나 완료된 실행입니다. "

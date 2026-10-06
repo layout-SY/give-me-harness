@@ -52,6 +52,18 @@ EC 구매자의 `831402317ab843499193406cc255ac5d` 완료는 검증 성공 후 `
 
 실제 상태의 읽기 전용 재검사도 두 작업 모두 통과했다. EC 구매자는 검증 `passed`, 보존 대상 174개(과거·현재 로그와 환경설정 포함), 이용 내역은 검증 `unknown`, 보존 대상 17개(로그와 tsbuildinfo)다. 결과는 `state/recovery-runs/post-merge-cleanup-preview-20260930.json`이다. 이는 보존 목록의 사전 검사이며 아직 백업·삭제를 수행했다는 의미는 아니다. 실제 실행 직전에 다시 검사한다.
 
+## 2026-09-30 tutorial의 보호 실행 경로 오판
+
+Codex assignment `4bb154a2144d4f5c8812a396d734a3a9`는 기본 worktree에서 시작한 뒤 tutorial로 이동했다. 복구 작업 `20473861be1147babe771ca53d99d5fc`의 cwd는 tutorial로 정확했다. native 대화에는 `exec_command.workdir=tutorial` 실행과 같은 경로의 `cd … && python …` 재시도가 모두 기록돼 있다. 전자는 훅의 workdir 누락으로 시작 위치와 비교됐고, 후자는 `git_operations.invocation`의 단일 python 제한에 막혔다. 이는 디렉터리 소유권이나 사용자 승인 부족이 아니다.
+
+[git_operations.py](../policy/guards/git_operations.py)의 경로 파서는 리터럴 `cd [--] <경로> &&`와 현재 bundle 실행기 하나를 허용한다. 생성하는 execute 명령에도 절대 workdir를 포함한다. [shared_git.py](../policy/guards/shared_git.py)는 해석한 cwd를 프로젝트 경계·승인 위치와 대조하며 기대/현재 경로와 재개 명령을 오류에 표시한다. 세 호스트에서 workdir 없는 입력의 정상 승인·실행을 검사하고, 다른 위치·동적 경로·추가 명령·리다이렉션은 거부한다.
+
+원래 실패 호출 `exec-c86ba388-fe06-407c-8c94-6031492f7a0f`는 07:16:28.793 UTC에 중복 파일 대상의 `apply_patch verification failed`로 종료했다. 원본 실패 응답과 예약·후속 저장 상태를 대조하고, 이 중앙 세션의 복구 요청으로 새 공식 write-recovery `6acb61f5f6944c2c8b4a23ee212bfe9e`를 실행했다. 과거 assignment 승인을 가장하거나 state JSON을 직접 삭제하지 않았다. 예약 해소 전후 소스 snapshot은 같고 tutorial의 남은 writes는 0건이다.
+
+후속 공식 포맷 상태 확인, tutorial 계약·controller 테스트 19개, lint, build, 최종 formatter check가 모두 통과했다. 19개 파일의 포맷 완료 receipt가 확인된다. 빌드의 기존 tsconfig-paths 안내·chunk 크기 경고는 남아 있다. 증거는 `state/recovery-runs/tutorial-write-recovery-20260930.json`, `tutorial-format-20260930.json`에 보존했다. 다른 worktree의 소스 사본·사용자 변경은 삭제하지 않았다. 구형 세션의 경로 파서 자체는 그대로이므로 새 경로 처리는 handoff 후 새 inject부터 적용된다.
+
+추가 수정의 최종 검증: unittest discovery의 404개를 26개 파일별 subprocess로 검증했다. 사후 정리 13개·명시적 workdir 3개가 포함된다. 최초 공통 Git 접근 검사에서는 테스트가 `cd &&`를 셸 없이 실행한 오류와 병렬 부하 중 8초 제한 실패가 있었다. 실제 호스트처럼 셸에서 실행하도록 테스트를 수정한 후 해당 32개 전체를 단독 재실행해 통과했다. 최종 집계 404/404, 중앙 contract·admin-ui(295 files)·user-ui(225 files) audit, diff 공백 검사 모두 통과했다. 최초 예상 403 이후 회귀 1개가 추가된 집계 차이와 초기 실패도 `state/recovery-runs/central-policy-final-verification-20260930.json` 및 원본 테스트 로그에 남겼다.
+
 ## 2. 계획 해시: 세션 폐쇄가 아니라 승인 범위 변경 감지
 
 도입 이력: `e60ade9`의 [당시 개선 보고 F04·F05](runtime-remediation-2026-09-08.md)는 compact·resume·질문에는 승인을 유지하고 task·role·계약·계획 변경에 재승인을 요구했다. 계획 전체 바이트를 선택하거나 진행 표시까지 승인을 해제해야 한다는 별도 요구는 확인하지 못했다. `3184d3b`의 [V4 전환](shared-git-access-2026-09-10.md)은 branch/worktree 소유권을 없애되 계획 비교와 다른 worktree에 로그를 쓰는 경우의 기존 계획 fallback을 유지했다.

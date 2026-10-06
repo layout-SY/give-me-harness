@@ -460,7 +460,9 @@ class SharedGitAccessTests(unittest.TestCase):
                     self.assert_allowed(allowed)
                 # Simulate acceptance of Claude's native ask; other hosts consumed
                 # the explicit prompt above. Execute the actual bundled runner.
-                executed = subprocess.run(shlex.split(event["tool_input"]["cmd" if host == "codex" else "command"]),
+                # 호스트는 명시적인 cd && 실행기 문자열을 셸에서 실행한다.
+                # argv로 분리하면 macOS의 /usr/bin/cd만 성공하고 Git은 실행되지 않는다.
+                executed = subprocess.run(["/bin/sh", "-c", event["tool_input"]["cmd" if host == "codex" else "command"]],
                     cwd=self.root, env={**env, **launch.environment}, text=True, capture_output=True)
                 self.assertEqual(executed.returncode, 0, executed.stderr)
                 self.assertEqual(self.git("log", "-1", "--format=%s"), "native")

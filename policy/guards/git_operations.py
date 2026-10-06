@@ -55,21 +55,39 @@ def base(root: Path, cwd: Path, kind: str) -> dict:
 
 
 def command(operation: dict) -> str:
-    return shlex.join([sys.executable, "-I", str(Path(__file__).resolve()), "execute", operation["id"]])
+    return "cd -- " + shlex.quote(operation["cwd"]) + " && " + shlex.join(
+        [sys.executable, "-I", str(Path(__file__).resolve()), "execute", operation["id"]])
 
 
-def invocation(value: str) -> list[str] | None:
-    try:
-        words = shlex.split(value)
-    except ValueError:
+def invocation_context(value: str, cwd: Path) -> tuple[Path, list[str]] | None:
+    if "git_operations.py" not in value:
         return None
-    if len(words) >= 4 and Path(words[0]).name.startswith("python") and words[1] == "-I" and Path(words[2]).resolve() == Path(__file__).resolve():
-        if any(word in {";", "&&", "||", "|"} for word in words):
-            raise RuntimeError("보호 실행기는 단일 명령으로 호출하세요.")
-        return words[3:]
-    if "git_operations.py" in value:
-        raise RuntimeError("현재 bundle의 git_operations.py를 python -I로 직접 실행하세요.")
-    return None
+    try:
+        lexer = shlex.shlex(value.strip(), posix=True, punctuation_chars=";&|()<>\n")
+        lexer.whitespace = " \t\r"
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        words = list(lexer)
+    except ValueError:
+        raise RuntimeError("보호 실행 명령의 인용을 확인하세요.")
+    if words and words[0] == "cd":
+        prefix = 3 if len(words) > 1 and words[1] == "--" else 2
+        contexts = git.shell_command_contexts(value, cwd)
+        if (len(words) <= prefix or words[prefix] != "&&" or contexts is None or len(contexts) != 2
+                or contexts[0][1] != tuple(words[:prefix]) or contexts[1][1] != tuple(words[prefix + 1:])):
+            raise RuntimeError("보호 실행은 리터럴 cd 경로 뒤에 &&로 실행기 하나만 연결하세요.")
+        cwd, words = contexts[1][0], words[prefix + 1:]
+    if any(word and all(char in ";&|()<>\n" for char in word) for word in words):
+        raise RuntimeError("보호 실행기는 추가 명령·리다이렉션 없이 호출하세요.")
+    if (len(words) >= 4 and Path(words[0]).name.startswith("python") and words[1] == "-I"
+            and (cwd / words[2]).resolve() == Path(__file__).resolve()):
+        return cwd, words[3:]
+    raise RuntimeError("현재 bundle의 git_operations.py를 python -I로 직접 실행하세요. 리터럴 cd 경로 && 접두부는 허용합니다.")
+
+
+def invocation(value: str, cwd: Path | None = None) -> list[str] | None:
+    parsed = invocation_context(value, cwd or Path.cwd())
+    return parsed[1] if parsed else None
 
 
 def prepare_git(root: Path, cwd: Path, value: str, host: str, event: dict) -> dict:

@@ -151,6 +151,8 @@ Codex writable home과 승인 상태는 중앙 state의 assignment별로 분리�
 
 이미 직접 부모에 포함된 작업은 `git_operations.py cleanup --source <자식> --target <직접 부모>`로 **사후 정리만** 준비할 수 있습니다. 부모의 미커밋 작업은 그대로 두고, source commit과 `.env`·MSW 설정·세션 로그 등 로컬 파일을 보존한 뒤 승인한 source branch·linked worktree만 정리합니다. 중앙 앱 검증 기록이 없으면 `미확인`으로 표시해 승인받으며, 정리 성공을 앱 검증 성공으로 기록하지 않습니다. 보존 대상 변경·미확인 쓰기·미처리 자식 등은 계속 차단합니다. 상세 기준과 중단 복구는 [Git 정책](policy/common/skills/policy/git-branch-strategy/SKILL.md#이미-병합된-branchworktree의-사후-정리)을 따릅니다.
 
+보호 실행기가 출력하는 명령은 `cd -- <승인 workdir> && python -I <현재 bundle>/git_operations.py execute <id>`로 실제 경로를 포함합니다. host 훅이 도구의 workdir를 누락해도 이 명시적 경로를 검사할 수 있습니다. 추가 명령·동적 경로·리다이렉션은 허용하지 않습니다.
+
 과거 V3 maintenance·integration-recover·close-recover 명령은 이전 실행 기록의 운영 복구용입니다. 새 세션의 접근 권한이나 완료 경로로 사용하지 않습니다. 소비자 정책 잔존물은 실제 경로와 기존 작업을 확인한 별도 적용 계획으로 처리합니다.
 
 호스트 이벤트 등록은 adapters의 events.json(Codex·Claude)과 OpenCode plugin이 소유합니다. 공통 runtime의 이벤트 판정·결과 정규화·상태 저장, branch workflow의 실제 Git 실행을 분리합니다. OpenCode의 안전한 기본 Git 조회는 별도 승인 없이 사용하되 복잡한 global option이나 host가 안전하게 구분하지 못하는 형태는 승인 요청을 유지합니다.

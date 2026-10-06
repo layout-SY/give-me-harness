@@ -476,7 +476,7 @@ def operation_fingerprint(root: Path, command: str) -> str:
     """사용자가 확인한 작업 위치, 명령, ref와 실제 변경 내용을 함께 고정한다."""
     if branch_guard.SHARED_GIT_ACCESS and "git_operations.py" in command:
         operations = load_runtime_module("git_operations")
-        arguments = operations.invocation(command)
+        arguments = operations.invocation(command, root)
         if arguments and len(arguments) == 2 and arguments[0] == "execute":
             operation = operations.load(root, arguments[1])
             operations.validate(root, operation)
