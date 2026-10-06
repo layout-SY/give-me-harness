@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import tempfile
 import time
 from contextlib import contextmanager
@@ -27,10 +28,22 @@ def repository_state(common: Path) -> Path:
     return state_root() / "repositories" / digest(str(common.resolve()))
 
 
+def effective_assignment(host: str, session: str) -> str:
+    assignment = os.environ.get(ASSIGNMENT_ENV, "")
+    if (host != "codex" or os.environ.get("ASAN_CODEX_PROJECT_HISTORY") != "1"
+            or not re.fullmatch(r"[a-f0-9]{32}", assignment)
+            or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", session)):
+        return assignment
+    home = Path(os.environ["CODEX_HOME"])
+    record = read(home.parents[2] / "assignments" / assignment / "assignment.json")
+    previous = record.get("native_session")
+    return digest(f"{assignment}\0{session}")[:32] if previous and previous != session else assignment
+
+
 def session_path(common: Path, host: str, session: str, namespace: str, *, create: bool = True) -> Path | None:
     if not session or session == "missing-session-id":
         return None
-    assignment = os.environ.get(ASSIGNMENT_ENV, "")
+    assignment = effective_assignment(host, session)
     if assignment:
         if len(assignment) != 32 or any(c not in "0123456789abcdef" for c in assignment):
             raise RuntimeError("assignment ID가 올바르지 않습니다.")
@@ -97,6 +110,22 @@ def bind_native_session(common: Path, host: str, session: str, *, read_only: boo
         return
     path = session_path(common, host, session, "assignment", create=not read_only)
     record = read(path)
+    launch_assignment = os.environ[ASSIGNMENT_ENV]
+    if not record and path.parent.name != launch_assignment and not read_only:
+        original = read(repository_state(common) / "assignments" / launch_assignment / "assignment.json")
+        if (not original or original.get("host") != host
+                or original.get("repository") != str(common.resolve()) or original.get("handed_off_to")):
+            raise RuntimeError("내장 resume의 원래 launcher 계약을 확인할 수 없습니다.")
+        # Copy execution metadata only. Approval/binding/write state lives in separate files.
+        record = {key: value for key, value in original.items() if key not in {
+            "native_session", "native_link_source", "handed_off_to"}}
+        record.update({"id": path.parent.name, "native_session": session,
+                       "created_at": time.time(), "resumed_from_launch": launch_assignment})
+        environment = dict(record["environment"])
+        environment[ASSIGNMENT_ENV] = path.parent.name
+        if environment.get("ASAN_SESSION_DIR_MODE") == "suggested":
+            environment["ASAN_SESSION_DIR"] = environment["ASAN_SESSION_DIR"] + "-" + session[:8]
+        record["environment"] = environment
     if not record or record.get("host") != host or record.get("repository") != str(common.resolve()):
         raise RuntimeError("launcher의 assignment와 현재 host/repository가 다릅니다.")
     for key, variable in (("role", "ASAN_AGENT_POLICY_ROLE"), ("responsibility", "ASAN_ARTIFACT_RESPONSIBILITY")):
@@ -107,7 +136,7 @@ def bind_native_session(common: Path, host: str, session: str, *, read_only: boo
     assignment = os.environ.get(ASSIGNMENT_ENV)
     for transaction in (repository_state(common) / "handoffs").glob("*.transaction.json"):
         value = read(transaction)
-        if value.get("state") == "applying" and assignment in {value.get("source"), value.get("target")}:
+        if value.get("state") == "applying" and {assignment, path.parent.name} & {value.get("source"), value.get("target")}:
             raise RuntimeError("중단된 assignment handoff가 있습니다. 승인한 동일 계약으로 인계를 재실행하세요.")
     previous = record.get("native_session")
     if previous and previous != session:
@@ -118,10 +147,14 @@ def bind_native_session(common: Path, host: str, session: str, *, read_only: boo
         return
     record["native_session"] = session
     write(path, record)
+    # Hook processes are short-lived; never alter another conversation's environment/state.
+    for variable in ("ASAN_SESSION_DIR", "ASAN_SESSION_DIR_MODE"):
+        if variable in record.get("environment", {}):
+            os.environ[variable] = record["environment"][variable]
 
 
 def owner_id(host: str, session: str) -> str:
-    return os.environ.get(ASSIGNMENT_ENV) or digest(f"{host}\0{session}")
+    return effective_assignment(host, session) or digest(f"{host}\0{session}")
 
 
 def claim(common: Path, resource: str, owner: str) -> str | None:

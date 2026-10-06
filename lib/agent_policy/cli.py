@@ -177,6 +177,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="수집할 세션 로그 채널",
     )
     collect_logs.add_argument("--quiet", action="store_true", help="정상 결과 출력을 생략합니다.")
+    collect_logs.add_argument("--hook-event", action="store_true", help="stdin의 host 이벤트에서 수집할 native 세션을 확인합니다.")
     return parser
 
 
@@ -489,13 +490,24 @@ def run_resume(project_id: str, host: str, assignment: str | None, worktree: str
                      resume_assignment=row["assignment"])
 
 
-def run_collect_logs(selector: str, channel: str, quiet: bool) -> int:
+def run_collect_logs(selector: str, channel: str, quiet: bool, hook_event: bool = False) -> int:
+    native = None
+    if hook_event:
+        try:
+            event = json.load(sys.stdin)
+            native = event.get("session_id") if isinstance(event, dict) else None
+        except (ValueError, OSError) as error:
+            raise PolicyError("로그 수집 host 이벤트를 읽을 수 없습니다.") from error
+        if not isinstance(native, str) or not native:
+            raise PolicyError("로그 수집 host 이벤트에 session_id가 없습니다.")
     for project in select_projects(selector):
         runtime_path = os.environ.get(INJECT_PROJECT_PATH_ENV)
         if runtime_path:
             project = active_project(project, runtime_path, None)
         for selected_channel in selected_channels(channel):
             assignment = os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT")
+            if native:
+                assignment = load_runtime("runtime_state").effective_assignment(selected_channel, native)
             state_root = os.environ.get("ASAN_AGENT_POLICY_STATE_ROOT")
             sources = None
             if assignment and state_root:
@@ -622,7 +634,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             print(f"공용 Prettier 설치 확인: {install()}")
             code = 0
         elif arguments.command == "collect-logs":
-            code = run_collect_logs(arguments.project, arguments.channel, arguments.quiet)
+            code = run_collect_logs(arguments.project, arguments.channel, arguments.quiet, arguments.hook_event)
         else:
             raise PolicyError(f"지원하지 않는 command입니다: {arguments.command}")
     except PolicyError as error:

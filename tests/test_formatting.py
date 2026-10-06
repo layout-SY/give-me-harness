@@ -449,7 +449,8 @@ class FormattingTests(unittest.TestCase):
                 event = {"tool_name": "Bash", "tool_input": {"command": command}}
                 self.fixture.assert_allowed(self.hook("pre-tool", event, host=host))
                 self.assertEqual(path.read_text(), "export const native = { value: 1 };\n")
-                env = {key: value for key, value in os.environ.items() if not key.startswith("ASAN_")}
+                env = {key: value for key, value in os.environ.items()
+                       if not key.startswith("ASAN_") and key != "CODEX_THREAD_ID"}
                 # The native command only confirms the hook's result. Simulate
                 # a sandbox that permits reading central state but no writes.
                 modes = [(entry, entry.stat().st_mode & 0o777) for entry in

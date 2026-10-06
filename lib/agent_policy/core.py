@@ -170,6 +170,7 @@ def log_collection_command(project: ProjectConfig, channel: str) -> str:
     return (
         f'python3 "{CANONICAL_ROOT / "bin/agent-policy"}" collect-logs '
         f"--project {project.id} --channel {channel} --quiet"
+        + (" --hook-event" if channel == "codex" else "")
     )
 
 

@@ -2,6 +2,14 @@
 
 ## 프로젝트 이력 선택
 
+새 Codex inject 실행은 프로젝트의 대화 저장소를 공유하므로 내부 `/resume`에서 이전 대화를 선택할 수 있다. `CODEX_HOME`의 훅·스킬·에이전트 설정은 실행마다 격리한다. `sessions/`, `archived_sessions/`, 대화 이름 index·writer lock과 SQLite 이력은 같은 Git 저장소의 `state/repositories/<repository-id>/codex-history/`를 사용한다. 다른 프로젝트의 대화는 합치지 않는다.
+
+Codex picker의 기본 cwd 필터는 유지한다. 다른 worktree에서 시작한 대화는 picker의 `All`, 보관한 대화는 `Archived` 필터에서 확인한다.
+
+처음 실행할 때 기존 프로젝트 공용 home, 같은 저장소의 assignment home, 사용자 Codex home에서 프로젝트 귀속을 확인한 대화를 가져온다. 원본 파일은 보존하고 가져온 경로·해시를 기록한다. 가져온 뒤 이어 쓴 공용 대화를 과거 사본으로 덮어쓰지 않는다. 원래 home에서 실행 중인 세션은 먼저 handoff하고 종료한 뒤 새 launcher로 시작한다. 파일이 없는 대화는 복원했다고 간주하지 않는다.
+
+내부 `/resume`은 **현재 launcher의 정책·role로 대화를 이어가는 기능**이다. 대화를 처음 선택하면 현재 실행의 별도 상태로 연결하므로 이전 실행이나 다른 대화의 승인·산출물 binding을 복제하지 않는다. 같은 실행 안에서 대화를 전환했다 돌아오면 그 대화의 상태를 유지한다. 아래 중앙 `resume`은 **원래 assignment·정책으로 재개**하는 기존 기능이다. 이전 불변 bundle의 동작은 바뀌지 않는다.
+
 중앙 저장소에서 실행한다. 목록 조회와 재개 미리보기는 assignment나 대화 파일을 생성하지 않는다.
 
 ```sh
@@ -10,7 +18,7 @@ bin/agent-policy resume --project user-ui --host codex
 bin/agent-policy resume --project user-ui --host codex --assignment <assignment-id> --print-only
 ```
 
-대화 변경 시각을 기준으로 정렬하며 역할·과거 branch 상태는 참고 정보다. 원래 native ID·정책 bundle·Codex home을 함께 선택한다. 내장 `/resume`은 해당 home 안에서 동작한다. 서로 다른 역할의 home 전체나 hooks·승인 상태를 공유하지 않는다. 비대화형 실행은 `--assignment`를 지정한다. 기존 `start --resume-assignment`도 같은 검증을 사용한다.
+대화 변경 시각을 기준으로 정렬하며 역할·과거 branch 상태는 참고 정보다. 원래 native ID·정책 bundle·Codex home을 함께 선택한다. 프로젝트 이력 공유 이전에 만들어진 home의 내장 `/resume`은 해당 home의 기록만 표시한다. 서로 다른 역할의 home 전체나 hooks·승인 상태를 공유하지 않는다. 비대화형 실행은 `--assignment`를 지정한다. 기존 `start --resume-assignment`도 같은 검증을 사용한다.
 
 `bundle 정상`만으로 재개 가능하다고 판정하지 않는다. 프로젝트·worktree·native ID·대화 메타데이터·정책 원본·home의 관리 파일·인계 상태를 함께 확인하고 실행 직전에 다시 검사한다. 현재 중앙 정책의 변경 여부는 비교 정보로 표시한다. 현재 소스 audit가 실패해도 원래 bundle 자체를 정상 검증할 수 있는 기존 재개는 허용한다. 소비자 정책 사본 충돌 검사는 유지한다.
 
@@ -63,7 +71,7 @@ bin/agent-policy bundle-repair --project user-ui --assignment <assignment-id>
 bin/agent-policy start --project user-ui --host codex --role logic --worktree /absolute/existing/worktree
 ```
 
-새 세션에 인계 문서 위치와 이전 대화 경로를 전달한다. 이는 원래 대화의 동일 정책 재개와 구분하며 기존 native 이력·assignment·승인을 덮어쓰거나 다른 세션으로 복제하지 않는다. 단순 commit/merge만 수행하는 요청은 별도 필수 산출물을 생성하지 않는 기존 예외를 유지한다.
+새 세션에서 `/resume`으로 보존된 대화를 선택하고 인계 문서·현재 상태를 다시 확인한다. 이는 원래 대화의 동일 정책 재개와 구분하며 이전 assignment·승인을 복제하지 않는다. 단순 commit/merge만 수행하는 요청은 별도 필수 산출물을 생성하지 않는 기존 예외를 유지한다.
 
 ## 검증과 적용 범위
 

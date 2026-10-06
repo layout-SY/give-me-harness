@@ -46,14 +46,18 @@ def transcript_catalog(home: Path) -> tuple[list[dict], list[str]]:
     entries, errors = [], []
     if home.is_symlink():
         return [], [f"대화 home이 symlink입니다: {home}"]
-    for folder in ("sessions", "archived_sessions"):
-        directory = home / folder
-        if directory.is_symlink():
+    try:
+        directories = load_runtime("history_paths").transcript_roots(home)
+    except (OSError, ValueError) as error:
+        return [], [str(error)]
+    for root in directories:
+        directory = home / root.name
+        if directory.is_symlink() and root == directory:
             errors.append(f"대화 디렉터리가 symlink입니다: {directory}")
             continue
         for path in sorted(directory.glob("**/*.jsonl")):
             try:
-                if path.is_symlink() or not path.resolve().is_relative_to(home.resolve()):
+                if path.is_symlink() or not path.resolve().is_relative_to(root.resolve()):
                     raise ValueError("대화 경로가 home 밖이거나 symlink입니다.")
                 with path.open(encoding="utf-8") as stream:
                     line = stream.readline(1024 * 1024)

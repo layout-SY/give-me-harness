@@ -408,6 +408,9 @@ def main() -> None:
         if not args.host:
             raise RuntimeError("실행 host를 확인할 수 없습니다.")
         if not args.session and os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT"):
+            if args.host == "codex" and os.environ.get("ASAN_CODEX_PROJECT_HISTORY") == "1":
+                args.session = os.environ.get("CODEX_THREAD_ID")
+        if not args.session and os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT"):
             assignment_path = state.session_path(git.git_common_directory(root), args.host, "launcher", "assignment", create=False)
             args.session = state.read(assignment_path).get("native_session")
         if not args.session:

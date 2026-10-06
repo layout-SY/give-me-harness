@@ -157,6 +157,7 @@ class SessionResumeTests(unittest.TestCase):
         self.assertFalse(self.launch.bundle_root.exists())
 
     def test_deleted_launch_worktree_does_not_delete_conversation_or_pin_guard(self):
+        native = "00000000-0000-4000-8000-000000000002"
         subprocess.run(["git", "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-qm", "fixture"],
                        cwd=self.fixture.project_root, check=True)
         worktree = self.fixture.root / "child"
@@ -169,18 +170,18 @@ class SessionResumeTests(unittest.TestCase):
         home = Path(launched.environment["CODEX_HOME"])
         path = home.parent / "assignment.json"
         record = json.loads(path.read_text())
-        record["native_session"] = self.native
+        record["native_session"] = native
         path.write_text(json.dumps(record))
         transcript = home / "sessions" / "conversation.jsonl"
-        transcript.parent.mkdir()
-        transcript.write_text(json.dumps({"type": "session_meta", "payload": {"id": self.native, "cwd": str(worktree)}}) + "\n")
+        transcript.parent.mkdir(exist_ok=True)
+        transcript.write_text(json.dumps({"type": "session_meta", "payload": {"id": native, "cwd": str(worktree)}}) + "\n")
         subprocess.run(["git", "worktree", "remove", str(worktree)], cwd=self.fixture.project_root, check=True)
         resumed = injection.resume_injection(self.fixture.project, "codex", "logic", path.parent.name,
             self.fixture.state_root, None, "owner")
         self.assertEqual(resumed.command[-2:], ("--cd", str(self.fixture.project_root.resolve())))
         hooks = json.loads((home / "hooks.json").read_text())["hooks"]
         command = shlex.split(hooks["PreToolUse"][0]["hooks"][0]["command"])
-        event = {"session_id": self.native, "cwd": str(self.fixture.project_root), "tool_name": "exec_command",
+        event = {"session_id": native, "cwd": str(self.fixture.project_root), "tool_name": "exec_command",
                  "tool_input": {"cmd": "git status", "workdir": str(self.fixture.project_root)}}
         result = subprocess.run(command, input=json.dumps(event), cwd=self.fixture.project_root,
             env={**os.environ, **resumed.environment}, text=True, capture_output=True)
@@ -221,7 +222,7 @@ class SessionResumeTests(unittest.TestCase):
             sessions.repair_bundle(self.fixture.project, self.record_path.parent.name, self.fixture.state_root)
         self.assertFalse(self.launch.bundle_root.exists())
         duplicate = self.home / "archived_sessions/duplicate.jsonl"
-        duplicate.parent.mkdir()
+        duplicate.parent.mkdir(exist_ok=True)
         duplicate.write_bytes(self.transcript.read_bytes())
         self.assertIn("transcript_ambiguous", {reason["code"] for reason in self.rows()[0]["reasons"]})
 

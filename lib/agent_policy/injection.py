@@ -1039,6 +1039,11 @@ def prepare_injection(
             selected_source_home,
         )
         environment["CODEX_HOME"] = str(codex_home)
+        if shared:
+            from .codex_history import prepare_history
+            history = prepare_history(project, codex_home, selected_state_root, selected_source_home)
+            environment["ASAN_CODEX_PROJECT_HISTORY"] = "1"
+            codex_overrides += (f"sqlite_home={json.dumps(str(history))}",)
     elif host == "opencode":
         environment["OPENCODE_CONFIG_DIR"] = str(bundle_root / "opencode-home")
         environment["OPENCODE_DISABLE_PROJECT_CONFIG"] = "1"

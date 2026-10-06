@@ -5,7 +5,7 @@ from types import ModuleType
 
 
 def load_runtime(name: str) -> ModuleType:
-    if name not in {"runtime_state", "event_protocol", "artifact_names", "write_receipts"}:
+    if name not in {"runtime_state", "event_protocol", "artifact_names", "write_receipts", "history_paths"}:
         raise ValueError(f"지원하지 않는 runtime 모듈: {name}")
     source = Path(__file__).resolve().parents[2] / "policy/guards" / f"{name}.py"
     module = ModuleType(name)
