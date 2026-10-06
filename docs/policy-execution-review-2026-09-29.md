@@ -10,6 +10,7 @@
 | 계획 승인 | 승인 영역/진행 기록 분리, 해시 비교, source 변경 전 plan 존재·빈 문서·잘못된 표식 검사 | 계획의 품질·구현과의 일치, UI 자산 문서의 항목 대응은 에이전트 리뷰 의무 |
 | 포맷 | 복구 후 정상 저장의 대체 근거 영구 보존, 중복 대상 제거, 명시적 patch 실패 인식, Stop/idle 실제 포맷 | 결과 미확인·부분 실패·타 작성자 변경·stage 파일은 계속 차단 |
 | 병합 | 검토 이후 바뀐 branch의 기대/현재 HEAD·변경 파일과 다음 조치 출력, 직접 부모 검사 유지 | 의미적 계약 위험과 영향 판단은 에이전트가 설명 |
+| 병합 이후 정리 | 직접 부모 포함·로컬 파일 보존을 확인하는 별도 cleanup, 부모 dirty/index 보존, 중단 단계별 복구 | 앱 검증 미확인/실패는 별도 표시해 승인받음; 실제 소비자 branch 삭제는 아직 수행하지 않음 |
 | 기준 branch 동기화 | 미반영 commit의 현재 작업 영향을 먼저 검토하고 무관하면 merge하지 않도록 스킬 보강 | 무관 여부를 경로 겹침만으로 판정하는 자동 gate는 아님 |
 | inquiry-ui 삭제 기록 | 실제 ref·worktree·graph를 대조하고 퇴역 절차 보강 | 조사 시 이미 deleted=true여서 실제 state를 다시 수정하지 않음 |
 | worktree별 준비 | 세션 안에서도 worktree·branch·HEAD·역할별 스킬·탐색 근거 분리 | 계획의 대상·범위가 적절한지는 문서·리뷰로 확인 |
@@ -36,6 +37,20 @@ Claude 2.1.285는 실행 전 auto-mode 거절을 `PermissionDenied` 이벤트로
 함께 인계된 [TrendBadge](../policy/common/skills/reference/components/trend-badge/SKILL.md), [lucide-react](../policy/common/skills/reference/libraries/lucide-react/SKILL.md), [HeroUI](../policy/common/skills/reference/libraries/heroui/SKILL.md) 초안은 실제 코드·lockfile·설치본과 대조해 중앙에 등록했다. HeroUI는 선언 `^3.2.3`과 실제 `3.2.4`를 구분했고, TrendBadge에 direction prop이 없고 null 처리는 호출부 책임임을 명시했다. 등록 당시 TrendBadge·line-icons는 판매자 브랜치의 미커밋 자산이었다. 2026-10-02 판매자 커밋 `b6fc92d2eed80a4920cc4681bda7f44a3565a8f5`에 포함된 것을 재확인해 스킬을 갱신했다. 기본 관리자 브랜치의 가용 자산으로 단정하지 않는다. 별도 overlay나 감사 예외 없이 공통 reference에 관리자·작업 브랜치 한정 확인 범위를 적고, 기존 KpiCard 안내에서도 실제 슬롯 존재를 확인하게 했다. 세션 초안의 당시 미등록 표시는 이력으로 유지하며 중앙 정본과 카탈로그를 새 inject 세션에서 사용한다.
 
 최종 검증: 기본 unittest discovery와 같은 388개를 24개 파일별 subprocess로 실행했다. 초기 실행에서 공통 reference 하위 문서를 모두 관리자 overlay로 간주하던 렌더링 테스트 1건이 실패했다. 실제 overlay 원본 목록을 확인하도록 수정한 뒤 렌더링 24개를 재검증했고, 마지막 변경이 있는 거절·조회·포맷 검사 2개도 재검증해 모두 통과했다. 중앙 contract와 두 프로젝트 audit, diff 공백 검사도 통과했다. 결과 집계는 `state/recovery-runs/ec-seller-policy-verification-20260930.json`에 남겼다. 아래 기존 381개 검증 기록은 이전 보강의 이력이다.
+
+## 2026-09-30 병합 이후 정리 경로
+
+EC 구매자의 `831402317ab843499193406cc255ac5d` 완료는 검증 성공 후 `cleanup=false`, `retained`였다. source와 sy-main이 `55194e6`로 같아도 기존 명령에는 이 완료에 삭제만 추가하는 경로가 없었다. `.env`, `.env.development.local`, 세션 로그도 남아 있었다. 관리자 이용 내역 `feature/usage-api-controller`의 `7ff8247`은 직접 부모 sy-main의 `987616b`에 포함됐지만 중앙 완료 검증 기록은 없었다. 부모에는 다른 tutorial 소스·테스트가 미커밋으로 남아 있었다.
+
+기존 `complete`는 이미 포함된 source에도 부모 dirty 검사·앱 검증을 다시 적용한다. 이후 cleanup은 미커밋 로그와 ignored 설정을 보존할 별도 승인 경로 없이 차단했다. raw branch/worktree 삭제 역시 관계 보호에 막혔다. 따라서 반복 병합 승인이나 임의 stash로 해결할 문제가 아니었다. 실제 병합 전 README dirty 차단은 별개이며 자동 stash 권한을 뜻하지 않는다.
+
+사용자 결정: **직접 부모 포함·파일 보존을 확인하면 사후 정리를 승인할 수 있고, 앱 검증 미확인은 별도로 표시한다.** [post_merge_cleanup.py](../policy/guards/post_merge_cleanup.py)는 이 기준의 별도 `cleanup → execute`를 제공한다. 부모의 파일·index·checkout과 앱 검증을 건드리지 않는다. source/parent commit, UUID 관계, worktree 경로, 파일 SHA·mode를 승인에 고정한다. 환경설정·로그 등 ignored 일반 파일은 중앙 state의 private archive에 백업하고 재대조한다. tracked source는 별도 refs로 보존한다. 생성물 제외는 명시한 루트 node_modules/dist뿐이다.
+
+미병합 commit, source 미커밋 구현, 미처리 자식, 활성·미확인 쓰기, 현재/기본/잠긴 worktree, symlink, 중첩 저장소, submodule, assume-unchanged/skip-worktree, 백업 실패·변경은 차단한다. 완료 검증 기록이 없으면 `unknown`, 대응 기록에 실패가 있으면 `failed`로 표시한다. 정리 중 앱 검증 성공을 만들지 않는다. 부모 dirty 변화는 정리 대상 밖이지만 부모 HEAD가 바뀌면 새 검토가 필요하다.
+
+삭제 의도와 결과를 단계별로 저장한다. `recover`는 원래 주체의 철회되지 않은 승인, 보존 ref·파일의 무결성과 실제 삭제 결과를 대조하여 남은 단계만 실행한다. worktree 삭제 직후/branch 삭제 직후 중단을 각각 회귀 테스트로 재현했다. 다른 주체의 승인 자동 상속은 허용하지 않는다. 소스가 남아 있으면 새 정리 계획을 준비할 수 있고, 삭제 중 다른 주체로 넘어가 관계만 남았다면 기존 결과를 중앙에서 대조해야 한다. 실행 중인 bundle은 변경하지 않았으며 실제 EC 구매자·이용 내역 branch/worktree 삭제도 수행하지 않았다.
+
+실제 상태의 읽기 전용 재검사도 두 작업 모두 통과했다. EC 구매자는 검증 `passed`, 보존 대상 174개(과거·현재 로그와 환경설정 포함), 이용 내역은 검증 `unknown`, 보존 대상 17개(로그와 tsbuildinfo)다. 결과는 `state/recovery-runs/post-merge-cleanup-preview-20260930.json`이다. 이는 보존 목록의 사전 검사이며 아직 백업·삭제를 수행했다는 의미는 아니다. 실제 실행 직전에 다시 검사한다.
 
 ## 2. 계획 해시: 세션 폐쇄가 아니라 승인 범위 변경 감지
 

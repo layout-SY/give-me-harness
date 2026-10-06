@@ -299,7 +299,9 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
                     return
                 operation = operations.load(root, invocation[1])
                 if invocation[0] == "recover":
-                    if not operation.get("authorized") or operation["kind"] != "completion":
+                    if operation["kind"] == "cleanup":
+                        operations._loader.load("post_merge_cleanup").require_consent(root, operation, host, event)
+                    elif not operation.get("authorized") or operation["kind"] != "completion":
                         protocol.emit_denial(host, "승인받아 시작한 동일 완료 작업만 복구할 수 있습니다.")
                     return
                 if cwd.resolve() != Path(operation["cwd"]):
@@ -308,7 +310,7 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
                 if operation["stage"] != "prepared":
                     protocol.emit_denial(host, f"operation={operation['id']}, stage={operation['stage']}: 이미 시작하거나 완료된 실행입니다. "
                         "show로 실제 결과를 확인하세요. 동일 Git 명령 전체를 재승인·반복하지 않습니다. "
-                        "중단된 completion 작업은 recover 가능 여부를 확인하세요.")
+                        "중단된 completion·cleanup 작업은 recover 가능 여부를 확인하세요.")
                     return
                 operations.validate(root, operation)
                 if operation["kind"] == "git":
@@ -332,6 +334,16 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
                     message += f"\n관계 변경: {operation['action']} {operation['name']} → {operation.get('parent') or operation.get('new_name') or ''}"
                 elif operation["kind"] == "write-recovery":
                     message += f"\n결과 미확인 도구 정리: {operation['write_id']}\n종료 확인 근거: {operation['reason']}"
+                elif operation["kind"] == "cleanup":
+                    data = operation["cleanup"]
+                    inventory = data.get("inventory") or {}
+                    message += (f"\n사후 로컬 정리: {data['source']} → 직접 부모 {data['target']}"
+                        f"\nsource HEAD: {data['source_head']}\nparent HEAD: {data['target_head']}"
+                        f"\n삭제 worktree: {data['worktree']}\n앱 검증: {data['verification']}"
+                        f"\n보존 파일: {list(inventory.get('files', {}))}"
+                        f"\n재생성 가능한 제외 폴더: {inventory.get('generated_cleanup_roots', [])}"
+                        "\n부모 파일·index를 변경하거나 병합·검증을 반복하지 않습니다. "
+                        "commit 보존 ref와 private 파일 백업을 검증한 뒤 이 source만 삭제합니다.")
                 if operations.resumable(root, operation, host, event):
                     operations.grant(root, operation, host, event)
                     protocol.emit_operation_resume(host, "Git 미실행을 확인한 동일 작업의 기존 승인으로 재예약했습니다.\n" + notice)
@@ -345,7 +357,7 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
                 else:
                     protocol.emit_operation_approval(host, message + "\n명령 실행 승인으로 답하세요. 구현 승인은 별개입니다.")
                 return
-            if invocation[0] not in {"prepare", "review", "complete", "relation", "show", "graph", "writes", "write-recovery"}:
+            if invocation[0] not in {"prepare", "review", "complete", "cleanup", "relation", "show", "graph", "writes", "write-recovery"}:
                 protocol.emit_denial(host, "지원하지 않는 보호 실행기 동작입니다.")
             return
     if shell and paths.unsupported_workflow_invocation(command, root):

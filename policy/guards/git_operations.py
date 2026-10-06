@@ -156,6 +156,10 @@ def prepare_write_recovery(root: Path, cwd: Path, identifier: str, reason: str) 
     return save(root, operation)
 
 
+def prepare_cleanup(root: Path, cwd: Path, source: str, target: str) -> dict:
+    return _loader.load("post_merge_cleanup").prepare(root, cwd, source, target)
+
+
 def prepare_completion(root: Path, cwd: Path, evidence: dict, report: dict) -> dict:
     review.require_report(evidence, report)
     if evidence["repository"] != str(git.git_common_directory(root)):
@@ -199,7 +203,9 @@ def prepare_relation(root: Path, cwd: Path, action: str, name: str, parent: str 
 
 
 def validate(root: Path, operation: dict) -> None:
-    if operation["kind"] == "git":
+    if operation["kind"] == "cleanup":
+        _loader.load("post_merge_cleanup").validate(root, operation)
+    elif operation["kind"] == "git":
         targets = [str(target) if (target := storage.git_destination(root, Path(item["cwd"]), item["args"])) else None
                    for item in operation["invocations"]]
         if targets != operation.get("worktree_destinations", [None] * len(targets)):
@@ -349,7 +355,11 @@ def merge(root: Path, operation: dict) -> None:
     assert_idle(root, [target_path, *source_paths])
     for path in [target_path, *source_paths]:
         if relations.content_snapshot(path)["files"]:
-            raise RuntimeError("source 또는 target에 미커밋 변경이 있습니다. 다른 작업을 stage·commit하지 않고 병합을 보류합니다.")
+            files = relations.content_snapshot(path)["files"]
+            raise RuntimeError(f"병합 전 미커밋 변경이 있습니다: {path}\n파일: {', '.join(files)}\n"
+                "다른 작업의 stage·commit·stash·복원은 자동 수행하지 않습니다. "
+                "병합이 아직 필요하면 해당 작업 완료를 기다리거나 사용자에게 보존 방식을 확인하세요. "
+                "이미 직접 부모에 포함된 작업의 삭제만 원하면 cleanup --source <branch> --target <직접 부모>를 사용하세요.")
     if git._output(target_path, "ls-files", "-u"):
         raise RuntimeError("미해결 Git 충돌이 있습니다.")
     if git.current_branch(target_path) != target:
@@ -508,14 +518,16 @@ def cleanup(root: Path, operation: dict, execution_cwd: Path) -> None:
             raise RuntimeError("현재 실행 위치를 보존합니다. 다른 안전한 workdir에서 같은 완료 정리를 재시도하세요.")
         assert_idle(root, [candidate])
         if relations.content_snapshot(candidate, logs=True)["files"]:
-            raise RuntimeError("미커밋 로그 또는 작업 변경이 있어 worktree 정리만 보류합니다.")
+            raise RuntimeError("미커밋 로그 또는 작업 변경이 있어 worktree 정리만 보류합니다. "
+                "소스가 이미 병합됐다면 cleanup --source <자식> --target <직접 부모>로 파일 보존을 포함한 사후 정리를 준비하세요.")
         ignored = git._git(candidate, "ls-files", "--others", "--ignored", "--exclude-standard", "--directory", "-z")
         if ignored.returncode:
             raise RuntimeError("ignored 로컬 파일의 보존 여부를 확인할 수 없습니다.")
         generated = tuple(evidence.get("generated_cleanup_roots", []))
         unpreserved = [name for name in ignored.stdout.split("\0") if name and not name.startswith(generated)]
         if unpreserved:
-            raise RuntimeError("미보존 ignored 로컬 파일이 있어 정리를 보류합니다: " + ", ".join(unpreserved[:10]))
+            raise RuntimeError("미보존 ignored 로컬 파일이 있어 정리를 보류합니다: " + ", ".join(unpreserved[:10])
+                + ". cleanup --source <자식> --target <직접 부모>로 파일 보존을 포함한 사후 정리를 준비하세요.")
         archived = operation.get("archives", {}).get(str(candidate))
         if archived is None or archived != archive(root, candidate, operation, mirror=False):
             raise RuntimeError("로그 보존 이후 변경이 발생했습니다. 정리를 보류합니다.")
@@ -592,6 +604,8 @@ def _execute(root: Path, identifier: str, execution_cwd: Path | None = None) -> 
             elif operation["kind"] == "write-recovery":
                 (relations.directory(root) / "writes" / (operation["write_id"] + ".json")).unlink()
                 operation["stage"] = "done"
+            elif operation["kind"] == "cleanup":
+                _loader.load("post_merge_cleanup").execute(root, operation, execution_cwd)
             else:
                 merge(root, operation)
             save(root, operation)
@@ -623,6 +637,16 @@ def recover(root: Path, identifier: str, execution_cwd: Path) -> dict:
 
 def _recover(root: Path, identifier: str, execution_cwd: Path) -> dict:
     operation = load(root, identifier)
+    if operation["kind"] == "cleanup":
+        if not git.same_git_repository(root, execution_cwd):
+            raise RuntimeError("현재 프로젝트 밖에서 정리 작업을 복구할 수 없습니다.")
+        with state.locked(relations.directory(root) / "locks/git.lock"):
+            try:
+                return _loader.load("post_merge_cleanup").recover(root, operation, execution_cwd)
+            except (RuntimeError, OSError) as error:
+                operation["reason"] = str(error)
+                save(root, operation)
+                raise
     if operation["kind"] != "completion":
         raise RuntimeError("일반 Git·관계 변경은 결과를 조회해 대조하세요. 중단된 명령을 자동 반복하지 않습니다.")
     if not operation.get("authorized"):
@@ -655,6 +679,9 @@ def main() -> None:
     evidence.add_argument("--cleanup", action="store_true")
     complete = commands.add_parser("complete")
     complete.add_argument("--review", required=True)
+    cleanup_parser = commands.add_parser("cleanup", help="이미 직접 부모에 포함된 source의 보존·로컬 정리만 준비합니다.")
+    cleanup_parser.add_argument("--source", required=True)
+    cleanup_parser.add_argument("--target", required=True)
     report_input = complete.add_mutually_exclusive_group(required=True)
     report_input.add_argument("--report", type=Path, help="현재 프로젝트의 검토 JSON 파일")
     report_input.add_argument("--report-json", help="파일 생성 없이 전달하는 검토 JSON 객체")
@@ -686,6 +713,8 @@ def main() -> None:
             raise RuntimeError("현재 프로젝트의 검토 보고와 review ID를 명시하세요.")
         report = json.loads(args.report.read_text() if args.report is not None else args.report_json)
         result = prepare_completion(root, cwd, state.read(relations.directory(root) / "reviews" / (args.review + ".json")), report)
+    elif args.action == "cleanup":
+        result = prepare_cleanup(root, cwd, args.source, args.target)
     elif args.action == "relation":
         result = prepare_relation(root, cwd, args.relation_action, args.name, args.parent, args.fork,
                                   args.purpose or "", args.new_name, args.worktree)
