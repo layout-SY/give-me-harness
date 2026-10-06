@@ -1,5 +1,18 @@
 # 계획
 
+## 후속 요청과 현재 계획
+
+초기 전역 감사 이후 사용자가 시민제안·투표 API 연결을 별도 branch/worktree에서 진행하도록 요청했다. 이어 소스 작업 전에 다른 세션에서 다른 기능을 이어갈 수 있도록 **전역 상세 핸드오프를 먼저 작성**하도록 지시했다. 아래 audit-only 범위와 Git 제외는 최초 조사 단계의 범위이며, 현재까지의 추가 상태는 이 절을 따른다.
+
+- 현재 작업 위치: 기본 checkout의 같은 세션 산출물 폴더. 소스 변경 없이 handoff·전체 DTO/오류 계약·작업 항목과 원본 스냅샷을 작성한다.
+- 생성 완료: feature/citizen-proposal-vote-api, 직접 부모 sy-main, 기준4b0b7db45aa9d15bf918a1a084370594e138a124, linked worktree는 /Users/okand/SynologyDrive/asan-worktrees/asan-metaverse-admin-ui-worktree/citizen-proposal-vote-api.
+- 시민제안 구현 승인 범위: 상태/review-result PATCH, 제안·투표 summary, 상세 reviewResult 매핑, 기존 hook/화면 데이터 연결, 개발 MSW 가로채기 해제.
+- 사용자 확정: 담당부서 선택 시 미지원 안내·변경 요청 차단; reviewResult null/누락은 빈 값 표시; 시민제안·투표 dev 요청은 실제 서버 호출.
+- 현재 소스 구현: 시작 전. stage/commit/merge/정리 미승인.
+- 문서 작성 방법: 최초 성공 수집한 Swagger 스냅샷에서106개 operation과196개 schema를 빠짐없이 기록하고 각 API를13개 후속 작업에 연결한다. 이후 OpenAPI 재조회502는 최신 명세 확인의 제한으로 남긴다.
+- 문서 완료 조건: 요청/성공/오류 원문과 로컬 소스 연결, F01~F10 차이·해결 방향·질문·역할별 위치/검증의 인계, 원본 ref·schema·operation·문서 링크 무결성 확인.
+- 문서 제공 후의 시민제안 소스 작업은 이미 생성한 공간에서 이어갈 수 있다. 다른 도메인의 구현·공간은 후속 사용자 요청/결정 대상이다.
+
 ## 목표
 
 2026-09-28에 제공된 Swagger의 전체 API path·method와 요청·응답을 현재 admin-ui 소스에 대조하여 누락, 계약 차이, 화면 연결 상태를 검토한다.
@@ -51,4 +64,3 @@ audit-only
 ## 승인
 
 읽기 전용 조사는 사용자 요청에 따라 수행한다. 소스 구현 및 Git 작업은 승인·실행하지 않았다.
-

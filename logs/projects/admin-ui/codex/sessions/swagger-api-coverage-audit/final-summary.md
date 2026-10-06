@@ -1,5 +1,24 @@
 # 최종 요약
 
+## 후속 요청 — 전역 핸드오프 완료
+
+**다른 세션은 [handoff.md](./handoff.md)에서 시작하면 된다.** 106개 operation 전체의 요청·성공/오류 응답과196개 DTO schema 원문을 저장했고, 13개 작업 묶음별 기존 파일·반영 방향·계약 차이·미확정 질문·재사용·검증/역할 인계를 기록했다.
+
+- [전체 계약](./unknown/api-contracts.md): path/method·parameter/body·필수 여부·content type·응답 DTO·성공/오류 예시·소스 상태.
+- [DTO 사전](./unknown/api-schema-catalog.md): required·enum·format·null 표현·배열/중첩/재귀·제약을 포함한196개 schema.
+- [오류와 공통 연결](./unknown/api-errors-and-integration.md): 26개 API의52개 명시 오류, 나머지80개의 오류 응답 미기재, string apiCode·HTTP status·필드별 data·Void·공통 reporter의 한계.
+- [작업 항목·구현 차이](./unknown/api-work-items.md): F01~F10 상세와 T01~T13의 후속 반영 방법. 영상의 과거 file-only 확정 주석 충돌, 외부 통계의 서버 Mock 설명·기간 예시 불일치, 권한의 permissionCodes와 roleIds 구분도 포함.
+- [원본 스냅샷](./unknown/openapi.snapshot.json): 2026-09-28 최초 성공 수집본. 이후 재조회502로 최신성 재검증은 못했다.
+- 스냅샷 SHA-256: `330c92c956487677576543d7261c734e93f5e2d5d3b83648c2cf35c219b22856`.
+
+문서 무결성 검사 결과: 75 paths, 106개 operation 기재·작업 배정, 196개 schema 원문 일치, 261개 OpenAPI ref 해석, 신규 문서의 1,582개 로컬 링크 확인 모두 오류0. 추가 원문 대조에서도 parameter 정의76개, requestBody45개, 성공 content106개, 오류 response52개가 스냅샷과 모두 일치했다. 문서 검증은 source 테스트나 서버 검증을 대신하지 않는다.
+
+시민제안·투표 branch/worktree 생성은 승인된 operation `085a4bf113df4935b5cfb2b4df24953b`로 완료했다. 목적지는 `feature/citizen-proposal-vote-api`, 직접 부모 `sy-main`, 위치는 `/Users/okand/SynologyDrive/asan-worktrees/asan-metaverse-admin-ui-worktree/citizen-proposal-vote-api`다. 두 공간 모두 HEAD `4b0b7db45aa9d15bf918a1a084370594e138a124`이며 **소스 구현·새 commit은 없다**. 상태/검토 결과·집계 API 연결은 이 핸드오프 선행 요청 이후의 남은 작업이다.
+
+사용자 확정 세 결정(부서 변경 제외·안내/차단, reviewResult null/누락→빈 값, 시민제안·투표 dev MSW 제거)을 인계했다. 다른 도메인 구현과 commit/merge는 승인되지 않았다. 세션 문서는 기본 checkout의 ignored 경로에만 있고 linked worktree로 자동 복제되지 않으므로 handoff의 절대 경로를 사용한다.
+
+문서 전용 추가 작업이므로 formatter·lint·test·build·브라우저·실제 업무 API 호출은 실행하지 않았다. 아래는 최초 감사 결과이며 후속 상태는 이 절과 handoff가 우선한다.
+
 ## 제공 사항
 
 Swagger의 **75개 path, 106개 operation**을 현재 `sy-main@4b0b7db45aa9`와 대조했다. **74개는 method·path가 일치하는 API 함수가 있고, 32개는 일치 호출을 찾지 못했다.** 32개 중 `GET/PATCH /maintenance`는 기존 기능이 있으나 기본 경로·DTO가 다르다. 이 숫자는 정상 작동률이 아니다.
@@ -125,7 +144,7 @@ Swagger의 **75개 path, 106개 operation**을 현재 `sy-main@4b0b7db45aa9`와 
 
 ## 변경 이유와 영향 영역
 
-요청된 API 검토 결과를 남기기 위해 이 세션의 문서만 추가했다. 애플리케이션·패키지·Git 상태를 변경하는 작업과 실제 업무 API 호출은 수행하지 않았다.
+초기 감사에서는 이 세션의 문서만 추가했고 애플리케이션·패키지·Git 변경과 실제 업무 API 호출은 수행하지 않았다. 후속 요청으로 시민제안 branch/worktree 생성과 전역 핸드오프 작성을 완료했으며, 현재까지도 애플리케이션·패키지 변경 및 실제 업무 API 호출은 없다.
 
 ## 검증
 
@@ -152,4 +171,3 @@ Swagger의 **75개 path, 106개 operation**을 현재 `sy-main@4b0b7db45aa9`와 
 ## 다음 단계
 
 수정에 착수한다면 현재 사용 중인 시민제안 처리·검토 결과, 아이템 필수값을 먼저 검토하고, 화면 연결 전 사용자/이용내역/메뉴/영상/빈 성공 응답 계약을 정리하는 순서를 권고한다. Swagger와 과거 확정 주석이 충돌하는 영상 multipart, 상세 응답 등은 실제 계약을 확인한 뒤 변경해야 한다. 이번 요청에서는 구현하지 않았다.
-
