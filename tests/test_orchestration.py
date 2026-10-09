@@ -201,6 +201,26 @@ class ChildContractTests(unittest.TestCase):
                                  "하위 에이전트가 요청만 반환하고 부모가 사용자 승인 후 실행"):
                     self.assertIn(expected, prompt)
 
+    def test_unrequested_design_decisions_are_offered_as_options_before_acting(self) -> None:
+        # 요청에 없는 설계·운영 결정을 임의로 정해 구현한 뒤 사후 보고하지 않는다.
+        rule = "문제 상황과 둘 이상의 방안, 각 방안의 장단점·영향과 권장안을 제시하고 사용자가 선택한 뒤 진행한다"
+        for host in ("codex", "claude", "opencode"):
+            for role in ("logic", "ui", "orchest", "review", "generate"):
+                with self.subTest(host=host, role=role):
+                    launch = prepare_injection(self.project, host, role, build_root=self.root / "build",
+                        state_root=self.root / "state", source_codex_home=self.source_codex_home)
+                    prompt = launch.system_prompt.read_text(encoding="utf-8")
+                    self.assertIn(rule, prompt)
+                    self.assertIn("먼저 구현하고 사후에 보고하는 것으로 대신하지 않는다", prompt)
+                    self.assertNotIn("권장안을 함께 제시할 수 있지만", prompt)
+            for name, text in self.child_definitions(host)[2].items():
+                with self.subTest(host=host, child=name):
+                    self.assertIn("설계 선택(구현 구조, 작업 순서, 담당 등)을 임의로 정하지 않는다", text)
+                    self.assertIn("둘 이상의 방안과 각 방안의 장단점·영향, 권장안을 정리해 반환", text)
+        central = Path(__file__).resolve().parents[1]
+        for name in ("CLAUDE.md", "AGENTS.md"):
+            self.assertIn(rule, (central / name).read_text(encoding="utf-8"), name)
+
     def test_claude_watcher_can_write_its_review_document(self) -> None:
         rendered = render_project(load_project("user-ui"))[".claude/agents/watcher.md"].decode()
         self.assertIn("tools: Read, Grep, Glob, Bash, Write\n", rendered)
