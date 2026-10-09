@@ -34,6 +34,31 @@
 | Refactorer | Logic | 동작·공개 계약 보존, `refactoring` 기준 |
 | Watcher·Evaluator | 리뷰 | `review-checklist`, 검증 근거 |
 
+### 작업 항목 배정 기준
+
+Planner는 계획의 작업 항목마다 변경 종류와 담당 하위 에이전트를 지정하고, 부모는 그 배정대로 호출한다. 생성·수정·삭제에 같은 기준을 적용한다.
+
+| 담당 | 변경 대상 |
+| --- | --- |
+| Publisher | 마크업, 컴포넌트 구조, CSS·스타일·디자인 토큰, 정적 자산, 접근성, 반응형 표현의 생성·수정·삭제와 이들의 리팩터링 |
+| Generator | API, DTO, parser, validator, hook, util, store, 상태 전이, controller의 생성·수정·삭제 |
+| Refactorer | 위 로직 영역에서 동작을 바꾸지 않는 구조 정리 |
+
+- 한 파일에 UI와 Logic 변경이 섞이면 Publisher가 UI 계약(props·callback)을 먼저 확정하고 Generator가 연결하는 순서로 나누어 순차 진행한다.
+- 하위 에이전트는 자기 배정 밖의 변경이 필요해지면 직접 하지 않고 부모에게 반환한다. 배정을 바꾸려면 계획을 고쳐 다시 승인받는다.
+- 이 구분은 프롬프트 계약이다. source 쓰기는 세션 role로 판정하므로 훅이 하위 에이전트별 변경 종류를 막지 않는다.
+
+### UI와 Logic의 병렬 구현과 최종 연결
+
+화면 요구가 있는 작업은 연결 계약을 먼저 확정한 뒤 UI와 Logic을 병렬로 구현하고, 둘 다 끝나면 연결한다.
+
+1. **계약 확정**: Publisher가 디자인(Figma가 연결된 host에서는 Figma)과 요구에서 화면이 필요로 하는 데이터·상태·입력·동작을 UI 계약 초안으로 정리한다. Planner는 이를 실제 API·DTO 근거와 대조해 controller 공개 타입(데이터, 상태, callback)을 `plan.md`의 UI·Logic 연결 계약에 기록한다. 맞지 않거나 확인되지 않은 항목은 사용자에게 질문하고, 계약은 계획과 함께 승인받는다.
+2. **병렬 구현**: Publisher는 계약의 props·callback으로 화면을 구현하고, Generator는 API부터 UI 없는 controller까지 구현한다. 두 에이전트의 수정 파일은 겹치지 않아야 한다. 겹치면 순차로 진행하거나 작업 공간을 나눈다.
+3. **계약 변경**: 병렬 구간에서 계약과 다른 사실이 발견되면 해당 에이전트가 그 부분을 보류하고 반환한다. 부모가 사용자 결정을 받아 계약을 갱신하고 양쪽에 전달한다.
+4. **최종 연결**: 둘 다 끝나면 부모가 포맷과 검증을 실행한 뒤 Generator가 page·container에서 controller를 View에 연결한다. 연결 뒤 다시 포맷·검증하고 Watcher가 검토한다.
+
+같은 worktree의 병렬 구간에서는 하위 에이전트가 포맷과 lint·test·build를 실행하지 않는다. 포맷과 검증 전 자동 포맷이 상대가 편집 중인 파일까지 다시 쓰기 때문이다. 부모가 두 에이전트의 종료를 확인한 뒤 실행한다.
+
 그 밖의 role 세션에서는 하위 에이전트도 세션 role의 방식을 따른다. 예를 들어 `ui` 세션의 Generator는 UI 방식으로 작업한다. Figma MCP는 Claude Code의 `ui`·`generate` 세션에만 제공되며 `generate` 세션에서는 Publisher가 사용한다.
 
 ## Planner

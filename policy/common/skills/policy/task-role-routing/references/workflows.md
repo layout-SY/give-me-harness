@@ -8,7 +8,7 @@
 
 1. Planner가 요청과 handoff를 분류하고 기본 역할, scope와 검증을 제안한다.
 2. UI가 포함되면 Publisher가 재사용 자산과 props/callback 계약을 확인한다. Logic 선행이면 제공된 controller 계약에 맞추고, UI 선행이면 UI 계약을 Logic에 제공한다. 양쪽 연결과 불일치 질문은 `api-authoring/references/ui-controller.md`를 따른다.
-3. 사용자 승인 후 Implementer/Generator가 확인된 역할과 scope를 구현한다.
+3. 사용자 승인 후 Implementer/Generator가 확인된 역할과 scope를 구현한다. 통합 구현 세션에서 연결 계약이 계획에 확정돼 있으면 Publisher의 UI 구현과 Generator의 controller 구현을 병렬로 진행하고, 둘 다 끝난 뒤 Generator가 최종 연결을 수행한다(`pipeline-roles.md`).
 4. Watcher가 현재 변경을 판정한다.
 5. 한 작업자가 전체를 맡으면 검증·산출물·merge 단계로 진행한다. 역할이 분리되면 부분 결과를 handoff한다. role이 없는 다음 세션은 역할을 다시 확인하고, inject 세션은 handoff와 일치하는 `--role`로 시작한다.
 

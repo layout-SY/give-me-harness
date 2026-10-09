@@ -125,6 +125,36 @@ class ChildContractTests(unittest.TestCase):
                 self.assertIn(f"{skills}/policy/review-checklist/", texts["watcher"])
                 self.assertIn("`orchest` 역할", texts["planner"])
 
+    def test_work_items_are_assigned_by_change_kind_and_ui_logic_run_in_parallel_then_connect(self) -> None:
+        # UI·스타일은 Publisher, 로직은 Generator·Refactorer. 생성뿐 아니라 수정·삭제도 같은 기준이다.
+        for host in ("codex", "claude", "opencode"):
+            _, _, texts = self.child_definitions(host)
+            with self.subTest(host=host):
+                self.assertIn("변경 종류(생성·수정·삭제), 대상 경로와 담당 하위 에이전트를 지정한다", texts["planner"])
+                self.assertIn("스타일·디자인 토큰, 정적 자산, 접근성, 반응형 표현의 생성·수정·삭제와 이들의 리팩터링", texts["publisher"])
+                self.assertIn("상태 전이와 controller의 생성·수정·삭제", texts["generator"])
+                self.assertIn("동작을 바꾸지 않는 구조 정리", texts["refactorer"])
+                for name in CHILDREN:
+                    self.assertIn("역할 밖의 변경은 반환한다", texts[name])
+                # 병렬 구간: 같은 계약에 각자 맞추고 포맷·검증은 미룬다. 연결은 Generator가 맡는다.
+                self.assertIn("확정된 연결 계약의 props·callback만 사용해 화면을 구현한다", texts["publisher"])
+                self.assertIn("UI 없는 controller까지 구현한다", texts["generator"])
+                self.assertIn("최종 연결 단계를 맡는다", texts["generator"])
+                for name in ("publisher", "generator"):
+                    self.assertIn("병렬 구간이라고 알린 경우에는 포맷과 검증 명령을 실행하지 않고", texts[name])
+        rendered = render_project(load_project("user-ui"))
+        skills = ".agent-policy/common/skills"
+        roles = rendered[f"{skills}/policy/task-role-routing/references/pipeline-roles.md"].decode()
+        for expected in ("### 작업 항목 배정 기준", "### UI와 Logic의 병렬 구현과 최종 연결",
+                         "생성·수정·삭제에 같은 기준을 적용한다", "두 에이전트의 수정 파일은 겹치지 않아야 한다"):
+            self.assertIn(expected, roles)
+        self.assertIn("`controller -> 계약 <- UI`",
+                      rendered[f"{skills}/recipe/api-authoring/references/ui-controller.md"].decode())
+        template = rendered[".agent-policy/common/templates/plan.template.md"].decode()
+        self.assertIn("| 작업 항목 | 변경 종류(생성·수정·삭제) | 대상 경로 | 담당 역할·에이전트 |", template)
+        self.assertIn("연결 계약이 확정되고 수정 파일이 겹치지 않는 Publisher와 Generator만 병렬로 호출한다",
+                      rendered[f"{skills}/policy/task-role-routing/references/orchestration.md"].decode())
+
     def test_role_sessions_keep_their_own_working_method_for_children(self) -> None:
         # 매핑은 통합 구현 세션에만 적용한다. UI 세션의 Generator는 UI 방식으로 작업한다.
         policy, _, texts = self.child_definitions("claude", "ui")

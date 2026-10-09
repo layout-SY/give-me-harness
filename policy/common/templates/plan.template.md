@@ -31,8 +31,10 @@
 - 승인할 Git 작업:
 - 산출물 책임: owner | contributor
 
-| 작업 구간 | 역할 | 스킬 | 예상 결과 |
-| --- | --- | --- | --- |
+하위 에이전트를 쓰는 세션에서는 작업 항목마다 변경 종류와 담당 에이전트를 지정한다. UI·스타일은 Publisher, 로직은 Generator, 로직의 구조 정리는 Refactorer다. 병렬로 진행할 항목과 최종 연결 단계를 구분한다.
+
+| 작업 항목 | 변경 종류(생성·수정·삭제) | 대상 경로 | 담당 역할·에이전트 | 스킬 | 순서(병렬 구간·연결) | 예상 결과 |
+| --- | --- | --- | --- | --- | --- | --- |
 
 ## UI 자산 선정
 
@@ -47,7 +49,8 @@ UI 구현을 계획하면 `ui-library` 스킬에 따라 승인 요청 전에 작
 UI와 API를 연결하면 `api-authoring/references/ui-controller.md`에 따라 작성한다.
 
 - 선행 구현·계약 제공자와 확인 근거:
-- 맞추는 방향: `controller <- UI` (Logic 선행) | `controller -> UI` (UI 선행)
+- 맞추는 방향: `controller <- UI` (Logic 선행) | `controller -> UI` (UI 선행) | `controller -> 계약 <- UI` (계약 확정 후 병렬)
+- 병렬 구현이면 controller 공개 타입(데이터·상태·callback)과 최종 연결 위치·담당:
 - 기준 UI·controller·요청/응답 DTO 경로와 controller 공개 타입·구현 위치:
 - 응답→UI 데이터·상태 / UI 입력·동작→요청 매핑:
 - 불일치 항목과 확인할 질문·합의한 계약:

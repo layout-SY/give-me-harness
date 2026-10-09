@@ -41,6 +41,26 @@ Figma MCP는 Claude Code에만 넣는다. Codex·OpenCode의 Publisher 정의에
 
 `publishing` 스킬은 `ui` 프로필의 스킬 목록에 빠져 있어 `ui` 세션 번들에 들어가지 않았다. 사용자 결정으로 `ui` 프로필에 추가했고, 이제 `ui` 세션과 `generate` 세션의 Publisher 바인딩에 모두 들어간다.
 
+## 작업 항목 배정과 UI·Logic 병렬 구현
+
+Planner는 계획의 작업 항목마다 변경 종류(생성·수정·삭제)와 담당 하위 에이전트를 지정하고 부모는 그대로 호출한다.
+
+| 담당 | 변경 대상 |
+| --- | --- |
+| Publisher | 마크업, 컴포넌트 구조, CSS·스타일·디자인 토큰, 정적 자산, 접근성, 반응형 표현과 이들의 리팩터링 |
+| Generator | API, DTO, parser, validator, hook, util, store, 상태 전이, controller |
+| Refactorer | 로직 영역에서 동작을 바꾸지 않는 구조 정리 |
+
+화면 요구가 있는 작업은 다음 순서로 진행한다.
+
+1. 계약 확정: Publisher가 디자인(Claude에서는 Figma)에서 UI 계약 초안을 정리하고, Planner가 API·DTO 근거와 대조해 controller 공개 타입을 계획에 기록한다. 사용자가 계획과 함께 승인한다.
+2. 병렬 구현: Publisher는 계약의 props·callback으로 화면을, Generator는 UI 없는 controller까지 구현한다. 수정 파일은 겹치지 않게 나눈다.
+3. 최종 연결: 둘 다 끝나면 부모가 포맷·검증을 실행하고 Generator가 page·container에서 연결한다. 그 뒤 Watcher가 검토한다.
+
+- 같은 worktree의 병렬 구간에서는 하위 에이전트가 포맷과 lint·test·build를 실행하지 않는다. 포맷이 상대가 편집 중인 파일까지 다시 쓰기 때문이며, 부모가 둘 다 끝난 뒤 실행한다.
+- 하위 에이전트는 배정 밖의 변경이 필요하면 직접 하지 않고 반환한다.
+- 이 배정과 병렬 구간의 규칙은 프롬프트 계약이다. 훅은 하위 에이전트별 변경 종류나 병렬 중의 포맷 실행을 막지 않는다.
+
 ## 호스트별 보장 범위
 
 | 호스트 | 근거 | 하위 에이전트의 Git 변경 |
