@@ -122,6 +122,7 @@ bin/agent-policy writes --project admin-ui --assignment <assignment-id> --reconc
 - 하위 에이전트의 Git 변경은 Claude Code에서만 guard가 거부합니다. Codex와 OpenCode는 도구 실행 전 이벤트로 부모와 자식을 구분할 수 없어 프롬프트 계약으로 운영합니다.
 - 작업 현황판은 `git_operations.py board`로 조회하고 `board-set`으로 단계·범위를 기록합니다. 브랜치·워크트리 관계와 병합 순서를 함께 보여 주며 쓰기 잠금이나 소유권을 만들지 않습니다. 공용 항목을 바꾸기 전에는 `board --check <경로>`로 영향받는 작업과 다른 worktree의 참조 후보를 확인합니다.
 - 범위가 겹쳐 기다리는 작업은 선행 작업이 `커밋됨`이 되면 풀립니다. `board-wait`와 세션 시작·사용자 입력 훅이 접점 경로에서 변경된 파일을 알려 주며, 그 파일만 다시 조사해 계획을 갱신합니다.
+- 한 세션이 여러 작업을 진행하면 작업마다 `tasks/<작업 ID>/plan.md`를 현황판에 등록합니다. 그 worktree의 source 변경은 `<작업 ID> 진행`으로 승인한 작업 계획으로 판정하며 일반 `진행`은 작업 계획을 승인하지 않습니다. 새 세션은 `board`의 `resumable`에서 미완료 작업을 찾아 이어가고 승인은 작업 ID로 다시 받습니다.
 - Watcher는 검토 시작과 종료에 `git_operations.py fingerprint`를 기록해 검토 중 대상이 바뀌었는지 확인합니다.
 
 단계, 명령 예시, 호스트별 보장 범위와 남은 작업은 [오케스트레이션과 작업 현황판](docs/orchestration-board-2026-10-09.md)에 기록합니다.

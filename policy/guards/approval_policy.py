@@ -323,6 +323,78 @@ def plan_fingerprint(plan: Path | None) -> tuple[str, str]:
     return (hashlib.sha256(data).hexdigest(), "") if content.strip() else ("", "현재 세션의 plan.md 작성")
 
 
+def board_task(root: Path) -> dict[str, Any] | None:
+    """이 worktree의 source 변경을 관장하는 현황판 작업. 없으면 세션 계획을 쓴다."""
+    try:
+        return load_runtime_module("work_board").task_for(root, root)
+    except Exception:
+        return None
+
+
+def task_scope(root: Path) -> dict[str, Any]:
+    task = board_task(root)
+    if task is None:
+        return {}
+    digest, error = plan_fingerprint(Path(task["plan"]))
+    return {"board_task": task["id"], "task_plan": digest,
+            "task_plan_error": f"작업 {task['id']}: {error}" if error else ""}
+
+
+def task_approved(state: dict[str, Any]) -> bool | None:
+    """작업 계획은 그 작업 ID를 지정한 승인만 인정한다. 같은 계획 문서의 세션 승인은 동일 승인이다."""
+    scope = state["assignment_scope"]
+    task, digest = scope.get("board_task"), scope.get("task_plan")
+    if not task:
+        return None
+    return bool(digest) and (state.get("task_approvals", {}).get(task) == digest
+                             or state.get("implementation_approved") is True and scope.get("plan") == digest)
+
+
+TASK_CANCEL_PHRASES = frozenset({"구현 승인 취소", "구현 중단", "cancel implementation"})
+
+
+def task_prompt(prompt: str, root: Path) -> tuple[list[dict[str, Any]], str]:
+    """`<작업 ID> [<작업 ID> ...] 진행` 형식만 작업 승인으로 읽는다."""
+    try:
+        tasks = load_runtime_module("work_board").open_tasks(root)
+    except Exception:
+        return [], ""
+    names = sorted(((normalize_prompt(task["id"]), task) for task in tasks), key=lambda item: -len(item[0]))
+    rest, found = normalize_prompt(prompt).removeprefix("작업 "), []
+    while True:
+        match = next(((name, task) for name, task in names
+                      if name and task not in found and (rest == name or rest.startswith(name + " "))), None)
+        if match is None:
+            break
+        found.append(match[1])
+        rest = rest[len(match[0]):].strip()
+    if not found:
+        return [], ""
+    if rest in TASK_CANCEL_PHRASES:
+        return found, "cancel"
+    if rest in IMPLEMENTATION_APPROVAL_PHRASES:
+        return found, "approve"
+    return [], ""
+
+
+def record_task_prompt(event: dict[str, Any], root: Path, host: str, tasks: list[dict[str, Any]], action: str) -> None:
+    harness = load_harness_state(event, root, host)
+    approvals, messages = harness.setdefault("task_approvals", {}), []
+    for task in tasks:
+        if action == "cancel":
+            approvals.pop(task["id"], None)
+            messages.append(f"작업 {task['id']}의 계획 승인을 취소했습니다.")
+            continue
+        digest, error = plan_fingerprint(Path(task["plan"]) if task["plan"] else None)
+        if digest:
+            approvals[task["id"]] = digest
+            messages.append(f"작업 {task['id']}의 계획을 승인했습니다. 계획의 승인 영역이 바뀌면 다시 승인받습니다.")
+        else:
+            messages.append(f"작업 {task['id']}: {error.replace('현재 세션의 ', '작업의 ')} 후 현황판에 --plan으로 등록하고 다시 승인받으세요.")
+    write_json_state(harness_state_path(event, root, host), harness)
+    print("\n".join(messages))
+
+
 def approval_scope(event: dict[str, Any], root: Path, host: str) -> dict[str, Any]:
     context = task_context(event, root, host)
     directory = _artifact_policy.bound_session_directory(event, root, host)
@@ -340,7 +412,7 @@ def approval_scope(event: dict[str, Any], root: Path, host: str) -> dict[str, An
     if branch_guard.SHARED_GIT_ACCESS:
         return {"task": "session", "role": os.environ.get(INJECT_ROLE_ENV, ""),
                 "contract": "", "plan": plan_digest, "plan_path": str(plan) if plan else "",
-                "plan_error": plan_error, "source_scopes": []}
+                "plan_error": plan_error, "source_scopes": [], **task_scope(root)}
     return {"task": context["task"], "role": os.environ.get(INJECT_ROLE_ENV, ""),
             "contract": str(context["task_values"].get("contract-sha256") or ""), "plan": plan_digest,
             "source_scopes": list(context["values"].get("scope") or context["task_values"].get("scope") or ())}
@@ -381,20 +453,33 @@ def readiness_requirements(event: dict[str, Any], root: Path, host: str) -> dict
             exploration[0]: exploration[1]}
 
 
+def gate_missing(state: dict[str, Any], requirements: dict[str, str]) -> list[str]:
+    """세션 계획 또는 이 worktree를 관장하는 작업 계획 기준의 미충족 조건."""
+    scope = state["assignment_scope"]
+    task, approved = scope.get("board_task"), task_approved(state)
+    values = state if approved is None else {**state, "implementation_approved": approved}
+    missing = [f"작업 {task}의 계획 승인(사용자 입력: `{task} 진행`)" if task and key == "implementation_approved" else label
+               for key, label in requirements.items() if values.get(key) is not True]
+    error = scope.get("task_plan_error") if task else scope.get("plan_error")
+    if branch_guard.SHARED_GIT_ACCESS and error:
+        missing.append(error)
+    return missing
+
+
 def readiness_context(event: dict[str, Any], root: Path, host: str) -> str:
     """조회용 상태와 다음 조치. 읽기나 사용자 승인을 생성하지 않는다."""
     state = load_harness_state(event, root, host)
     context = task_context(event, root, host)
     requirements = readiness_requirements(event, root, host)
-    missing = [label for key, label in requirements.items() if state.get(key) is not True]
-    if branch_guard.SHARED_GIT_ACCESS and state["assignment_scope"].get("plan_error"):
-        missing.append(state["assignment_scope"]["plan_error"])
+    missing = gate_missing(state, requirements)
     if branch_guard.SHARED_GIT_ACCESS:
+        task = state["assignment_scope"].get("board_task")
         return "\n".join([
             "[SESSION_READINESS]", "- git_access: shared-project",
             "- branch_creation_required: false",
             f"- role: {os.environ.get(INJECT_ROLE_ENV, '') or '미지정'}",
             f"- preparation_worktree: {root.resolve()}",
+            *([f"- board_task: {task} (이 worktree의 구현 승인은 `{task} 진행`으로 받습니다)"] if task else []),
             *(f"- {key}: {str(state.get(key) is True).lower()}" for key in requirements),
             f"- 소스 구현 준비: {', '.join(missing) or '완료'}",
             "- 모든 branch/worktree에서 Git 변경은 사용자 승인, 조회는 자유입니다.",
@@ -591,6 +676,11 @@ def record_user_prompt(event: dict[str, Any], root: Path, host: str) -> None:
             return
         if pending and DENIAL_WORD_PATTERN.search(prompt):
             path.unlink(missing_ok=True)
+        tasks, action = task_prompt(prompt, root)
+        if tasks:
+            # 작업 ID를 지정한 승인은 그 작업의 계획만 승인한다. 세션 계획이나 다른 작업으로 번지지 않는다.
+            record_task_prompt(event, root, host, tasks, action)
+            return
         harness_path = harness_state_path(event, root, host)
         harness = load_harness_state(event, root, host)
         if explicit and prompt.strip() != COMMAND_APPROVAL_PHRASE:
@@ -707,10 +797,7 @@ def implementation_gate_denial(
     if not implementation_gate_required(event, root):
         return None
     state = load_harness_state(event, root, host)
-    missing = [label for key, label in readiness_requirements(event, root, host).items()
-               if state.get(key) is not True]
-    if branch_guard.SHARED_GIT_ACCESS and state["assignment_scope"].get("plan_error"):
-        missing.append(state["assignment_scope"]["plan_error"])
+    missing = gate_missing(state, readiness_requirements(event, root, host))
 
     raw_input = event.get("tool_input")
     tool_input = raw_input if isinstance(raw_input, dict) else {}

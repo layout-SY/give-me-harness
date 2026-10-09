@@ -357,6 +357,110 @@ class WorkBoardTests(unittest.TestCase):
         self.assertNotEqual(changed["fingerprint"], first["fingerprint"])
         self.assertEqual(changed["changed"], ["src/new.ts"])
 
+    PLAN = "# 계획\n<!-- asan-plan:approval:start:v1 -->\n## 목표\n{goal}\n<!-- asan-plan:approval:end:v1 -->\n## 진행\n"
+
+    def task(self, name: str, goal: str = "구현") -> tuple[Path, Path]:
+        tree = self.branch(name + "1")
+        (tree / "src").mkdir(exist_ok=True)
+        (tree / "src/app.ts").write_text("export const value = 1;\n")
+        plan = self.root / f".claude/logs/sessions/current/tasks/{name}/plan.md"
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        plan.write_text(self.PLAN.format(goal=goal))
+        self.runner("board-set", "--task", name, "--title", name, "--stage", "working", "--branch", name + "1",
+                    "--plan", str(plan))
+        for tool, args in (("Skill", {"skill": "policy"}), ("Read", {"file_path": str(tree / "src/app.ts")})):
+            self.tool("post-tool", tool, args, cwd=tree, tool_response={"success": True})
+        return tree, plan
+
+    def tool(self, mode, name, data, *, cwd=None, **extra):
+        self.calls += 1
+        event = {"cwd": str(cwd or self.root), "session_id": "claude-test", "tool_use_id": str(self.calls),
+                 "tool_name": name, "tool_input": data, **extra}
+        return subprocess.run([sys.executable, "-I", str(self.runtime / "managed_policy_guard.py"), mode, "claude"],
+            input=json.dumps(event), cwd=self.root, env=self.env, text=True, capture_output=True)
+
+    def edit(self, tree: Path):
+        return self.tool("pre-tool", "Edit", {"file_path": str(tree / "src/app.ts"), "old_string": "1", "new_string": "2"}, cwd=tree)
+
+    def test_each_task_plan_is_approved_only_by_its_task_id(self) -> None:
+        first, plan = self.task("A")
+        second, _ = self.task("B")
+        # 일반 승인은 아직 보지 않은 작업 계획까지 승인하지 않는다.
+        self.event("user-prompt", prompt="진행")
+        for tree, name in ((first, "A"), (second, "B")):
+            self.assertIn(f"작업 {name}의 계획 승인(사용자 입력: `{name} 진행`)", self.edit(tree).stderr)
+        self.assertIn("작업 A의 계획을 승인했습니다", self.event("user-prompt", prompt="A 진행").stdout)
+        self.assertEqual(self.edit(first).returncode, 0, self.edit(first).stderr)
+        self.assertIn("작업 B의 계획 승인", self.edit(second).stderr)
+        # 승인한 뒤 계획의 승인 영역이 바뀌면 그 작업만 다시 승인받는다.
+        plan.write_text(self.PLAN.format(goal="범위 확대"))
+        self.assertIn("작업 A의 계획 승인", self.edit(first).stderr)
+        self.assertIn("승인했습니다", self.event("user-prompt", prompt="작업 A B 진행").stdout)
+        self.assertEqual(self.edit(first).returncode, 0)
+        self.assertEqual(self.edit(second).returncode, 0)
+        self.assertIn("취소했습니다", self.event("user-prompt", prompt="B 구현 승인 취소").stdout)
+        self.assertEqual(self.edit(first).returncode, 0)
+        self.assertIn("작업 B의 계획 승인", self.edit(second).stderr)
+
+    def test_task_plan_must_be_a_session_plan_and_have_an_approval_region(self) -> None:
+        self.branch("A1")
+        outside = self.root / "src/plan.md"
+        outside.write_text("계획")
+        self.assertIn("세션 산출물 아래", self.runner("board-set", "--task", "A", "--title", "A", "--stage", "planning",
+                                                    "--plan", str(outside), ok=False))
+        tree, plan = self.task("C")
+        plan.write_text("<!-- asan-plan:approval:start:v1 -->\n \n<!-- asan-plan:approval:end:v1 -->\n")
+        self.assertIn("승인 영역", self.event("user-prompt", prompt="C 진행").stdout)
+        self.assertIn("작업 C: plan.md 승인 영역", self.edit(tree).stderr)
+
+    def test_worktree_without_board_task_keeps_session_plan_approval(self) -> None:
+        plan = self.root / ".claude/logs/sessions/current/plan.md"
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        plan.write_text(self.PLAN.format(goal="세션 작업"))
+        for tool, args in (("Skill", {"skill": "policy"}), ("Read", {"file_path": str(self.root / "src/app.ts")})):
+            self.tool("post-tool", tool, args, tool_response={"success": True})
+        self.assertIn("사용자 구현 승인", self.edit(self.root).stderr)
+        self.event("user-prompt", prompt="진행")
+        self.assertEqual(self.edit(self.root).returncode, 0, self.edit(self.root).stderr)
+
+    def test_task_artifacts_have_their_own_folder_and_are_mirrored(self) -> None:
+        base = ".claude/logs/sessions/current"
+        for relative, allowed in ((f"{base}/tasks/A/plan.md", True), (f"{base}/tasks/A/review-log.md", True),
+                                  (f"{base}/tasks/A/unknown/notes.md", True), (f"{base}/tasks/A/random.md", False),
+                                  (f"{base}/tasks/bad id/plan.md", False), (f"{base}/random.md", False)):
+            with self.subTest(path=relative):
+                result = self.tool("pre-tool", "Write", {"file_path": str(self.root / relative), "content": "x"})
+                self.assertEqual(result.returncode == 0, allowed, result.stderr)
+        from agent_policy.log_mirror import collect_project_logs
+        target = self.root / base / "tasks/A/plan.md"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("계획")
+        copied = collect_project_logs(self.project, "claude", logs_root=self.base / "central").copied
+        self.assertIn("current/tasks/A/plan.md", copied)
+
+    def test_another_session_finds_unfinished_tasks_and_must_reapprove(self) -> None:
+        tree, _ = self.task("A")
+        self.event("user-prompt", prompt="A 진행")
+        self.assertEqual(self.edit(tree).returncode, 0)
+        first = dict(self.env, ASAN_AGENT_POLICY_ASSIGNMENT="a" * 32)
+        second = dict(self.env, ASAN_AGENT_POLICY_ASSIGNMENT="b" * 32)
+        run = lambda env, *args: json.loads(subprocess.run(
+            [sys.executable, "-I", str(self.runtime / "git_operations.py"), *args],
+            cwd=self.root, env=env, text=True, capture_output=True, check=True).stdout)
+        run(first, "board-set", "--task", "A", "--stage", "reviewing")
+        board = run(second, "board")
+        self.assertEqual([(item["task"], item["stage"], item["worktree"]) for item in board["resumable"]],
+                         [("A", "리뷰 중", str(tree))])
+        self.assertIn("다시 승인", board["resume"])
+        self.assertEqual(run(first, "board")["resumable"], [])
+        # 새 세션(다른 host session)은 이전 세션의 계획 승인을 승계하지 않는다.
+        self.calls += 1
+        fresh = subprocess.run([sys.executable, "-I", str(self.runtime / "managed_policy_guard.py"), "pre-tool", "claude"],
+            input=json.dumps({"cwd": str(tree), "session_id": "claude-new", "tool_use_id": str(self.calls), "tool_name": "Edit",
+                              "tool_input": {"file_path": str(tree / "src/app.ts"), "old_string": "1", "new_string": "2"}}),
+            cwd=self.root, env=self.env, text=True, capture_output=True)
+        self.assertIn("작업 A의 계획 승인", fresh.stderr)
+
     def test_child_agent_cannot_prepare_or_run_git_changes_where_host_identifies_it(self) -> None:
         runner = f"python3 -I {self.runtime / 'git_operations.py'}"
         operations = self.repository / "branch-relations/v1/operations"

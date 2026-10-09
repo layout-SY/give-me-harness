@@ -22,6 +22,7 @@ COLLECTED_ARTIFACTS: Final = REQUIRED_ARTIFACTS + tuple(
 UNKNOWN_DIRECTORY: Final = str(
     _ARTIFACT_CONTRACT.get("unknown_directory", "unknown")
 )
+TASK_DIRECTORY: Final = str(_ARTIFACT_CONTRACT.get("task_directory", "tasks"))
 CHANNEL_SOURCES: Final = {
     channel: Path(relative)
     for channel, relative in HOST_ARTIFACT_SESSION_ROOTS.items()
@@ -75,13 +76,13 @@ def collect_project_logs(
                 continue
             current_source_root = session.parent if session_sources is not None else source_root
             sources = [session / artifact_name for artifact_name in COLLECTED_ARTIFACTS]
-            unknown_root = session / UNKNOWN_DIRECTORY
-            if unknown_root.is_dir() and not unknown_root.is_symlink():
-                sources.extend(
-                    source
-                    for source in sorted(unknown_root.rglob("*"))
-                    if source.is_file() and not source.is_symlink()
-                )
+            for nested_root in (session / UNKNOWN_DIRECTORY, session / TASK_DIRECTORY):
+                if nested_root.is_dir() and not nested_root.is_symlink():
+                    sources.extend(
+                        source
+                        for source in sorted(nested_root.rglob("*"))
+                        if source.is_file() and not source.is_symlink()
+                    )
             for source in sources:
                 if source.is_symlink() or not source.is_file():
                     continue

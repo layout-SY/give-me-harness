@@ -88,9 +88,24 @@ fingerprint
 
 현황판에는 마지막으로 기록한 세션이 식별용으로 남는다. 새 세션은 `board`의 `other_session`과 `actual`(branch 존재, HEAD, worktree, 미커밋 변경)을 보고 실제 worktree·diff·미확인 쓰기 기록(`writes`)과 대조한 뒤, 사용자 확인을 받고 해당 단계부터 이어간다. 기록이나 시간 경과만으로 완료 처리하지 않는다.
 
+## 한 세션의 여러 작업
+
+| 항목 | 동작 | 위치 |
+| --- | --- | --- |
+| 작업별 산출물 | 세션 산출물의 `tasks/<작업 ID>/` 아래에 기존과 같은 문서 이름을 허용한다. 중앙 로그 미러도 수집한다 | `policy/guards/artifact_policy.py`, `lib/agent_policy/log_mirror.py` |
+| 작업 계획 등록 | `board-set --plan`은 세션 산출물 아래에 실제로 있는 `plan.md`만 받는다 | `policy/guards/work_board.py` |
+| 작업별 승인 | 수정 대상 worktree에 계획이 등록된 미완료 작업이 하나 있으면 그 계획의 승인으로 source 변경을 판정한다 | `policy/guards/approval_policy.py` |
+| 승인 입력 | `<작업 ID> 진행`, `<ID> <ID> 진행`, `<작업 ID> 구현 승인 취소`. 일반 `진행`은 세션 계획만 승인한다 | `policy/guards/approval_policy.py` |
+| 재개 | `board`의 `resumable`이 다른 세션의 미완료 작업을 실제 Git 상태와 함께 보여 준다. 세션 시작 안내에도 개수와 ID가 나온다 | `policy/guards/work_board.py` |
+
+- 작업 계획과 세션 계획이 같은 문서이면 세션 승인을 그 작업의 승인으로 인정한다.
+- 한 worktree에 계획이 등록된 미완료 작업이 둘 이상이면 어느 계획인지 정할 수 없으므로 세션 계획으로 판정한다.
+- 현황판에 작업이 없는 worktree는 기존과 같이 세션 계획으로 판정한다.
+- 새 세션은 이전 세션의 승인을 승계하지 않는다. 원래 assignment를 재개하면 승인이 유지된다.
+- 하위 에이전트가 자기 작업의 worktree 밖을 수정하지 못하게 막는 강제는 없다. 프롬프트 계약(전달받은 worktree에서만 작업)으로 운영한다.
+
 ## 남은 작업
 
-- 한 세션에서 여러 작업을 동시에 진행하는 구조. 계획 승인이 세션의 `plan.md` 하나에 묶여 있어 작업별 승인 연결이 필요하다. 외부 도구들이 쓰는 "작업마다 세션 하나" 방식과 비교해 결정한다.
 - Codex·OpenCode에서 하위 에이전트 호출을 식별하는 방법. Codex는 `SubagentStart`·`SubagentStop` 기록과의 대조, OpenCode는 자식 세션의 부모 ID 조회가 후보이나 검증하지 않았다.
 - 실제 호스트에서 자식 정의가 번들 경로의 정책 문서를 읽는지에 대한 종단 확인.
 - `board --check`의 참조 후보는 경로 문자열 일치다. 같은 폴더의 상대 import는 잡지 못한다.

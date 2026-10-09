@@ -755,8 +755,9 @@ def main() -> None:
         board_module = _loader.load("work_board")
         result = board_module.check(root, cwd, args.check) if args.check else board_module.view(root)
     elif args.action == "board-set":
+        plan = str((cwd / args.plan).resolve()) if args.plan else args.plan
         result = _loader.load("work_board").update(root, args.task, stage=args.stage, title=args.title,
-            branch=args.branch, worktree=args.worktree, scope=args.scope, shared=args.shared, plan=args.plan,
+            branch=args.branch, worktree=args.worktree, scope=args.scope, shared=args.shared, plan=plan,
             wait_for=args.wait_for, overlap=args.overlap, clear_wait=args.clear_wait)
     elif args.action == "board-wait":
         result = _loader.load("work_board").wait(root, args.task, args.timeout)

@@ -28,6 +28,8 @@ CLOSED = frozenset(CONTRACT["closed_stages"])
 LOCATED = frozenset(CONTRACT["located_stages"])
 TASK_ID = re.compile(r"[0-9A-Za-z가-힣][0-9A-Za-z가-힣._-]{0,79}")
 NOTE = "현황판은 조율 기록입니다. 접근 권한·쓰기 잠금·소유권을 만들지 않으며 실제 Git 상태로 다시 확인하세요."
+RESUME = ("다른 세션이 기록한 미완료 작업입니다. 실제 worktree·diff와 작업의 plan.md를 확인하고 사용자에게 확인받은 뒤 "
+          "해당 단계부터 이어가세요. 이전 세션의 계획 승인은 승계되지 않으므로 `<작업 ID> 진행`으로 다시 승인받습니다.")
 REPLAN = ("변경된 파일만 다시 조사해 계획을 갱신하세요. 이미 조사한 내용은 다시 조사하지 않습니다. "
           "구현은 갱신한 계획의 승인 후 진행하고, 재계획을 마치면 board-set --clear-wait로 대기를 해제하세요.")
 
@@ -82,6 +84,29 @@ def overlaps(left, right) -> list[str]:
             elif second.startswith(first.rstrip("/") + "/"):
                 found.add(second)
     return sorted(found)
+
+
+def open_tasks(root: Path) -> list[dict]:
+    if not (directory(root) / "board.json").is_file():
+        return []
+    return [task for task in read(root)["tasks"].values() if task["stage"] not in CLOSED]
+
+
+def task_for(root: Path, tree: Path) -> dict | None:
+    """The one open task whose plan governs source changes in this worktree."""
+    target = tree.resolve()
+    found = [task for task in open_tasks(root)
+             if task["plan"] and task["worktree"] and Path(task["worktree"]).resolve() == target]
+    return found[0] if len(found) == 1 else None
+
+
+def plan_path(root: Path, value: str) -> str:
+    path = Path(value)
+    context = _loader.load("tool_paths").repository_target(root, str(path)) if path.is_absolute() else None
+    if (context is None or path.name != "plan.md" or not path.is_file() or path.is_symlink()
+            or not context[1].startswith(config.ARTIFACT_SESSIONS_PREFIXES)):
+        raise RuntimeError(f"작업의 plan은 세션 산출물 아래에 실제로 있는 plan.md의 절대 경로여야 합니다: {value}")
+    return str(path.resolve())
 
 
 def actual(root: Path, task: dict) -> dict:
@@ -177,9 +202,11 @@ def update(root: Path, identifier: str, *, stage: str | None = None, title: str 
             task = {"id": identifier, "title": "", "stage": "", "branch": "", "worktree": "", "base_head": "",
                     "head": "", "scope": [], "shared": [], "plan": "", "session": "", "waiting_on": None,
                     "history": [], "created_at": now}
-        for key, value in (("title", title), ("branch", branch), ("worktree", worktree), ("plan", plan)):
+        for key, value in (("title", title), ("branch", branch), ("worktree", worktree)):
             if value is not None:
                 task[key] = value.strip()
+        if plan is not None:
+            task["plan"] = plan_path(root, plan.strip()) if plan.strip() else ""
         if scope is not None:
             task["scope"] = normalize(root, scope)
         if shared is not None:
@@ -272,7 +299,11 @@ def view(root: Path) -> dict:
                      other_session=bool(mine and task["session"] and task["session"] != mine),
                      actual=actual(root, task), release=release(root, board, task))
         tasks.append(entry)
-    return {"note": NOTE, "stages": STAGES,
+    resumable = [{"task": task["id"], "stage": task["stage_label"], "branch": task["branch"],
+                  "worktree": task["worktree"], "plan": task["plan"], "actual": task["actual"]}
+                 for task in tasks if not task["closed"] and (task["other_session"] or not task["session"])]
+    return {"note": NOTE, "stages": STAGES, "resumable": resumable,
+            "resume": RESUME if resumable else "",
             "branches": [{"branch": node["name"], "parent": (live.get(node.get("parent") or "") or {}).get("name"),
                           "purpose": node.get("purpose"), "fork_commit": node.get("fork_commit"),
                           "pending": state_of[node["id"]],
@@ -372,6 +403,13 @@ def context(root: Path, identities, *, once: bool = False) -> str:
                     wait_record["notified"] = changed = True
             if changed:
                 state.write(directory(root) / "board.json", board)
+            if not once and identities:
+                others = [task for task in board["tasks"].values() if task["stage"] not in CLOSED
+                          and task["session"] and task["session"] not in identities]
+                if others:
+                    names = ", ".join(f"{task['id']}({STAGES.get(task['stage'], task['stage'])})" for task in others[:10])
+                    lines.append(f"- 다른 세션이 기록한 미완료 작업 {len(others)}개: {names}. "
+                                 "이어받으려면 board로 실제 상태를 확인하고 사용자에게 확인받으세요.")
         return "\n".join(["[WORK_BOARD]", *lines]) if lines else ""
     except Exception:
         return ""  # 안내 실패가 훅의 판정이나 사용자 입력을 막지 않는다.
