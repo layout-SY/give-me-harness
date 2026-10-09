@@ -7,6 +7,7 @@ import re
 import shlex
 import shutil
 import subprocess
+import sys
 import uuid
 import tempfile
 import tomllib
@@ -865,6 +866,20 @@ def _prepare_codex_home(
         rendered,
         runtime,
     )
+    # Native shell sandboxing is independent of the pre-tool Git approval.
+    # Only this immutable bundle's isolated runner may write central state;
+    # execute/recover still enforce the existing operation consent and scope.
+    runner = runtime.with_name("git_operations.py")
+    pattern = [list(dict.fromkeys(("python3", sys.executable, str(Path(sys.executable).resolve())))),
+               "-I", str(runner),
+               ["prepare", "review", "complete", "cleanup", "relation", "show", "graph",
+                "writes", "write-recovery", "execute", "recover"]]
+    files["rules/asan-git-operations.rules"] = (
+        f'prefix_rule(pattern={json.dumps(pattern)}, decision="allow")\n'
+        # command() includes a literal cwd prefix. Codex requires every segment
+        # of that shell chain to be allowed; cd alone cannot mutate files.
+        'prefix_rule(pattern=["cd", "--"], decision="allow")\n'
+    ).encode()
     _remove_stale_codex_user_link(
         source_codex_home / "config.toml",
         codex_home / "config.toml",

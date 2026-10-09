@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import ast
 import os
 import shutil
 import subprocess
@@ -116,6 +117,33 @@ class InjectionTests(unittest.TestCase):
             responsibility=responsibility,
             session_dir=session_dir,
         )
+
+    def test_codex_protected_runner_has_narrow_managed_execution_rule(self):
+        from agent_policy.session_diagnostics import home_diagnostics
+
+        launch = self.prepare("codex")
+        home = Path(launch.environment["CODEX_HOME"])
+        rule = home / "rules/asan-git-operations.rules"
+        self.assertTrue(rule.is_file(), "중앙 보호 실행기의 native sandbox 예외가 필요합니다.")
+        tree = ast.parse(rule.read_text())
+        self.assertEqual(len(tree.body), 2)
+        call = tree.body[0].value
+        self.assertEqual(call.func.id, "prefix_rule")
+        fields = {item.arg: ast.literal_eval(item.value) for item in call.keywords}
+        self.assertEqual(fields["decision"], "allow")
+        pattern = fields["pattern"]
+        self.assertEqual(pattern[0], list(dict.fromkeys(("python3", sys.executable, str(Path(sys.executable).resolve())))))
+        self.assertEqual(pattern[1:3], ["-I", str(launch.bundle_root / "policy/.agent-policy/runtime/git_operations.py")])
+        self.assertEqual(set(pattern[3]), {"prepare", "review", "complete", "cleanup", "relation", "show",
+                                            "graph", "writes", "write-recovery", "execute", "recover"})
+        self.assertEqual(len(pattern), 4)
+        cwd_rule = tree.body[1].value
+        self.assertEqual(cwd_rule.func.id, "prefix_rule")
+        self.assertEqual({item.arg: ast.literal_eval(item.value) for item in cwd_rule.keywords},
+                         {"pattern": ["cd", "--"], "decision": "allow"})
+        self.assertIsNone(home_diagnostics(home))
+        rule.write_text(rule.read_text().replace('"allow"', '"prompt"'))
+        self.assertIn("rules/asan-git-operations.rules", home_diagnostics(home))
 
     @staticmethod
     def command_strings(value: object) -> list[str]:

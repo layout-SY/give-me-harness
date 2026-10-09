@@ -153,6 +153,8 @@ Codex writable home과 승인 상태는 중앙 state의 assignment별로 분리�
 
 보호 실행기가 출력하는 명령은 `cd -- <승인 workdir> && python -I <현재 bundle>/git_operations.py execute <id>`로 실제 경로를 포함합니다. host 훅이 도구의 workdir를 누락해도 이 명시적 경로를 검사할 수 있습니다. 추가 명령·동적 경로·리다이렉션은 허용하지 않습니다.
 
+Codex의 새 `start`는 현재 번들의 Git 보호 실행기에만 native 실행 예외를 등록합니다. 중앙 상태를 일반 writable root로 열지 않으며 실제 Git 변경에는 기존 승인이 계속 필요합니다. `branch-relations/v1/operations`의 권한 오류 원인, 변경 전후 비교, 유지되는 보호 경계와 기존 세션 적용 절차는 [중앙 Git 실행기 권한 복구](docs/codex-git-runner-permissions-2026-10-06.md)에 기록합니다.
+
 과거 V3 maintenance·integration-recover·close-recover 명령은 이전 실행 기록의 운영 복구용입니다. 새 세션의 접근 권한이나 완료 경로로 사용하지 않습니다. 소비자 정책 잔존물은 실제 경로와 기존 작업을 확인한 별도 적용 계획으로 처리합니다.
 
 호스트 이벤트 등록은 adapters의 events.json(Codex·Claude)과 OpenCode plugin이 소유합니다. 공통 runtime의 이벤트 판정·결과 정규화·상태 저장, branch workflow의 실제 Git 실행을 분리합니다. OpenCode의 안전한 기본 Git 조회는 별도 승인 없이 사용하되 복잡한 global option이나 host가 안전하게 구분하지 못하는 형태는 승인 요청을 유지합니다.
