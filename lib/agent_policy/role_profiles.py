@@ -127,11 +127,12 @@ ROLE_PROFILES: Final[dict[str, InjectRoleProfile]] = {
         role_references=(
             "logic.md",
             "ui.md",
+            "orchestration.md",
             "pipeline-roles.md",
             "workflows.md",
         ),
         common_skill_prefixes=(".agent-policy/common/skills/",),
-        native_agents=("publisher", "generator", "refactorer", "watcher"),
+        native_agents=("planner", "publisher", "generator", "refactorer", "watcher"),
     ),
 }
 

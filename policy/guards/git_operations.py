@@ -711,6 +711,19 @@ def main() -> None:
     for name in ("execute", "recover", "show"):
         commands.add_parser(name).add_argument("id")
     commands.add_parser("graph")
+    board = commands.add_parser("board", help="브랜치 관계·병합 순서·작업 단계를 조회합니다. 권한을 만들지 않습니다.")
+    board.add_argument("--check", nargs="+", metavar="PATH", help="공용 항목을 바꿀 때 영향받는 작업과 다른 worktree의 참조 후보")
+    board_set = commands.add_parser("board-set", help="작업의 단계·범위·대기를 기록합니다. Git 결과 단계는 실제 상태로 확인합니다.")
+    board_set.add_argument("--task", required=True)
+    for name in ("title", "stage", "branch", "worktree", "plan", "wait-for"):
+        board_set.add_argument("--" + name)
+    for name in ("scope", "shared", "overlap"):
+        board_set.add_argument("--" + name, nargs="*", metavar="PATH")
+    board_set.add_argument("--clear-wait", action="store_true")
+    board_wait = commands.add_parser("board-wait", help="선행 작업이 커밋될 때까지 기다린 뒤 변경된 파일을 출력합니다.")
+    board_wait.add_argument("--task", required=True)
+    board_wait.add_argument("--timeout", type=float, default=3600.0)
+    commands.add_parser("fingerprint", help="현재 worktree의 검토 지문(HEAD와 미커밋 내용)을 출력합니다.")
     recovery = commands.add_parser("write-recovery")
     recovery.add_argument("--id", required=True)
     recovery.add_argument("--reason", required=True)
@@ -738,6 +751,17 @@ def main() -> None:
                                   args.purpose or "", args.new_name, args.worktree)
     elif args.action == "graph":
         result = relations.read(root)
+    elif args.action == "board":
+        board_module = _loader.load("work_board")
+        result = board_module.check(root, cwd, args.check) if args.check else board_module.view(root)
+    elif args.action == "board-set":
+        result = _loader.load("work_board").update(root, args.task, stage=args.stage, title=args.title,
+            branch=args.branch, worktree=args.worktree, scope=args.scope, shared=args.shared, plan=args.plan,
+            wait_for=args.wait_for, overlap=args.overlap, clear_wait=args.clear_wait)
+    elif args.action == "board-wait":
+        result = _loader.load("work_board").wait(root, args.task, args.timeout)
+    elif args.action == "fingerprint":
+        result = _loader.load("work_board").fingerprint(root, cwd)
     elif args.action == "writes":
         repository = state.repository_state(git.git_common_directory(root))
         worktree = _loader.load("tool_paths").git_top_level(cwd)

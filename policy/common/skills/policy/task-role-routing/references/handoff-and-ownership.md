@@ -69,4 +69,6 @@ merge 전 두 형제의 commit과 staged·unstaged·untracked 변경을 비교�
 
 모든 세션은 프로젝트의 모든 branch/worktree에서 사용자 승인 후 Git 변경을 실행할 수 있다. contributor·host·assignment로 실행자를 제한하지 않는다. 완료 통합은 미처리 하위 작업이 없는 자식에서 직접 부모로 수행하며 형제 검토와 승인을 받는다. 세션 독점 Git claim과 CLOSED 해제 절차는 없다. 보호 실행기의 짧은 Git lock을 사용하며 병렬 구현에는 별도 linked worktree를 사용한다. 다른 작업의 변경을 덮어쓰거나 임의로 commit하지 않는다.
 
+작업 현황판은 브랜치·워크트리 관계와 병합 순서, 작업별 단계·범위를 보여 준다. 인계받는 세션은 handoff와 함께 현황판의 실제 Git 상태를 확인한다. 현황판의 담당 세션 표시는 마지막으로 기록한 세션을 식별할 뿐이며 권한이나 인계 의무가 아니다.
+
 새 정책 적용 시 현재 세션을 handoff하고 새 inject assignment를 시작한다. Git 소유권 이전 명령은 필요하지 않으며, 과거 assignment를 resume하면 원래 bundle을 사용한다.

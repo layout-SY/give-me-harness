@@ -274,6 +274,30 @@ def _bundle_digest(
     return digest.hexdigest()
 
 
+GIT_OPERATION_ACTIONS: Final = (
+    "prepare", "review", "complete", "cleanup", "relation", "show", "graph",
+    "writes", "write-recovery", "execute", "recover",
+    "board", "board-set", "board-wait", "fingerprint",
+)
+
+
+def _runtime_root(host: str, policy_root: Path) -> Path:
+    """host 훅이 실제로 실행하는 runtime 사본의 위치."""
+    return {
+        "codex": policy_root / ".agent-policy/runtime",
+        "claude": policy_root.parent / "plugin/runtime",
+        "opencode": policy_root.parent / "opencode-home/runtime",
+    }[host]
+
+
+def _bind_agent_paths(content: bytes, host: str, policy_root: Path) -> bytes:
+    """하위 에이전트는 부모의 inject 서문을 받지 않으므로 경로를 직접 바인딩한다."""
+    text = content.decode("utf-8")
+    text = text.replace(".agent-policy/runtime/", f"{_runtime_root(host, policy_root)}/")
+    text = text.replace(".agent-policy/common/", f"{policy_root}/.agent-policy/common/")
+    return text.encode("utf-8")
+
+
 def _injection_preamble(
     project: ProjectConfig,
     host: str,
@@ -283,12 +307,9 @@ def _injection_preamble(
     profile = role_profile(role)
     documents = "\n".join(f"  - `{path}`" for path in role_document_paths(host, role))
     artifact_root = artifact_session_root(host)
-    formatter_root = {
-        "codex": policy_root / ".agent-policy/runtime",
-        "claude": policy_root.parent / "plugin/runtime",
-        "opencode": policy_root.parent / "opencode-home/runtime",
-    }[host]
+    formatter_root = _runtime_root(host, policy_root)
     formatter_command = shlex.join(["python3", "-I", str(formatter_root / "formatting.py"), "apply"])
+    runner = shlex.join(["python3", "-I", str(formatter_root / "git_operations.py")])
     return f"""# 중앙 정책 inject 실행 컨텍스트
 
 이 세션은 소비자 저장소에 배포된 정책 파일이 아니라 중앙 정책 번들을 사용한다.
@@ -303,6 +324,9 @@ def _injection_preamble(
 - 아래에 바인딩된 정책 상대 경로는 읽을 때 정책 스냅샷 아래에서 해석한다.
 - 애플리케이션 경로와 `{artifact_root}/**` 산출물 경로는 해당 도구의 실제 작업 cwd에서 해석한다.
 - 페이지·기능 코드 작업 완료 시 실제 workdir에서 실행할 포맷 트리거: `{formatter_command}`. 프로젝트 설정을 사용해 수정한 파일만 자동 편집한다. 포맷 후 lint·test·build를 실행한다. 해당 검증 명령의 PreToolUse에서도 필요한 포맷을 자동 수행한다.
+- 작업 현황판(브랜치·워크트리 관계, 병합 순서, 작업 단계) 조회: `{runner} board`. 공용 항목의 영향 범위 확인: `{runner} board --check <경로>`. 단계·범위 갱신: `{runner} board-set --task <작업 ID> --stage <단계>`. 선행 작업 대기: `{runner} board-wait --task <작업 ID>`. 검토 지문: `{runner} fingerprint`. 현황판은 쓰기 권한이나 소유권을 만들지 않는다.
+- 선행 작업이 커밋되어 대기가 풀리면 안내된 변경 파일만 다시 조사해 계획을 갱신한다. 이미 조사한 내용은 다시 조사하지 않으며 구현은 갱신한 계획의 승인 후 진행한다.
+- 하위 에이전트를 호출할 때 작업 worktree 절대 경로, 작업 범위, 확정된 결정과 산출물 위치를 지시에 포함한다. 하위 에이전트가 반환한 미확정 질문은 사용자에게 묻고 답변을 해당 작업자에게 전달한다. Git 변경은 하위 에이전트가 요청만 반환하고 부모가 사용자 승인 후 실행한다.
 - 정책 스냅샷과 중앙 저장소는 세션에서 직접 수정하지 않는다. 정책 변경은 중앙 저장소의 승인 절차를 따른다.
 - 소비자 저장소의 기존 `AGENTS.md`, `CLAUDE.md`, `.codex/**`, `.claude/**`,
   `.opencode/**`는 이 inject 세션의 정책 원본이 아니다.
@@ -467,7 +491,8 @@ def _render_claude_files(
                 raise PolicyError(f"Claude inject skill 경로가 중복됩니다: {target}")
             files[target] = content
         elif relative.startswith(".claude/agents/"):
-            files["plugin/agents/" + relative.removeprefix(".claude/agents/")] = content
+            files["plugin/agents/" + relative.removeprefix(".claude/agents/")] = _bind_agent_paths(
+                content, "claude", bundle_root / "policy")
 
     for relative, content in rendered.items():
         if relative.startswith(".agent-policy/runtime/"):
@@ -505,7 +530,8 @@ def _render_opencode_files(
                 + relative.removeprefix(".agent-policy/common/skills/")
             ] = content
         elif relative.startswith(".opencode/agent/"):
-            files["opencode-home/agents/" + relative.removeprefix(".opencode/agent/")] = content
+            files["opencode-home/agents/" + relative.removeprefix(".opencode/agent/")] = _bind_agent_paths(
+                content, "opencode", bundle_root / "policy")
         elif relative.startswith(".opencode/plugins/"):
             target = "opencode-home/plugins/" + relative.removeprefix(".opencode/plugins/")
             files[target] = content
@@ -860,7 +886,8 @@ def _prepare_codex_home(
                 "skills/" + relative.removeprefix(".agent-policy/common/skills/")
             ] = content
         elif relative.startswith(".codex/agents/"):
-            files["agents/" + relative.removeprefix(".codex/agents/")] = content
+            files["agents/" + relative.removeprefix(".codex/agents/")] = _bind_agent_paths(
+                content, "codex", bundle_root / "policy")
     runtime = bundle_root / "policy/.agent-policy/runtime/managed_policy_guard.py"
     files["hooks.json"] = _transform_codex_hooks(
         rendered,
@@ -871,9 +898,7 @@ def _prepare_codex_home(
     # execute/recover still enforce the existing operation consent and scope.
     runner = runtime.with_name("git_operations.py")
     pattern = [list(dict.fromkeys(("python3", sys.executable, str(Path(sys.executable).resolve())))),
-               "-I", str(runner),
-               ["prepare", "review", "complete", "cleanup", "relation", "show", "graph",
-                "writes", "write-recovery", "execute", "recover"]]
+               "-I", str(runner), list(GIT_OPERATION_ACTIONS)]
     files["rules/asan-git-operations.rules"] = (
         f'prefix_rule(pattern={json.dumps(pattern)}, decision="allow")\n'
         # command() includes a literal cwd prefix. Codex requires every segment

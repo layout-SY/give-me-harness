@@ -6,6 +6,11 @@ PASS | FAIL
 
 ## 검토 범위
 
+- 검토 worktree·branch:
+- 시작 지문(`fingerprint`):
+- 종료 지문(`fingerprint`):
+- 두 지문이 다르면 판정하지 않고 바뀐 부분을 다시 검토한다.
+
 ## 점검 항목
 
 | 점검 | 결과 | 근거 |

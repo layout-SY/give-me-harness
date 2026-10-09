@@ -101,7 +101,12 @@ def replacements(project: ProjectConfig) -> dict[str, str]:
     missing = [name for name in required_commands if name not in project.commands]
     if missing:
         raise PolicyError(f"{project.id} 명령이 누락되었습니다: {', '.join(missing)}")
+    child_core = (CENTRAL_ROOT / "policy/common/CHILD_AGENT_CORE.template.md").read_text(encoding="utf-8").strip()
+    if '"""' in child_core or "\\" in child_core:
+        raise PolicyError("하위 에이전트 공통 계약은 TOML 여러 줄 문자열에 그대로 넣을 수 있어야 합니다.")
     return {
+        # 다른 표식보다 먼저 치환해 계약 본문 안의 표식도 함께 렌더한다.
+        "{{CHILD_AGENT_CORE}}": child_core,
         "{{PROJECT_ID}}": project.id,
         "{{PROJECT_NAME}}": project.name,
         "{{PROJECT_PATH}}": str(project.path),
@@ -351,6 +356,7 @@ def audit_project(project: ProjectConfig) -> tuple[str, ...]:
         if any(marker in text for marker in legacy_distribution_markers):
             issues.append(f"forbidden legacy distribution header: {relative}")
         unresolved = (
+            "{{CHILD_AGENT_CORE}}",
             "{{PROJECT_",
             "{{WORKTREE_ROOT}}",
             "{{CENTRAL_ROOT}}",

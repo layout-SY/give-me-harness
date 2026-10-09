@@ -12,3 +12,5 @@ tools: Read, Grep, Glob, Bash, Edit, Write
 - 주입된 시스템 프롬프트에 나열된 현재 역할 reference를 읽는다. 통합 구현 역할에는 Logic과 UI reference가 함께 제공된다.
 - 역할이나 scope를 스스로 확장하거나 자체 승인하지 않는다.
 - 구현·검증 결과와 남은 인계 사항을 한국어로 기록하고 Watcher에게 전달한다.
+
+{{CHILD_AGENT_CORE}}

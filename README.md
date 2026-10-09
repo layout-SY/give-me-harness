@@ -115,6 +115,16 @@ bin/agent-policy writes --project admin-ui --assignment <assignment-id> --reconc
 - 모든 host·role이 사용자 승인 후 Git을 실행할 수 있습니다. Git lock은 실제 실행 구간에만 유지하며 세션 소유권으로 사용하지 않습니다.
 - `owner`는 plan·final-summary, `contributor`는 handoff를 기록합니다. 산출물 책임은 Git 실행 권한이 아닙니다. 다른 host·세션의 기록은 읽기 전용이고 보조 문서는 자기 세션의 `unknown/`에 둡니다.
 
+## 오케스트레이션과 작업 현황판
+
+- `generate` 세션은 Planner·Publisher·Generator·Refactorer·Watcher를 하위 에이전트로 호출합니다. 하위 에이전트의 정의에는 공통 계약(미확정 결정은 부모에게 반환, Git 변경은 요청만 반환, 재조사는 변경분만)이 직접 들어가고 정책·실행기 경로는 번들 절대 경로로 바인딩됩니다.
+- 하위 에이전트의 Git 변경은 Claude Code에서만 guard가 거부합니다. Codex와 OpenCode는 도구 실행 전 이벤트로 부모와 자식을 구분할 수 없어 프롬프트 계약으로 운영합니다.
+- 작업 현황판은 `git_operations.py board`로 조회하고 `board-set`으로 단계·범위를 기록합니다. 브랜치·워크트리 관계와 병합 순서를 함께 보여 주며 쓰기 잠금이나 소유권을 만들지 않습니다. 공용 항목을 바꾸기 전에는 `board --check <경로>`로 영향받는 작업과 다른 worktree의 참조 후보를 확인합니다.
+- 범위가 겹쳐 기다리는 작업은 선행 작업이 `커밋됨`이 되면 풀립니다. `board-wait`와 세션 시작·사용자 입력 훅이 접점 경로에서 변경된 파일을 알려 주며, 그 파일만 다시 조사해 계획을 갱신합니다.
+- Watcher는 검토 시작과 종료에 `git_operations.py fingerprint`를 기록해 검토 중 대상이 바뀌었는지 확인합니다.
+
+단계, 명령 예시, 호스트별 보장 범위와 남은 작업은 [오케스트레이션과 작업 현황판](docs/orchestration-board-2026-10-09.md)에 기록합니다.
+
 ## 보호 명령 승인 방식
 
 - 아래 승인은 저장소를 변경하는 Git 명령에만 적용합니다. 읽기 전용 Git 조회는 허용하며, 해석할 수 없는 Git 형태는 변경형으로 간주해 fail-closed합니다.

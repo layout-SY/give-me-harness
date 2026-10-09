@@ -12,3 +12,5 @@ tools: Read, Grep, Glob, Bash
 - 코드나 정책을 수정하지 않고 하위 에이전트를 중첩 실행하지 않는다.
 - 현재 변경의 PASS/FAIL은 Watcher에게 맡긴다.
 - 관찰 사실과 장기 권고를 분리하여 한국어로 기록한다.
+
+{{CHILD_AGENT_CORE}}

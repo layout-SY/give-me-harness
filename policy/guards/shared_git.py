@@ -268,6 +268,17 @@ def git_denial(event: dict, root: Path, host: str, command: str, cwd: Path) -> s
     return None
 
 
+CHILD_RUNNER_ACTIONS = frozenset({"show", "graph", "writes", "board", "board-wait", "fingerprint"})
+CHILD_GIT_DENIAL = ("하위 에이전트는 Git 변경과 현황판 갱신을 실행하지 않습니다. 필요한 명령·작업 위치·대상·영향을 "
+                    "부모에게 반환하세요. 부모가 사용자 승인 후 실행합니다. Git 조회는 가능합니다.")
+
+
+def child_agent(event: dict) -> str:
+    """host가 하위 에이전트 호출에만 넣는 식별자. 없는 host는 프롬프트 계약으로만 운영한다."""
+    value = event.get("agent_id")
+    return value if isinstance(value, str) else ""
+
+
 def pre_tool(event: dict, root: Path, host: str) -> None:
     tool = paths.normalized_tool_name(event)
     data = event.get("tool_input") or {}
@@ -293,6 +304,9 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
             denial = boundary.directory_denial(root, cwd)
             if denial:
                 protocol.emit_denial(host, denial)
+                return
+            if child_agent(event) and invocation[0] not in CHILD_RUNNER_ACTIONS:
+                protocol.emit_denial(host, CHILD_GIT_DENIAL)
                 return
             if invocation[0] in {"execute", "recover"}:
                 if len(invocation) != 2:
@@ -360,7 +374,8 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
                 else:
                     protocol.emit_operation_approval(host, message + "\n명령 실행 승인으로 답하세요. 구현 승인은 별개입니다.")
                 return
-            if invocation[0] not in {"prepare", "review", "complete", "cleanup", "relation", "show", "graph", "writes", "write-recovery"}:
+            if invocation[0] not in {"prepare", "review", "complete", "cleanup", "relation", "show", "graph", "writes", "write-recovery",
+                                     "board", "board-set", "board-wait", "fingerprint"}:
                 protocol.emit_denial(host, "지원하지 않는 보호 실행기 동작입니다.")
             return
     if shell and paths.unsupported_workflow_invocation(command, root):
@@ -432,6 +447,9 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
                 protocol.emit_denial(host, denial)
                 return
     categories = paths.protected_operation_categories(command) if shell else ()
+    if categories and child_agent(event):
+        protocol.emit_denial(host, CHILD_GIT_DENIAL)
+        return
     if categories:
         operation = operations.prepare_git(root, cwd, command, host, event)
         # PreToolUse cannot hold a lock across native execution. Route through

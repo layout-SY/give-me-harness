@@ -135,7 +135,8 @@ class InjectionTests(unittest.TestCase):
         self.assertEqual(pattern[0], list(dict.fromkeys(("python3", sys.executable, str(Path(sys.executable).resolve())))))
         self.assertEqual(pattern[1:3], ["-I", str(launch.bundle_root / "policy/.agent-policy/runtime/git_operations.py")])
         self.assertEqual(set(pattern[3]), {"prepare", "review", "complete", "cleanup", "relation", "show",
-                                            "graph", "writes", "write-recovery", "execute", "recover"})
+                                            "graph", "writes", "write-recovery", "execute", "recover",
+                                            "board", "board-set", "board-wait", "fingerprint"})
         self.assertEqual(len(pattern), 4)
         cwd_rule = tree.body[1].value
         self.assertEqual(cwd_rule.func.id, "prefix_rule")
