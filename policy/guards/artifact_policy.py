@@ -99,9 +99,10 @@ def artifact_layout_denial(root: Path, raw_path: str, host: str) -> str | None:
     if len(parts) < 2 or not valid_session_name(parts[0]):
         return f"세션 산출물 경로가 올바르지 않습니다: {relative}"
     artifact_parts = parts[1:]
-    task_directory = branch_guard.RUNTIME_CONTRACT["artifacts"].get("task_directory")
+    pipeline = _runtime_config.load_runtime_module("pipeline")
+    task_directory = pipeline.TASK_DIRECTORY if pipeline.active() else ""
     if task_directory and len(artifact_parts) >= 3 and artifact_parts[0] == task_directory:
-        # 한 세션이 여러 작업을 진행하면 작업마다 같은 산출물 구조를 가진다.
+        # 오케스트레이션 세션이 여러 작업을 진행하면 작업마다 같은 산출물 구조를 가진다.
         if not re.fullmatch(r"[0-9A-Za-z가-힣][0-9A-Za-z가-힣._-]{0,79}", artifact_parts[1]):
             return f"작업별 산출물 폴더 이름이 올바르지 않습니다: {relative}"
         artifact_parts = artifact_parts[2:]

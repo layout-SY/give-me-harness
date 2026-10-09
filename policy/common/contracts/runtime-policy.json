@@ -48,7 +48,6 @@
     ],
     "handoff": "handoff.md",
     "unknown_directory": "unknown",
-    "task_directory": "tasks",
     "responsibilities": [
       "owner",
       "contributor"
@@ -90,27 +89,6 @@
       "generated_cleanup_roots": ["node_modules/", "dist/"],
       "git_prompt_approval": "명령 실행 승인"
     }
-  },
-  "work_board": {
-    "schema": 1,
-    "access": "coordination-record-only",
-    "stages": {
-      "planning": "계획 중",
-      "awaiting-creation": "생성 승인 대기",
-      "working": "작업 중",
-      "reviewing": "리뷰 중",
-      "awaiting-user-review": "사용자 검토 대기",
-      "committed": "커밋됨",
-      "merged": "병합됨",
-      "removed": "제거됨",
-      "cancelled": "취소"
-    },
-    "located_stages": ["working", "reviewing", "awaiting-user-review", "committed"],
-    "release_stages": ["committed", "merged", "removed", "cancelled"],
-    "closed_stages": ["merged", "removed", "cancelled"],
-    "replan": "changed-files-only",
-    "plan_approval": "task-id-then-approval-phrase",
-    "child_git": "request-to-parent"
   },
   "capabilities": {
     "source_write": [

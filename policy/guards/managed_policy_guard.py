@@ -297,6 +297,8 @@ def operation_approval_message(command: str, categories: tuple[str, ...], host: 
 def board_context(event: dict[str, Any], root: Path, host: str, *, once: bool = False) -> str:
     """현황판 안내는 판정이 아니다. 실패해도 세션 진행을 막지 않는다."""
     try:
+        if not load_runtime_module("pipeline").active():
+            return ""  # 현황판 안내는 오케스트레이션 세션에만 한다.
         session = event_session_id(event)
         identities = {os.environ.get("ASAN_AGENT_POLICY_ASSIGNMENT", ""), runtime_state.owner_id(host, session)} - {""}
         return load_runtime_module("work_board").context(root, identities, once=once)
@@ -430,6 +432,8 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
         return
     if mode == "user-prompt":
         record_user_prompt(event, repository_root(event), host)
+        # 부모의 직접 수정 예외는 승인한 응답 동안만 유효하다. 다음 입력이 오면 닫는다.
+        load_runtime_module("pipeline").record_prompt(event, repository_root(event), host)
         # 풀린 대기는 다음 사용자 입력에 한 번만 알린다. 재조사 범위는 변경 파일이다.
         board = board_context(event, repository_root(event), host, once=True)
         if board:

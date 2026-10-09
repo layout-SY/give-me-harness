@@ -80,7 +80,7 @@ inject는 선택한 host와 role에 필요한 정책만 중앙 build 디렉터�
 
 ### Claude UI의 TalkToFigma 기본 MCP
 
-`user-ui`와 `admin-ui`에서 `--host claude --role ui` 또는 `--role generate`로 새 세션을 시작하면 중앙 번들에 TalkToFigma 설정을 생성하고 `--mcp-config <bundle>/claude-mcp.json`으로 전달한다. 기본 정의는 `adapters/claude/mcp.defaults.json` 하나로 관리한다. 다른 프로젝트·host·role에는 이 기본 MCP를 자동 주입하지 않는다.
+`user-ui`와 `admin-ui`에서 `--host claude --role ui` 또는 `--role orchest`로 새 세션을 시작하면 중앙 번들에 TalkToFigma 설정을 생성하고 `--mcp-config <bundle>/claude-mcp.json`으로 전달한다. 기본 정의는 `adapters/claude/mcp.defaults.json` 하나로 관리한다. 다른 프로젝트·host·role에는 이 기본 MCP를 자동 주입하지 않는다.
 
 launcher는 `bunx`를 PATH에서 찾고, 없으면 `~/.bun/bin/bunx`를 확인한다. 둘 다 실행할 수 없으면 설치·경로 확인 메시지와 함께 세션 시작을 중단한다. 확인한 절대경로와 `cursor-talk-to-figma-mcp@latest` 실행 인자를 번들 digest 및 manifest에 반영한다. `@latest`는 실행 시 패키지 해석에 따르므로 MCP 패키지 자체의 버전까지 고정하는 계약은 아니다.
 

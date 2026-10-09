@@ -724,6 +724,9 @@ def main() -> None:
     board_wait.add_argument("--task", required=True)
     board_wait.add_argument("--timeout", type=float, default=3600.0)
     commands.add_parser("fingerprint", help="현재 worktree의 검토 지문(HEAD와 미커밋 내용)을 출력합니다.")
+    verdict = commands.add_parser("verdict", help="Watcher의 판정을 현재 지문과 함께 기록합니다. 커밋 전 확인에 사용합니다.")
+    verdict.add_argument("--result", choices=("PASS", "FAIL"), required=True)
+    verdict.add_argument("--start", required=True, help="검토를 시작할 때 기록한 지문")
     recovery = commands.add_parser("write-recovery")
     recovery.add_argument("--id", required=True)
     recovery.add_argument("--reason", required=True)
@@ -763,6 +766,8 @@ def main() -> None:
         result = _loader.load("work_board").wait(root, args.task, args.timeout)
     elif args.action == "fingerprint":
         result = _loader.load("work_board").fingerprint(root, cwd)
+    elif args.action == "verdict":
+        result = _loader.load("pipeline").record_verdict(root, cwd, args.result, args.start)
     elif args.action == "writes":
         repository = state.repository_state(git.git_common_directory(root))
         worktree = _loader.load("tool_paths").git_top_level(cwd)

@@ -8,7 +8,7 @@
 
 1. Planner가 요청과 handoff를 분류하고 기본 역할, scope와 검증을 제안한다.
 2. UI가 포함되면 Publisher가 재사용 자산과 props/callback 계약을 확인한다. Logic 선행이면 제공된 controller 계약에 맞추고, UI 선행이면 UI 계약을 Logic에 제공한다. 양쪽 연결과 불일치 질문은 `api-authoring/references/ui-controller.md`를 따른다.
-3. 사용자 승인 후 Implementer/Generator가 확인된 역할과 scope를 구현한다. 통합 구현 세션에서 연결 계약이 계획에 확정돼 있으면 Publisher의 UI 구현과 Generator의 controller 구현을 병렬로 진행하고, 둘 다 끝난 뒤 Generator가 최종 연결을 수행한다(`pipeline-roles.md`).
+3. 사용자 승인 후 Implementer/Generator가 확인된 역할과 scope를 구현한다.
 4. Watcher가 현재 변경을 판정한다.
 5. 한 작업자가 전체를 맡으면 검증·산출물·merge 단계로 진행한다. 역할이 분리되면 부분 결과를 handoff한다. role이 없는 다음 세션은 역할을 다시 확인하고, inject 세션은 handoff와 일치하는 `--role`로 시작한다.
 
@@ -38,10 +38,6 @@ Planner → Refactorer → Watcher 순서를 기본으로 한다. 공개 계약�
 
 사용자가 평가·audit 역할을 요청한 경우에만 Evaluator를 실행한다. 코드를 수정하지 않고 관찰 사실과 장기 권고를 분리한다. 발견 사항에는 심각도, 영향받는 경로, 재현·판단 근거와 수정 권고를 기록하며 근거가 없는 가능성으로 목록을 부풀리지 않는다. 평가 결과를 자동 구현으로 전환하지 않는다.
 
-## 대기와 재계획
-
-다른 작업과 범위가 겹쳐 기다린 작업은 선행 작업이 `커밋됨`이 된 뒤 이어간다. 재조사 대상은 현황판이 알려 주는 접점 경로의 변경 파일이다. 기존 조사 결과와 이미 받은 사용자 결정은 유지하고, 변경으로 결정이 달라진 항목만 다시 질문한다. 갱신한 계획은 다시 승인받는다. 절차와 명령은 `orchestration.md`의 작업 현황판을 따른다.
-
 ## 상태 전이
 
 - Planner: `draft -> ready_for_role_confirmation -> ready_for_approval`
@@ -49,7 +45,6 @@ Planner → Refactorer → Watcher 순서를 기본으로 한다. 공개 계약�
 - Watcher: `role_complete -> passed | rejected | escalated`
 - 부분 인계: `passed -> handed_off -> next_role_confirmation`
 - 통합·완료: `passed -> ready_to_merge -> merged_verified -> closed`
-- 현황판 단계: `planning -> awaiting-creation -> working -> reviewing -> awaiting-user-review -> committed -> merged -> removed`. 위 역할별 전이를 대신하지 않으며 작업 공간의 진행 위치를 다른 세션에 알리는 기록이다.
 
 ## 재시도와 escalation
 

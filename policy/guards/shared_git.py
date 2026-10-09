@@ -268,13 +268,14 @@ def git_denial(event: dict, root: Path, host: str, command: str, cwd: Path) -> s
     return None
 
 
-CHILD_RUNNER_ACTIONS = frozenset({"show", "graph", "writes", "board", "board-wait", "fingerprint"})
+PIPELINE_RUNNER_ACTIONS = frozenset({"board", "board-set", "board-wait", "fingerprint", "verdict"})
+CHILD_RUNNER_ACTIONS = frozenset({"show", "graph", "writes", "board", "board-wait", "fingerprint", "verdict"})
 CHILD_GIT_DENIAL = ("하위 에이전트는 Git 변경과 현황판 갱신을 실행하지 않습니다. 필요한 명령·작업 위치·대상·영향을 "
                     "부모에게 반환하세요. 부모가 사용자 승인 후 실행합니다. Git 조회는 가능합니다.")
 
 
 def child_agent(event: dict) -> str:
-    """host가 하위 에이전트 호출에만 넣는 식별자. 없는 host는 프롬프트 계약으로만 운영한다."""
+    """host가 하위 에이전트 호출에만 넣는 식별자. 파이프라인 세션에서만 판정에 쓴다."""
     value = event.get("agent_id")
     return value if isinstance(value, str) else ""
 
@@ -305,8 +306,18 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
             if denial:
                 protocol.emit_denial(host, denial)
                 return
-            if child_agent(event) and invocation[0] not in CHILD_RUNNER_ACTIONS:
+            pipeline = _loader.load("pipeline")
+            if invocation[0] in PIPELINE_RUNNER_ACTIONS and not pipeline.active():
+                protocol.emit_denial(host, "오케스트레이션(orchest) 세션 전용 명령입니다. 이 세션에서는 사용하지 않습니다.")
+                return
+            if pipeline.active() and child_agent(event) and invocation[0] not in CHILD_RUNNER_ACTIONS:
                 protocol.emit_denial(host, CHILD_GIT_DENIAL)
+                return
+            denial = (pipeline.verdict_denial(event, root, host, cwd) if invocation[0] == "verdict" else
+                      pipeline.merge_denial(event, root, host, invocation[invocation.index("--review") + 1])
+                      if invocation[0] == "complete" and "--review" in invocation[:-1] else None)
+            if denial:
+                protocol.emit_denial(host, denial)
                 return
             if invocation[0] in {"execute", "recover"}:
                 if len(invocation) != 2:
@@ -331,6 +342,11 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
                     return
                 operations.validate(root, operation)
                 if operation["kind"] == "git":
+                    # 승인과 실행 사이에 내용이 바뀌면 검토한 버전이 아니다.
+                    denial = pipeline.commit_denial(root, [(item["root"], item["args"]) for item in operation["invocations"]])
+                    if denial:
+                        protocol.emit_denial(host, denial)
+                        return
                     denial = git_denial(event, root, host, operation["command"], cwd)
                     if denial:
                         protocol.emit_denial(host, denial)
@@ -375,7 +391,7 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
                     protocol.emit_operation_approval(host, message + "\n명령 실행 승인으로 답하세요. 구현 승인은 별개입니다.")
                 return
             if invocation[0] not in {"prepare", "review", "complete", "cleanup", "relation", "show", "graph", "writes", "write-recovery",
-                                     "board", "board-set", "board-wait", "fingerprint"}:
+                                     "board", "board-set", "board-wait", "fingerprint", "verdict"}:
                 protocol.emit_denial(host, "지원하지 않는 보호 실행기 동작입니다.")
             return
     if shell and paths.unsupported_workflow_invocation(command, root):
@@ -434,23 +450,34 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
         return
     if tool in config.STRUCTURED_MUTATION_TOOLS and approval.implementation_gate_required(event, root):
         role = os.environ.get(config.INJECT_ROLE_ENV, "")
-        if role and role not in branch.RUNTIME_CONTRACT["capabilities"]["source_write"]:
+        # 파이프라인 세션의 source 쓰기는 호출 주체로 판정한다(아래 pipeline.source_denial).
+        if role and role not in branch.RUNTIME_CONTRACT["capabilities"]["source_write"] and not _loader.load("pipeline").active():
             protocol.emit_denial(host, f"{role} 역할은 source를 변경할 수 없습니다. Git 변경 권한과 구현 역할은 별개입니다.")
             return
         if not contexts:
             protocol.emit_denial(host, "구조화된 쓰기의 변경 대상 파일 경로를 확인할 수 없습니다.")
             return
-        for target in dict.fromkeys(location for location, relative in contexts
-                                   if not relative.startswith(config.ARTIFACT_SESSIONS_PREFIXES)):
+        targets = list(dict.fromkeys(location for location, relative in contexts
+                                     if not relative.startswith(config.ARTIFACT_SESSIONS_PREFIXES)))
+        denial = _loader.load("pipeline").source_denial(event, root, host, targets)
+        if denial:
+            protocol.emit_denial(host, denial)
+            return
+        for target in targets:
             denial = approval.implementation_gate_denial(event, target, host)
             if denial:
                 protocol.emit_denial(host, denial)
                 return
     categories = paths.protected_operation_categories(command) if shell else ()
-    if categories and child_agent(event):
+    if categories and child_agent(event) and _loader.load("pipeline").active():
         protocol.emit_denial(host, CHILD_GIT_DENIAL)
         return
     if categories:
+        denial = _loader.load("pipeline").commit_denial(
+            root, [(item.root, item.arguments) for item in branch.git_invocations(root, command, cwd) or ()])
+        if denial:
+            protocol.emit_denial(host, denial)
+            return
         operation = operations.prepare_git(root, cwd, command, host, event)
         # PreToolUse cannot hold a lock across native execution. Route through
         # the bundled runner instead of claiming this check closes that race.

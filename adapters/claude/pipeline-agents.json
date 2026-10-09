@@ -1,0 +1,14 @@
+{
+  "planner": {
+    "tools": "Read, Grep, Glob, Bash, Write",
+    "extra": "## Claude Code 도구\n\n- `Write`는 자기 산출물(`plan.md`, `exploration.md`)을 작성할 때만 사용한다."
+  },
+  "watcher": {
+    "tools": "Read, Grep, Glob, Bash, Write",
+    "extra": "## Claude Code 도구\n\n- `Write`는 자기 세션의 리뷰 문서를 작성할 때만 사용한다."
+  },
+  "publisher": {
+    "tools": "Read, Grep, Glob, Bash, Edit, Write, Skill, mcp__TalkToFigma",
+    "extra": "## Claude Code의 Figma 연결\n\n- 중앙 launcher는 `orchest` 세션에도 TalkToFigma MCP를 제공한다. `project-ui` 스킬에는 `ui` 세션 기준으로 적혀 있지만 연결 확인·WebSocket·채널 참가 절차는 그대로 따른다.\n- 세션에 MCP가 연결되면 Figma 디자인을 읽어 UI 계약의 근거로 사용한다.\n- MCP 도구가 로드되지 않았거나 채널이 없으면 추측으로 화면을 만들지 않고 연결 단계와 필요한 채널을 부모에게 반환한다."
+  }
+}

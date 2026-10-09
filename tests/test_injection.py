@@ -135,8 +135,7 @@ class InjectionTests(unittest.TestCase):
         self.assertEqual(pattern[0], list(dict.fromkeys(("python3", sys.executable, str(Path(sys.executable).resolve())))))
         self.assertEqual(pattern[1:3], ["-I", str(launch.bundle_root / "policy/.agent-policy/runtime/git_operations.py")])
         self.assertEqual(set(pattern[3]), {"prepare", "review", "complete", "cleanup", "relation", "show",
-                                            "graph", "writes", "write-recovery", "execute", "recover",
-                                            "board", "board-set", "board-wait", "fingerprint"})
+                                            "graph", "writes", "write-recovery", "execute", "recover"})
         self.assertEqual(len(pattern), 4)
         cwd_rule = tree.body[1].value
         self.assertEqual(cwd_rule.func.id, "prefix_rule")
@@ -311,7 +310,7 @@ class InjectionTests(unittest.TestCase):
             for project_id in ("user-ui", "admin-ui"):
                 with self.subTest(project=project_id):
                     self.project = replace(self.project, id=project_id)
-                    for role in ("ui", "generate"):
+                    for role in ("ui", "orchest"):
                         launch = self.prepare("claude", role=role)
                         self.assertIn("--mcp-config", launch.command)
                         index = launch.command.index("--mcp-config")
@@ -335,8 +334,8 @@ class InjectionTests(unittest.TestCase):
             self.project = replace(self.project, id=project_id)
             for host in ("codex", "claude", "opencode"):
                 for role in ("logic", "ui", "orchest", "review", "generate"):
-                    if host == "claude" and role in {"ui", "generate"}:
-                        # generate 세션의 Publisher 하위 에이전트가 UI 세션과 같은 Figma 연결을 쓴다.
+                    if host == "claude" and role in {"ui", "orchest"}:
+                        # orchest 세션의 Publisher 하위 에이전트가 UI 세션과 같은 Figma 연결을 쓴다.
                         continue
                     with self.subTest(project=project_id, host=host, role=role):
                         launch = self.prepare(host, role=role)

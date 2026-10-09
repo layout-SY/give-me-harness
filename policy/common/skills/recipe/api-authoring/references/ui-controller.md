@@ -14,9 +14,6 @@ UI와 API를 연결하는 작업에서는 Logic이 UI 없는 controller를 구�
 | --- | --- | --- | --- |
 | Logic이 먼저 구현됨 | Logic의 controller | `controller <- UI` | Logic이 요청·응답 DTO와 확인된 요구를 근거로 controller의 데이터·상태·입력·동작 계약을 제공하고 UI가 해당 계약에 맞춘다. |
 | UI가 먼저 구현됨 | 기존 UI의 props·입력·callback 계약 | `controller -> UI` | UI가 제공한 계약이 controller 형태가 아니어도 Logic이 해당 계약에 맞춰 controller를 구현한다. UI에 controller 형태의 계약을 먼저 다시 만들도록 요구하지 않는다. |
-| 계약을 먼저 확정하고 병렬로 구현함 | 사용자가 승인한 계획의 연결 계약 | `controller -> 계약 <- UI` | UI와 controller가 같은 공개 타입(데이터·상태·callback)에 각자 맞춘다. 한쪽 구현을 근거로 계약을 바꾸지 않는다. |
-
-병렬 구현에서는 계획의 연결 계약이 유일한 기준이다. UI는 계약의 props·callback만 사용하고 Logic은 UI 없는 controller까지 구현하며, 둘 다 끝난 뒤 page·container에서 연결한다. 구현 중 계약과 실제 디자인·API가 다르면 그 부분을 보류하고 사용자 결정으로 계약을 갱신한 뒤 양쪽에 반영한다.
 
 어느 쪽이 먼저인지, 실제 사용 중인 계약이 무엇인지 불분명하면 사용자 요청·현재 코드·handoff를 확인하고 기준을 질문한다. 파일 생성 시점이나 역할 이름만으로 계약 제공자를 추정하지 않는다. 양쪽이 병렬로 시작하면 연결 계약과 적용 순서를 먼저 합의한다.
 

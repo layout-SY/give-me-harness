@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "roles": [
+    "orchest"
+  ],
+  "artifacts": {
+    "task_directory": "tasks"
+  },
+  "runner_actions": [
+    "board",
+    "board-set",
+    "board-wait",
+    "fingerprint",
+    "verdict"
+  ],
+  "work_board": {
+    "access": "coordination-record-only",
+    "stages": {
+      "planning": "계획 중",
+      "awaiting-creation": "생성 승인 대기",
+      "working": "작업 중",
+      "reviewing": "리뷰 중",
+      "awaiting-user-review": "사용자 검토 대기",
+      "committed": "커밋됨",
+      "merged": "병합됨",
+      "removed": "제거됨",
+      "cancelled": "취소"
+    },
+    "located_stages": [
+      "working",
+      "reviewing",
+      "awaiting-user-review",
+      "committed"
+    ],
+    "release_stages": [
+      "committed",
+      "merged",
+      "removed",
+      "cancelled"
+    ],
+    "closed_stages": [
+      "merged",
+      "removed",
+      "cancelled"
+    ],
+    "replan": "changed-files-only",
+    "plan_approval": "task-id-then-approval-phrase",
+    "child_git": "request-to-parent"
+  },
+  "pipeline": {
+    "implementers": [
+      "publisher",
+      "generator",
+      "refactorer"
+    ],
+    "reviewer": "watcher",
+    "child_identifying_hosts": [
+      "claude"
+    ],
+    "direct_edit_phrase": "직접 수정 승인",
+    "direct_edit_scope": "until-next-user-prompt",
+    "commit": "watcher-pass-for-current-fingerprint",
+    "documents": {
+      "source": [
+        "plan.md",
+        "exploration.md"
+      ],
+      "verdict": [
+        "implementation-log.md",
+        "review-log.md"
+      ],
+      "merge": [
+        "final-summary.md"
+      ]
+    }
+  }
+}

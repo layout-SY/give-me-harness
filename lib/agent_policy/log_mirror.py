@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Final
 
 from .core import CENTRAL_ROOT, PolicyError, ProjectConfig, atomic_write
-from .role_profiles import HOST_ARTIFACT_SESSION_ROOTS, RUNTIME_CONTRACT
+from .role_profiles import HOST_ARTIFACT_SESSION_ROOTS, ORCHESTRATION_CONTRACT, RUNTIME_CONTRACT
 
 ACTIVE_CHANNELS: Final = ("codex", "claude", "opencode", "unknown")
 _ARTIFACT_CONTRACT = RUNTIME_CONTRACT.get("artifacts")
@@ -22,7 +22,7 @@ COLLECTED_ARTIFACTS: Final = REQUIRED_ARTIFACTS + tuple(
 UNKNOWN_DIRECTORY: Final = str(
     _ARTIFACT_CONTRACT.get("unknown_directory", "unknown")
 )
-TASK_DIRECTORY: Final = str(_ARTIFACT_CONTRACT.get("task_directory", "tasks"))
+TASK_DIRECTORY: Final = str((ORCHESTRATION_CONTRACT.get("artifacts") or {}).get("task_directory", "tasks"))
 CHANNEL_SOURCES: Final = {
     channel: Path(relative)
     for channel, relative in HOST_ARTIFACT_SESSION_ROOTS.items()

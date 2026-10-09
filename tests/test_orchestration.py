@@ -44,7 +44,7 @@ class ChildContractTests(unittest.TestCase):
         lookup.start()
         self.addCleanup(lookup.stop)
 
-    def child_definitions(self, host: str, role: str = "generate") -> tuple[Path, Path, dict[str, str]]:
+    def child_definitions(self, host: str, role: str = "orchest") -> tuple[Path, Path, dict[str, str]]:
         launch = prepare_injection(self.project, host, role, build_root=self.root / "build",
             state_root=self.root / "state", source_codex_home=self.source_codex_home)
         directory, suffix, runtime = {
@@ -98,12 +98,8 @@ class ChildContractTests(unittest.TestCase):
                 with self.subTest(host=host, child=name):
                     for line in lines:
                         self.assertIn(line, texts[name])
-        adapters = Path(__file__).resolve().parents[1] / "adapters"
-        for path in adapters.glob("*/files/.*/agent*/*"):
-            with self.subTest(adapter=path.name):
-                self.assertIn("{{AGENT_CONTRACT:" + path.stem + "}}", path.read_text(encoding="utf-8"))
 
-    def test_generate_children_follow_existing_ui_and_logic_working_methods(self) -> None:
+    def test_orchest_children_follow_existing_ui_and_logic_working_methods(self) -> None:
         for host in ("codex", "claude", "opencode"):
             policy, _, texts = self.child_definitions(host)
             references = f"{policy}/.agent-policy/common/skills/policy/task-role-routing/references"
@@ -144,31 +140,70 @@ class ChildContractTests(unittest.TestCase):
                     self.assertIn("병렬 구간이라고 알린 경우에는 포맷과 검증 명령을 실행하지 않고", texts[name])
         rendered = render_project(load_project("user-ui"))
         skills = ".agent-policy/common/skills"
-        roles = rendered[f"{skills}/policy/task-role-routing/references/pipeline-roles.md"].decode()
+        roles = rendered[f"{skills}/policy/task-role-routing/references/orchestration.md"].decode()
         for expected in ("### 작업 항목 배정 기준", "### UI와 Logic의 병렬 구현과 최종 연결",
                          "생성·수정·삭제에 같은 기준을 적용한다", "두 에이전트의 수정 파일은 겹치지 않아야 한다"):
             self.assertIn(expected, roles)
-        self.assertIn("`controller -> 계약 <- UI`",
-                      rendered[f"{skills}/recipe/api-authoring/references/ui-controller.md"].decode())
-        template = rendered[".agent-policy/common/templates/plan.template.md"].decode()
-        self.assertIn("| 작업 항목 | 변경 종류(생성·수정·삭제) | 대상 경로 | 담당 역할·에이전트 |", template)
+        # 기존 세션이 함께 쓰는 문서에는 오케스트레이션 계약을 넣지 않는다.
+        self.assertNotIn("작업 항목 배정 기준",
+                         rendered[f"{skills}/policy/task-role-routing/references/pipeline-roles.md"].decode())
         self.assertIn("연결 계약이 확정되고 수정 파일이 겹치지 않는 Publisher와 Generator만 병렬로 호출한다",
                       rendered[f"{skills}/policy/task-role-routing/references/orchestration.md"].decode())
 
-    def test_role_sessions_keep_their_own_working_method_for_children(self) -> None:
-        # 매핑은 통합 구현 세션에만 적용한다. UI 세션의 Generator는 UI 방식으로 작업한다.
-        policy, _, texts = self.child_definitions("claude", "ui")
-        references = f"{policy}/.agent-policy/common/skills/policy/task-role-routing/references"
-        for name in ("publisher", "generator", "refactorer"):
-            with self.subTest(child=name):
-                self.assertIn("세션 role은 `ui`이고, 이 에이전트에는 `ui` 역할", texts[name])
-                self.assertIn(f"{references}/ui.md", texts[name])
-                self.assertNotIn("logic.md", texts[name])
-        _, _, logic = self.child_definitions("codex", "logic")
-        self.assertIn("`logic` 역할", logic["generator"])
+    def test_other_role_sessions_keep_their_original_prompts_and_children(self) -> None:
+        # 오케스트레이션 계약은 orchest 세션에만 적용한다. 기존 logic·ui·review·generate 세션은 그대로 둔다.
+        rendered = render_project(self.project)
+        source = {"claude": ".claude/agents/", "opencode": ".opencode/agent/", "codex": ".codex/agents/"}
+        for host in ("codex", "claude", "opencode"):
+            for role in ("logic", "ui", "review", "generate"):
+                with self.subTest(host=host, role=role):
+                    launch = prepare_injection(self.project, host, role, build_root=self.root / "build",
+                        state_root=self.root / "state", source_codex_home=self.source_codex_home)
+                    directory = {"claude": launch.bundle_root / "plugin/agents",
+                                 "opencode": launch.bundle_root / "opencode-home/agents",
+                                 "codex": Path(launch.environment.get("CODEX_HOME", "")) / "agents"}[host]
+                    installed = sorted(directory.iterdir())
+                    self.assertEqual({path.stem for path in installed}, set(role_profile(role).native_agents))
+                    for path in installed:
+                        self.assertEqual(path.read_bytes(), rendered[source[host] + path.name],
+                                         "기존 세션의 하위 에이전트 정의는 adapter 원본 그대로여야 합니다.")
+                        self.assertNotIn("세션 바인딩", path.read_text(encoding="utf-8"))
+                    prompt = launch.system_prompt.read_text(encoding="utf-8")
+                    for absent in ("파이프라인 계약", "현황판", "board-set", "verdict", "직접 수정 승인", "파이프라인 게이트"):
+                        self.assertNotIn(absent, prompt)
+                    # 오케스트레이션 계약은 그 세션의 번들에만 들어가고, 공통 runtime 계약은 그대로다.
+                    contracts = launch.bundle_root / "policy/.agent-policy/common/contracts"
+                    self.assertFalse((contracts / "orchestration-policy.json").exists())
+                    self.assertEqual((contracts / "runtime-policy.json").read_bytes(),
+                                     rendered[".agent-policy/common/contracts/runtime-policy.json"])
+                    self.assertNotIn(b"work_board", (contracts / "runtime-policy.json").read_bytes())
+        ui = prepare_injection(self.project, "claude", "ui", build_root=self.root / "build",
+            state_root=self.root / "state", source_codex_home=self.source_codex_home)
+        skill = (ui.bundle_root / "plugin/skills/project-ui/SKILL.md").read_text(encoding="utf-8")
+        self.assertNotIn("orchest", skill)
+        codex = prepare_injection(self.project, "codex", "logic", build_root=self.root / "build",
+            state_root=self.root / "state", source_codex_home=self.source_codex_home)
+        rule = (Path(codex.environment["CODEX_HOME"]) / "rules/asan-git-operations.rules").read_text(encoding="utf-8")
+        for action in ("board", "verdict", "fingerprint"):
+            self.assertNotIn(f'"{action}"', rule)
 
+    def test_orchest_bundle_carries_its_own_contract_and_runner_actions(self) -> None:
+        for host in ("codex", "claude", "opencode"):
+            launch = prepare_injection(self.project, host, "orchest", build_root=self.root / "build",
+                state_root=self.root / "state", source_codex_home=self.source_codex_home)
+            contract = json.loads((launch.bundle_root / "policy/.agent-policy/common/contracts/orchestration-policy.json").read_text())
+            self.assertEqual(contract["roles"], ["orchest"])
+            self.assertIn("이 절이 우선한다", launch.system_prompt.read_text(encoding="utf-8"))
+        rule = (Path(launch.environment.get("CODEX_HOME", "")) / "rules/asan-git-operations.rules")
+        codex = prepare_injection(self.project, "codex", "orchest", build_root=self.root / "build",
+            state_root=self.root / "state", source_codex_home=self.source_codex_home)
+        rule = (Path(codex.environment["CODEX_HOME"]) / "rules/asan-git-operations.rules").read_text(encoding="utf-8")
+        for action in ("board", "board-set", "board-wait", "fingerprint", "verdict", "execute"):
+            self.assertIn(f'"{action}"', rule)
+        self.assertEqual(role_profile("generate").native_agents, ("publisher", "generator", "refactorer", "watcher"))
+        self.assertEqual(role_profile("generate").summary, "승인된 handoff와 branch scope에 적힌 기본 역할을 구현한다.")
     def test_figma_mcp_reaches_only_the_claude_publisher(self) -> None:
-        claude = prepare_injection(self.project, "claude", "generate", build_root=self.root / "build",
+        claude = prepare_injection(self.project, "claude", "orchest", build_root=self.root / "build",
             state_root=self.root / "state", source_codex_home=self.source_codex_home)
         servers = json.loads((claude.bundle_root / "claude-mcp.json").read_text(encoding="utf-8"))["mcpServers"]
         self.assertEqual(set(servers), {"TalkToFigma"})
@@ -178,22 +213,24 @@ class ChildContractTests(unittest.TestCase):
         for name in ("generator", "refactorer", "planner", "watcher"):
             self.assertNotIn("TalkToFigma", (claude.bundle_root / f"plugin/agents/{name}.md").read_text(encoding="utf-8"))
         for host in ("codex", "opencode"):
-            launch = prepare_injection(self.project, host, "generate", build_root=self.root / "build",
+            launch = prepare_injection(self.project, host, "orchest", build_root=self.root / "build",
                 state_root=self.root / "state", source_codex_home=self.source_codex_home)
             self.assertNotIn("--mcp-config", launch.command)
             self.assertNotIn("Figma", self.child_definitions(host)[2]["publisher"])
+        generate = prepare_injection(self.project, "claude", "generate", build_root=self.root / "build",
+            state_root=self.root / "state", source_codex_home=self.source_codex_home)
+        self.assertNotIn("--mcp-config", generate.command)
 
-    def test_generate_session_offers_planning_and_implementation_children(self) -> None:
-        profile = role_profile("generate")
+    def test_orchest_session_offers_planning_implementation_and_review_children(self) -> None:
+        profile = role_profile("orchest")
         self.assertEqual(set(profile.native_agents), set(CHILDREN))
-        self.assertTrue(any(path.endswith("references/orchestration.md") for path in role_document_paths("claude", "generate")))
-        # 기획 전용 세션은 구현 자식을 받지 않고 source도 쓰지 않는다.
-        self.assertEqual(role_profile("orchest").native_agents, ("planner",))
-
+        documents = role_document_paths("claude", "orchest")
+        for name in ("orchestration.md", "logic.md", "ui.md"):
+            self.assertTrue(any(path.endswith("references/" + name) for path in documents), name)
     def test_parent_prompt_explains_board_commands_and_changed_only_replanning(self) -> None:
         for host in ("codex", "claude", "opencode"):
             with self.subTest(host=host):
-                launch = prepare_injection(self.project, host, "generate", build_root=self.root / "build",
+                launch = prepare_injection(self.project, host, "orchest", build_root=self.root / "build",
                     state_root=self.root / "state", source_codex_home=self.source_codex_home)
                 prompt = launch.system_prompt.read_text(encoding="utf-8")
                 for expected in ("git_operations.py board-set", "git_operations.py board-wait",
@@ -221,9 +258,36 @@ class ChildContractTests(unittest.TestCase):
         for name in ("CLAUDE.md", "AGENTS.md"):
             self.assertIn(rule, (central / name).read_text(encoding="utf-8"), name)
 
-    def test_claude_watcher_can_write_its_review_document(self) -> None:
-        rendered = render_project(load_project("user-ui"))[".claude/agents/watcher.md"].decode()
-        self.assertIn("tools: Read, Grep, Glob, Bash, Write\n", rendered)
+    def test_claude_pipeline_planner_and_watcher_can_write_their_documents(self) -> None:
+        launch = prepare_injection(self.project, "claude", "orchest", build_root=self.root / "build",
+            state_root=self.root / "state", source_codex_home=self.source_codex_home)
+        for name in ("watcher", "planner"):
+            text = (launch.bundle_root / f"plugin/agents/{name}.md").read_text(encoding="utf-8")
+            self.assertIn("tools: Read, Grep, Glob, Bash, Write\n", text)
+        # 기존 세션이 쓰는 adapter 원본의 도구 목록은 바꾸지 않는다.
+        rendered = render_project(load_project("user-ui"))
+        self.assertIn("tools: Read, Grep, Glob, Bash\n", rendered[".claude/agents/watcher.md"].decode())
+    def test_orchest_parent_prompt_mandates_the_pipeline_and_children_know_their_documents(self) -> None:
+        # 부모 프롬프트가 "기본 역할을 구현한다"고만 해서 부모가 하위 에이전트 없이 전부 구현했다.
+        for host in ("codex", "claude", "opencode"):
+            with self.subTest(host=host):
+                launch = prepare_injection(self.project, host, "orchest", build_root=self.root / "build",
+                    state_root=self.root / "state", source_codex_home=self.source_codex_home)
+                prompt = launch.system_prompt.read_text(encoding="utf-8")
+                for expected in ("## 파이프라인 계약 (필수)", "source를 직접 수정하지 않고 아래 순서대로 하위 에이전트를 호출한다",
+                                 "부모는 source를 직접 수정하지 않는다", "git_operations.py verdict --result PASS|FAIL",
+                                 "`직접 수정 승인`", "작은 수정이라도 하위 에이전트 호출을 생략하지 않는다",
+                                 "`plan.md`와 `exploration.md`", "`implementation-log.md`", "`review-log.md`", "`final-summary.md`"):
+                    self.assertIn(expected, prompt)
+                _, runtime, texts = self.child_definitions(host)
+                self.assertIn("`plan.md`와 `exploration.md`를 작성한다", texts["planner"])
+                for name in ("publisher", "generator", "refactorer"):
+                    self.assertIn("`implementation-log.md`에 변경 경로", texts[name])
+                self.assertIn(f"python3 -I {runtime}/git_operations.py verdict --result PASS|FAIL --start", texts["watcher"])
+                self.assertIn("구현 에이전트가 보고한 결과를 그대로 믿지 않는다", texts["watcher"])
+                logic = prepare_injection(self.project, host, "logic", build_root=self.root / "build",
+                    state_root=self.root / "state", source_codex_home=self.source_codex_home)
+                self.assertNotIn("## 파이프라인 계약", logic.system_prompt.read_text(encoding="utf-8"))
 
 
 class WorkBoardTests(unittest.TestCase):
@@ -250,7 +314,7 @@ class WorkBoardTests(unittest.TestCase):
                 target.write_bytes(content)
         self.state = self.base / "state"
         self.env = {key: value for key, value in os.environ.items() if not key.startswith("ASAN_")}
-        self.env.update(ASAN_AGENT_POLICY_STATE_ROOT=str(self.state), ASAN_AGENT_POLICY_ROLE="generate",
+        self.env.update(ASAN_AGENT_POLICY_STATE_ROOT=str(self.state), ASAN_AGENT_POLICY_ROLE="orchest",
                         ASAN_SESSION_DIR=".claude/logs/sessions/current")
         self.repository = self.state / "repositories" / hashlib.sha256(str(self.root / ".git").encode()).hexdigest()
         self.calls = 0
@@ -416,6 +480,7 @@ class WorkBoardTests(unittest.TestCase):
         plan = self.root / f".claude/logs/sessions/current/tasks/{name}/plan.md"
         plan.parent.mkdir(parents=True, exist_ok=True)
         plan.write_text(self.PLAN.format(goal=goal))
+        (plan.parent / "exploration.md").write_text("탐색 결과\n")
         self.runner("board-set", "--task", name, "--title", name, "--stage", "working", "--branch", name + "1",
                     "--plan", str(plan))
         for tool, args in (("Skill", {"skill": "policy"}), ("Read", {"file_path": str(tree / "src/app.ts")})):
@@ -429,8 +494,26 @@ class WorkBoardTests(unittest.TestCase):
         return subprocess.run([sys.executable, "-I", str(self.runtime / "managed_policy_guard.py"), mode, "claude"],
             input=json.dumps(event), cwd=self.root, env=self.env, text=True, capture_output=True)
 
-    def edit(self, tree: Path):
-        return self.tool("pre-tool", "Edit", {"file_path": str(tree / "src/app.ts"), "old_string": "1", "new_string": "2"}, cwd=tree)
+    GENERATOR = {"agent_id": "agent-g", "agent_type": "asan-agent-policy:generator"}
+    WATCHER = {"agent_id": "agent-w", "agent_type": "asan-agent-policy:watcher"}
+
+    def edit(self, tree: Path, **who):
+        # 통합 구현 세션의 구현은 하위 에이전트가 한다. 기본값은 Generator의 호출이다.
+        return self.tool("pre-tool", "Edit", {"file_path": str(tree / "src/app.ts"), "old_string": "1", "new_string": "2"},
+                         cwd=tree, **(who or self.GENERATOR))
+
+    def session_documents(self, *names: str) -> Path:
+        directory = self.root / ".claude/logs/sessions/current"
+        directory.mkdir(parents=True, exist_ok=True)
+        for name in names:
+            (directory / name).write_text(self.PLAN.format(goal="세션 작업") if name == "plan.md" else f"{name} 내용\n")
+        return directory
+
+    def ready(self, tree: Path | None = None) -> None:
+        self.session_documents("plan.md", "exploration.md")
+        for tool, args in (("Skill", {"skill": "policy"}), ("Read", {"file_path": str((tree or self.root) / "src/app.ts")})):
+            self.tool("post-tool", tool, args, cwd=tree, tool_response={"success": True})
+        self.event("user-prompt", prompt="진행")
 
     def test_each_task_plan_is_approved_only_by_its_task_id(self) -> None:
         first, plan = self.task("A")
@@ -464,14 +547,134 @@ class WorkBoardTests(unittest.TestCase):
         self.assertIn("작업 C: plan.md 승인 영역", self.edit(tree).stderr)
 
     def test_worktree_without_board_task_keeps_session_plan_approval(self) -> None:
-        plan = self.root / ".claude/logs/sessions/current/plan.md"
-        plan.parent.mkdir(parents=True, exist_ok=True)
-        plan.write_text(self.PLAN.format(goal="세션 작업"))
+        self.session_documents("plan.md", "exploration.md")
         for tool, args in (("Skill", {"skill": "policy"}), ("Read", {"file_path": str(self.root / "src/app.ts")})):
             self.tool("post-tool", tool, args, tool_response={"success": True})
         self.assertIn("사용자 구현 승인", self.edit(self.root).stderr)
         self.event("user-prompt", prompt="진행")
         self.assertEqual(self.edit(self.root).returncode, 0, self.edit(self.root).stderr)
+
+    def test_parent_cannot_implement_and_only_implementer_children_change_source(self) -> None:
+        # 실제 generate 세션에서 부모가 하위 에이전트를 한 번도 호출하지 않고 22개 파일을 직접 구현했다.
+        self.ready()
+        parent = self.tool("pre-tool", "Edit", {"file_path": str(self.root / "src/app.ts"), "old_string": "1", "new_string": "2"})
+        self.assertEqual(parent.returncode, 2)
+        self.assertIn("부모는 source를 직접 수정하지 않습니다", parent.stderr)
+        self.assertIn("직접 수정 승인", parent.stderr)
+        self.assertEqual(self.edit(self.root).returncode, 0, self.edit(self.root).stderr)
+        for kind in ("planner", "watcher"):
+            denied = self.edit(self.root, agent_id="agent-x", agent_type=f"asan-agent-policy:{kind}")
+            self.assertIn("하위 에이전트는 source를 수정하지 않습니다", denied.stderr)
+        # 부모와 Planner·Watcher도 자기 산출물은 쓴다.
+        artifact = self.tool("pre-tool", "Write", {"file_path": str(self.root / ".claude/logs/sessions/current/review-log.md"),
+                                                   "content": "PASS"}, **self.WATCHER)
+        self.assertEqual(artifact.returncode, 0, artifact.stderr)
+
+    def test_direct_edit_exception_lasts_until_the_next_user_input(self) -> None:
+        self.ready()
+        parent = lambda: self.tool("pre-tool", "Edit", {"file_path": str(self.root / "src/app.ts"), "old_string": "1", "new_string": "2"})
+        self.assertEqual(parent().returncode, 2)
+        self.assertIn("다음 사용자 입력에서 다시 막힙니다", self.event("user-prompt", prompt="직접 수정 승인").stdout)
+        self.assertEqual(parent().returncode, 0, parent().stderr)
+        self.assertEqual(parent().returncode, 0, "같은 응답 안에서는 여러 번 수정할 수 있습니다.")
+        self.event("user-prompt", prompt="이제 다음 작업 해줘")
+        self.assertIn("부모는 source를 직접 수정하지 않습니다", parent().stderr)
+
+    def test_source_change_needs_planner_documents(self) -> None:
+        directory = self.session_documents("plan.md")
+        for tool, args in (("Skill", {"skill": "policy"}), ("Read", {"file_path": str(self.root / "src/app.ts")})):
+            self.tool("post-tool", tool, args, tool_response={"success": True})
+        self.event("user-prompt", prompt="진행")
+        self.assertIn("Planner의 문서가 필요합니다: exploration.md", self.edit(self.root).stderr)
+        (directory / "exploration.md").write_text("  \n")
+        self.assertIn("exploration.md", self.edit(self.root).stderr, "빈 문서는 작성한 것으로 보지 않습니다.")
+        (directory / "exploration.md").write_text("탐색 결과\n")
+        self.assertEqual(self.edit(self.root).returncode, 0, self.edit(self.root).stderr)
+
+    def test_hosts_that_cannot_identify_children_keep_documents_but_not_the_parent_block(self) -> None:
+        directory = self.root / ".codex/logs/sessions/current"
+        directory.mkdir(parents=True)
+        (directory / "plan.md").write_text(self.PLAN.format(goal="세션 작업"))
+        env = dict(self.env, ASAN_SESSION_DIR=".codex/logs/sessions/current")
+        def codex(mode, name, data, **extra):
+            self.calls += 1
+            event = {"cwd": str(self.root), "session_id": "codex-test", "tool_call_id": str(self.calls),
+                     "tool_name": name, "tool_input": data, **extra}
+            return subprocess.run([sys.executable, "-I", str(self.runtime / "managed_policy_guard.py"), mode, "codex"],
+                input=json.dumps(event), cwd=self.root, env=env, text=True, capture_output=True)
+        for tool, args in (("Skill", {"skill": "policy"}), ("Read", {"file_path": str(self.root / "src/app.ts")})):
+            codex("post-tool", tool, args, tool_response={"success": True})
+        codex("user-prompt", "Bash", {}, prompt="Proceed")
+        change = {"file_path": str(self.root / "src/app.ts"), "old_string": "1", "new_string": "2"}
+        self.assertIn("exploration.md", codex("pre-tool", "Edit", change).stdout)
+        (directory / "exploration.md").write_text("탐색 결과\n")
+        allowed = codex("pre-tool", "Edit", change)
+        self.assertNotIn('"deny"', allowed.stdout, "Codex는 부모와 하위 에이전트를 구분할 수 없어 부모 차단을 적용하지 않습니다.")
+
+    def test_other_roles_are_not_pipeline_sessions(self) -> None:
+        self.env["ASAN_AGENT_POLICY_ROLE"] = "logic"
+        self.session_documents("plan.md")
+        for tool, args in (("Skill", {"skill": "policy"}), ("Read", {"file_path": str(self.root / "src/app.ts")})):
+            self.tool("post-tool", tool, args, tool_response={"success": True})
+        self.event("user-prompt", prompt="진행")
+        parent = self.tool("pre-tool", "Edit", {"file_path": str(self.root / "src/app.ts"), "old_string": "1", "new_string": "2"})
+        self.assertEqual(parent.returncode, 0, parent.stderr)
+        commit = self.event("pre-tool", "git commit -am work")
+        self.assertIn("보호 실행", commit.stderr)
+        # 하위 에이전트의 Git 제한과 현황판 안내도 오케스트레이션 세션에만 적용한다.
+        child = self.event("pre-tool", "git commit -am work", agent_id="agent-1", agent_type="generator")
+        self.assertIn("보호 실행", child.stderr)
+        self.runner("board-set", "--task", "A", "--title", "A", "--stage", "planning", "--scope", "src")
+        self.runner("board-set", "--task", "B", "--title", "B", "--stage", "planning", "--scope", "src", "--wait-for", "A")
+        self.assertNotIn("[WORK_BOARD]", self.event("session-start").stdout)
+        # 현황판·지문·판정 명령과 작업별 산출물 폴더도 오케스트레이션 세션 전용이다.
+        runner = f"python3 -I {self.runtime / 'git_operations.py'}"
+        for action in ("board", "fingerprint", "board-set --task A --stage planning"):
+            self.assertIn("오케스트레이션(orchest) 세션 전용 명령입니다", self.event("pre-tool", f"{runner} {action}").stderr)
+        self.assertEqual(self.event("pre-tool", f"{runner} graph").returncode, 0)
+        nested = self.tool("pre-tool", "Write", {"file_path": str(self.root / ".claude/logs/sessions/current/tasks/A/plan.md"), "content": "x"})
+        self.assertIn("unknown/", nested.stderr)
+
+    def test_commit_needs_a_watcher_pass_for_exactly_the_reviewed_content(self) -> None:
+        directory = self.session_documents("plan.md", "exploration.md")
+        runner = f"python3 -I {self.runtime / 'git_operations.py'}"
+        (self.root / "src/app.ts").write_text("export const value = 2;\n")
+        commit = lambda: self.event("pre-tool", "git commit -am work").stderr
+        self.assertIn("Watcher의 PASS 판정이 필요합니다", commit())
+        start = self.runner("fingerprint")["fingerprint"]
+        verdict = lambda result, who: self.event("pre-tool", f"{runner} verdict --result {result} --start {start}", **who)
+        self.assertIn("Watcher 하위 에이전트만 기록합니다", verdict("PASS", {}).stderr)
+        self.assertIn("Watcher 하위 에이전트만 기록합니다", verdict("PASS", self.GENERATOR).stderr)
+        self.assertIn("implementation-log.md, review-log.md", verdict("PASS", self.WATCHER).stderr)
+        self.session_documents("implementation-log.md", "review-log.md")
+        self.assertEqual(verdict("FAIL", self.WATCHER).returncode, 0)
+        self.runner("verdict", "--result", "FAIL", "--start", start)
+        self.assertIn("마지막 판정은 FAIL입니다", commit())
+        self.assertEqual(self.runner("verdict", "--result", "PASS", "--start", start)["verdict"]["result"], "PASS")
+        self.assertIn("보호 실행", commit())
+        # stage는 검토한 내용을 바꾸지 않는다. 세션 문서를 더 써도 마찬가지다.
+        self.git("add", "--", "src/app.ts")
+        (directory / "final-summary.md").write_text("요약\n")
+        self.assertIn("보호 실행", commit())
+        # 검토 뒤의 수정·포맷은 다시 검토받아야 한다.
+        (self.root / "src/app.ts").write_text("export const value = 3;\n")
+        self.assertIn("Watcher가 검토한 뒤 내용이 바뀌었습니다", commit())
+        self.assertIn("검토 시작 지문과 현재 지문이 다릅니다", self.runner("verdict", "--result", "PASS", "--start", start, ok=False))
+        # 세션 기록만 커밋할 때는 검토할 source가 없다.
+        self.git("checkout", "-q", "HEAD", "--", "src/app.ts")
+        self.assertNotIn("Watcher", self.event("pre-tool", "git commit -m logs -- .claude").stderr)
+
+    def test_merge_preparation_needs_the_final_summary(self) -> None:
+        self.branch("A1")
+        self.session_documents("plan.md")
+        reviews = self.repository / "branch-relations/v1/reviews"
+        reviews.mkdir(parents=True)
+        (reviews / ("a" * 32 + ".json")).write_text(json.dumps({"id": "a" * 32, "source": "A1", "target": "sy-main"}))
+        runner = f"python3 -I {self.runtime / 'git_operations.py'}"
+        complete = lambda: self.event("pre-tool", f"{runner} complete --review {'a' * 32} --report-json {{}}")
+        self.assertIn("작업 결과 문서가 필요합니다: final-summary.md", complete().stderr)
+        self.session_documents("final-summary.md")
+        self.assertEqual(complete().returncode, 0, complete().stderr)
 
     def test_task_artifacts_have_their_own_folder_and_are_mirrored(self) -> None:
         base = ".claude/logs/sessions/current"
@@ -506,7 +709,7 @@ class WorkBoardTests(unittest.TestCase):
         # 새 세션(다른 host session)은 이전 세션의 계획 승인을 승계하지 않는다.
         self.calls += 1
         fresh = subprocess.run([sys.executable, "-I", str(self.runtime / "managed_policy_guard.py"), "pre-tool", "claude"],
-            input=json.dumps({"cwd": str(tree), "session_id": "claude-new", "tool_use_id": str(self.calls), "tool_name": "Edit",
+            input=json.dumps({"cwd": str(tree), "session_id": "claude-new", "tool_use_id": str(self.calls), "tool_name": "Edit", **self.GENERATOR,
                               "tool_input": {"file_path": str(tree / "src/app.ts"), "old_string": "1", "new_string": "2"}}),
             cwd=self.root, env=self.env, text=True, capture_output=True)
         self.assertIn("작업 A의 계획 승인", fresh.stderr)

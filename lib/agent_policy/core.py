@@ -108,12 +108,12 @@ def _agent_contracts() -> tuple[tuple[str, str], ...]:
         text = source.read_text(encoding="utf-8").strip() + "\n\n" + core
         if '"""' in text or "\\" in text:
             raise PolicyError(f"하위 에이전트 계약은 TOML 여러 줄 문자열에 그대로 넣을 수 있어야 합니다: {source.name}")
-        contracts.append(("{{AGENT_CONTRACT:" + source.stem + "}}", text))
+        contracts.append((source.stem, text))
     return tuple(contracts)
 
 
 def agent_contracts() -> dict[str, str]:
-    """역할 본문과 공통 계약의 단일 원본. 호스트 adapter는 표식만 가진다."""
+    """파이프라인 세션의 하위 에이전트 본문: 역할별 원본과 공통 계약. host와 무관하게 같다."""
     return dict(_agent_contracts())
 
 
@@ -123,8 +123,6 @@ def replacements(project: ProjectConfig) -> dict[str, str]:
     if missing:
         raise PolicyError(f"{project.id} 명령이 누락되었습니다: {', '.join(missing)}")
     return {
-        # 다른 표식보다 먼저 치환해 계약 본문 안의 표식도 함께 렌더한다.
-        **agent_contracts(),
         "{{PROJECT_ID}}": project.id,
         "{{PROJECT_NAME}}": project.name,
         "{{PROJECT_PATH}}": str(project.path),
@@ -374,8 +372,6 @@ def audit_project(project: ProjectConfig) -> tuple[str, ...]:
         if any(marker in text for marker in legacy_distribution_markers):
             issues.append(f"forbidden legacy distribution header: {relative}")
         unresolved = (
-            "{{AGENT_CONTRACT:",
-            "{{CHILD_AGENT_CORE}}",
             "{{PROJECT_",
             "{{WORKTREE_ROOT}}",
             "{{CENTRAL_ROOT}}",

@@ -6,6 +6,7 @@ actual repository before they are stored.
 """
 from __future__ import annotations
 
+import json
 import os
 import posixpath
 import re
@@ -21,11 +22,25 @@ relations = _loader.load("branch_relations")
 config = relations.config
 git, state = relations.git, relations.state
 
-CONTRACT = git.RUNTIME_CONTRACT["work_board"]
-STAGES: dict[str, str] = dict(CONTRACT["stages"])
-RELEASE = frozenset(CONTRACT["release_stages"])
-CLOSED = frozenset(CONTRACT["closed_stages"])
-LOCATED = frozenset(CONTRACT["located_stages"])
+
+
+def _orchestration_contract() -> dict:
+    """오케스트레이션 세션의 번들에만 들어가는 계약. 없으면 이 세션은 대상이 아니다."""
+    path = git._runtime_contract_path().with_name("orchestration-policy.json")
+    if not path.is_file():
+        return {}
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("version") != 1:
+        raise RuntimeError(f"지원하지 않는 오케스트레이션 계약입니다: {path}")
+    return value
+
+
+ORCHESTRATION = _orchestration_contract()
+CONTRACT = ORCHESTRATION.get("work_board") or {}
+STAGES: dict[str, str] = dict(CONTRACT.get("stages") or {})
+RELEASE = frozenset(CONTRACT.get("release_stages") or ())
+CLOSED = frozenset(CONTRACT.get("closed_stages") or ())
+LOCATED = frozenset(CONTRACT.get("located_stages") or ())
 TASK_ID = re.compile(r"[0-9A-Za-z가-힣][0-9A-Za-z가-힣._-]{0,79}")
 NOTE = "현황판은 조율 기록입니다. 접근 권한·쓰기 잠금·소유권을 만들지 않으며 실제 Git 상태로 다시 확인하세요."
 RESUME = ("다른 세션이 기록한 미완료 작업입니다. 실제 worktree·diff와 작업의 plan.md를 확인하고 사용자에게 확인받은 뒤 "
@@ -361,13 +376,16 @@ def check(root: Path, cwd: Path, values) -> dict:
 
 
 def fingerprint(root: Path, cwd: Path) -> dict:
-    """Review identity of a worktree: HEAD plus staged, unstaged and untracked content."""
+    """Review identity of a worktree: HEAD plus the content of every changed or untracked file.
+
+    Staging does not change it, so a verdict can be compared right before the commit.
+    """
     tree = _loader.load("tool_paths").git_top_level(cwd)
     if tree is None or not git.same_git_repository(root, tree):
         raise RuntimeError("현재 프로젝트의 worktree에서 실행하세요.")
     changes, head = relations.content_snapshot(tree), git.head(tree)
     return {"worktree": str(tree), "branch": git.current_branch(tree), "head": head,
-            "changed": sorted(changes["files"]), "fingerprint": relations.digest({"head": head, "changes": changes})}
+            "changed": sorted(changes["files"]), "fingerprint": relations.digest({"head": head, "files": changes["files"]})}
 
 
 def context(root: Path, identities, *, once: bool = False) -> str:

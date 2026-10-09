@@ -18,6 +18,7 @@ from typing import Any, Final, Mapping
 
 from . import role_profiles as role_profiles_module
 from .core import (
+    agent_contracts,
     CENTRAL_ROOT,
     HOST_COMMANDS,
     PolicyError,
@@ -31,6 +32,8 @@ from .core import (
 )
 from .role_profiles import (
     ARTIFACT_RESPONSIBILITIES,
+    ORCHESTRATION_CONTRACT,
+    PIPELINE_ROLES,
     artifact_session_root,
     child_role,
     common_skill_selected,
@@ -278,7 +281,6 @@ def _bundle_digest(
 GIT_OPERATION_ACTIONS: Final = (
     "prepare", "review", "complete", "cleanup", "relation", "show", "graph",
     "writes", "write-recovery", "execute", "recover",
-    "board", "board-set", "board-wait", "fingerprint",
 )
 
 
@@ -291,6 +293,31 @@ def _runtime_root(host: str, policy_root: Path) -> Path:
     }[host]
 
 
+CLAUDE_PIPELINE_AGENTS: Final = CENTRAL_ROOT / "adapters/claude/pipeline-agents.json"
+
+
+def _pipeline_agent(relative: str, content: str, host: str) -> str:
+    """adapter의 형식(이름·설명)에 공통 원본의 역할 본문과 계약을 넣은 파이프라인용 정의."""
+    name = Path(relative).stem
+    body = agent_contracts()[name]
+    if relative.endswith(".toml"):
+        legacy = tomllib.loads(content)
+        return "".join(f"{key} = {json.dumps(legacy[key], ensure_ascii=False)}\n" for key in ("name", "description")) \
+            + 'developer_instructions = """\n' + body + '"""\n'
+    front = re.match(r"---\n.*?\n---\n", content, re.S)
+    if front is None:
+        raise PolicyError(f"하위 에이전트 정의의 frontmatter를 확인할 수 없습니다: {relative}")
+    header, extra = front.group(0), ""
+    if host == "claude":
+        override = read_json(CLAUDE_PIPELINE_AGENTS).get(name) or {}
+        if override.get("tools"):
+            header, count = re.subn(r"(?m)^tools: .*$", "tools: " + override["tools"], header)
+            if count != 1:
+                raise PolicyError(f"Claude 하위 에이전트의 tools 줄을 확인할 수 없습니다: {relative}")
+        extra = "\n\n" + override["extra"] if override.get("extra") else ""
+    return header + "\n" + body + extra + "\n"
+
+
 def _bind_agent(
     relative: str,
     rendered: Mapping[str, bytes],
@@ -298,15 +325,15 @@ def _bind_agent(
     role: str | None,
     policy_root: Path,
 ) -> bytes:
-    """host가 읽는 자식 정의 사본에만 세션 role과 번들 경로를 바인딩한다.
+    """파이프라인 세션에서만 host가 읽는 자식 정의를 계약 본문과 번들 경로로 만든다.
 
-    하위 에이전트는 부모의 inject 서문을 받지 않는다. 번들의 정책 스냅샷은
+    그 밖의 세션은 adapter의 정의를 그대로 설치한다. 번들의 정책 스냅샷은 항상
     렌더 결과 그대로 두어 현재 정책과의 비교가 유지되게 한다.
     """
-    binding = _session_binding(role, Path(relative).stem, rendered) if role else ""
-    text = rendered[relative].decode("utf-8").replace("{{SESSION_BINDING}}", binding).rstrip() + "\n"
-    if relative.endswith(".toml"):
-        text = text.rstrip().removesuffix('"""').rstrip() + '"""\n'
+    if role not in PIPELINE_ROLES:
+        return rendered[relative]
+    text = _pipeline_agent(relative, rendered[relative].decode("utf-8"), host)
+    text = text.replace("{{SESSION_BINDING}}", _session_binding(role, Path(relative).stem, rendered))
     text = text.replace(".agent-policy/runtime/", f"{_runtime_root(host, policy_root)}/")
     text = text.replace(".agent-policy/common/", f"{policy_root}/.agent-policy/common/")
     return text.encode("utf-8")
@@ -345,6 +372,31 @@ def _injection_preamble(
     formatter_root = _runtime_root(host, policy_root)
     formatter_command = shlex.join(["python3", "-I", str(formatter_root / "formatting.py"), "apply"])
     runner = shlex.join(["python3", "-I", str(formatter_root / "git_operations.py")])
+    pipeline = ORCHESTRATION_CONTRACT.get("pipeline") or {}
+    pipeline_contract = "" if role not in PIPELINE_ROLES else f"""## 파이프라인 계약 (필수)
+
+아래 공통 정책 1절의 "guard가 orchest의 source 변경을 차단한다"는 설명 대신 이 절이 우선한다. 이 세션에서는 부모의 source 쓰기를 막고 구현 하위 에이전트의 쓰기를 허용한다.
+
+상세 계약은 `.agent-policy/common/skills/policy/task-role-routing/references/orchestration.md`에 있다. 이 세션의 부모는 조율만 한다. source를 직접 수정하지 않고 아래 순서대로 하위 에이전트를 호출한다. 한 단계의 문서가 없으면 다음 단계가 훅에서 막힌다. 문서 위치는 세션 산출물 폴더이며, 현황판에 계획을 등록한 작업은 `tasks/<작업 ID>/`다.
+
+1. **Planner**를 호출해 `plan.md`와 `exploration.md`를 작성하게 한다. 계획에는 작업 항목별 변경 종류와 담당 하위 에이전트가 있어야 한다. 사용자 승인을 받는다.
+2. 계획의 배정대로 **Publisher**(UI·스타일), **Generator**(로직), **Refactorer**(로직의 구조 정리)를 호출한다. 각 에이전트는 `implementation-log.md`에 변경과 검증을 기록한다.
+3. 포맷과 lint·test·build를 마친 뒤 **Watcher**를 호출한다. Watcher는 `review-log.md`를 작성하고 `{runner} verdict --result PASS|FAIL --start <시작 지문>`으로 판정을 기록한다. FAIL이면 수정 요구를 해당 구현 에이전트에 전달하고 다시 검토받는다.
+4. 미커밋 상태로 사용자에게 알린다. 커밋은 현재 내용과 일치하는 Watcher PASS가 있어야 준비된다. 검토 뒤에 포맷하거나 수정하면 다시 검토받는다.
+5. 병합을 준비하기 전에 부모가 `final-summary.md`를 작성한다.
+
+- 호스트가 하위 에이전트 호출을 식별하면({', '.join(pipeline.get('child_identifying_hosts', ()))}) 부모와 Planner·Watcher의 source 쓰기를 guard가 거부한다. 그렇지 않은 호스트에서도 같은 계약을 지킨다.
+- 사용자가 `{pipeline.get('direct_edit_phrase', '')}`을 입력한 경우에만 그 응답 동안 부모가 source를 직접 수정할 수 있다. 다음 사용자 입력에서 다시 막힌다. 이 예외를 먼저 요청하거나 전제로 계획하지 않는다.
+- 작은 수정이라도 하위 에이전트 호출을 생략하지 않는다. 생략이 필요해 보이면 이유와 방안을 사용자에게 제시하고 선택을 받는다.
+
+### 현황판과 하위 에이전트 호출
+
+- 작업 현황판(브랜치·워크트리 관계, 병합 순서, 작업 단계) 조회: `{runner} board`. 공용 항목의 영향 범위 확인: `{runner} board --check <경로>`. 단계·범위 갱신: `{runner} board-set --task <작업 ID> --stage <단계>`. 선행 작업 대기: `{runner} board-wait --task <작업 ID>`. 검토 지문: `{runner} fingerprint`. 현황판은 쓰기 권한이나 소유권을 만들지 않는다.
+- 선행 작업이 커밋되어 대기가 풀리면 안내된 변경 파일만 다시 조사해 계획을 갱신한다. 이미 조사한 내용은 다시 조사하지 않으며 구현은 갱신한 계획의 승인 후 진행한다.
+- 여러 작업을 함께 진행하면 작업마다 `{artifact_root}/<세션>/tasks/<작업 ID>/plan.md`를 작성해 `{runner} board-set --task <작업 ID> --plan <경로>`로 등록한다. 등록된 worktree의 source 변경은 사용자의 `<작업 ID> 진행` 승인이 있어야 하며, 일반 `진행`은 작업 계획을 승인하지 않는다. 승인을 요청할 때 작업 ID와 계획을 구분해 제시한다.
+- 하위 에이전트를 호출할 때 작업 ID, 작업 worktree 절대 경로, 작업 범위, 확정된 결정과 산출물 위치를 지시에 포함한다. 하위 에이전트가 반환한 미확정 질문은 사용자에게 묻고 답변을 해당 작업자에게 전달한다. Git 변경은 하위 에이전트가 요청만 반환하고 부모가 사용자 승인 후 실행한다.
+
+"""
     return f"""# 중앙 정책 inject 실행 컨텍스트
 
 이 세션은 소비자 저장소에 배포된 정책 파일이 아니라 중앙 정책 번들을 사용한다.
@@ -359,15 +411,11 @@ def _injection_preamble(
 - 아래에 바인딩된 정책 상대 경로는 읽을 때 정책 스냅샷 아래에서 해석한다.
 - 애플리케이션 경로와 `{artifact_root}/**` 산출물 경로는 해당 도구의 실제 작업 cwd에서 해석한다.
 - 페이지·기능 코드 작업 완료 시 실제 workdir에서 실행할 포맷 트리거: `{formatter_command}`. 프로젝트 설정을 사용해 수정한 파일만 자동 편집한다. 포맷 후 lint·test·build를 실행한다. 해당 검증 명령의 PreToolUse에서도 필요한 포맷을 자동 수행한다.
-- 작업 현황판(브랜치·워크트리 관계, 병합 순서, 작업 단계) 조회: `{runner} board`. 공용 항목의 영향 범위 확인: `{runner} board --check <경로>`. 단계·범위 갱신: `{runner} board-set --task <작업 ID> --stage <단계>`. 선행 작업 대기: `{runner} board-wait --task <작업 ID>`. 검토 지문: `{runner} fingerprint`. 현황판은 쓰기 권한이나 소유권을 만들지 않는다.
-- 선행 작업이 커밋되어 대기가 풀리면 안내된 변경 파일만 다시 조사해 계획을 갱신한다. 이미 조사한 내용은 다시 조사하지 않으며 구현은 갱신한 계획의 승인 후 진행한다.
-- 여러 작업을 함께 진행하면 작업마다 `{artifact_root}/<세션>/tasks/<작업 ID>/plan.md`를 작성해 `{runner} board-set --task <작업 ID> --plan <경로>`로 등록한다. 등록된 worktree의 source 변경은 사용자의 `<작업 ID> 진행` 승인이 있어야 하며, 일반 `진행`은 작업 계획을 승인하지 않는다. 승인을 요청할 때 작업 ID와 계획을 구분해 제시한다.
-- 하위 에이전트를 호출할 때 작업 ID, 작업 worktree 절대 경로, 작업 범위, 확정된 결정과 산출물 위치를 지시에 포함한다. 하위 에이전트가 반환한 미확정 질문은 사용자에게 묻고 답변을 해당 작업자에게 전달한다. Git 변경은 하위 에이전트가 요청만 반환하고 부모가 사용자 승인 후 실행한다.
 - 정책 스냅샷과 중앙 저장소는 세션에서 직접 수정하지 않는다. 정책 변경은 중앙 저장소의 승인 절차를 따른다.
 - 소비자 저장소의 기존 `AGENTS.md`, `CLAUDE.md`, `.codex/**`, `.claude/**`,
   `.opencode/**`는 이 inject 세션의 정책 원본이 아니다.
 
-## Role 계약
+{pipeline_contract}## Role 계약
 
 `--role {role}`은 이 inject 세션의 역할 확인을 대신한다. 범위 안의 새 요청마다 같은 역할을 다시 묻지 않는다.
 다른 역할이 필요하면 현재 역할을 확장하지 말고 사용자에게 이유를 보고한 뒤 새 `--role` 세션으로 시작한다.
@@ -415,6 +463,9 @@ def _role_selected_rendered(
         include = relative.startswith(".agent-policy/runtime/")
         include = include or relative == ".agent-policy/common/AGENT_POLICY.md"
         include = include or relative.startswith(".agent-policy/common/contracts/")
+        if relative == ".agent-policy/common/contracts/orchestration-policy.json":
+            # 이 계약이 번들에 있어야 guard의 오케스트레이션 게이트가 켜진다.
+            include = role in PIPELINE_ROLES
         include = include or relative.startswith(".agent-policy/common/templates/")
         if host == "claude":
             include = include or relative == "CLAUDE.md"
@@ -442,7 +493,8 @@ def _role_selected_rendered(
             include = include or _agent_selected(
                 relative, ".claude/agents/", profile.native_agents
             )
-            if role in {"ui", "generate"}:
+            if role in {"ui", "generate"} or role in PIPELINE_ROLES:
+                # 파이프라인 세션의 Publisher는 UI 세션과 같은 Figma 연결 절차를 쓴다.
                 include = include or relative.startswith(".claude/skills/project-ui/")
 
         elif host == "opencode":
@@ -937,7 +989,9 @@ def _prepare_codex_home(
     # execute/recover still enforce the existing operation consent and scope.
     runner = runtime.with_name("git_operations.py")
     pattern = [list(dict.fromkeys(("python3", sys.executable, str(Path(sys.executable).resolve())))),
-               "-I", str(runner), list(GIT_OPERATION_ACTIONS)]
+               "-I", str(runner),
+               [*GIT_OPERATION_ACTIONS,
+                *(ORCHESTRATION_CONTRACT.get("runner_actions", ()) if role in PIPELINE_ROLES else ())]]
     files["rules/asan-git-operations.rules"] = (
         f'prefix_rule(pattern={json.dumps(pattern)}, decision="allow")\n'
         # command() includes a literal cwd prefix. Codex requires every segment

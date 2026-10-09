@@ -110,20 +110,24 @@ bin/agent-policy writes --project admin-ui --assignment <assignment-id> --reconc
 
 - role이 없는 직접 실행은 지원하지 않습니다. 중앙 launcher에서 선택한 role은 이미 확인된 세션 계약으로 사용합니다.
 - Claude Code, Codex, OpenCode 어느 호스트도 특정 역할을 기본 소유하지 않습니다. inject 세션에서 역할을 바꾸려면 해당 `--role`로 새 세션을 시작합니다.
-- inject profile은 `logic`(데이터·상태·API), `ui`(화면·스타일·접근성), `orchest`(조사·계획·승인), `review`(변경 없는 검토), `generate`(승인된 handoff·branch scope 구현)입니다. 이 값은 session 문서 바인딩용이며 branch task의 반복 가능한 역할 metadata와 자동으로 동일시하지 않습니다.
+- inject profile은 `logic`(데이터·상태·API), `ui`(화면·스타일·접근성), `orchest`(조사·계획부터 구현·검토까지 하위 에이전트 파이프라인 조율), `review`(변경 없는 검토), `generate`(승인된 handoff·branch scope 구현)입니다. 이 값은 session 문서 바인딩용이며 branch task의 반복 가능한 역할 metadata와 자동으로 동일시하지 않습니다.
 - handoff의 `next_role`은 다음 역할의 제안이며 자동 권한이 아닙니다. role이 없는 세션은 사용자에게 다시 확인하고, inject 세션은 선택된 role과 다르면 올바른 role로 재시작합니다.
 - 모든 host·role이 사용자 승인 후 Git을 실행할 수 있습니다. Git lock은 실제 실행 구간에만 유지하며 세션 소유권으로 사용하지 않습니다.
 - `owner`는 plan·final-summary, `contributor`는 handoff를 기록합니다. 산출물 책임은 Git 실행 권한이 아닙니다. 다른 host·세션의 기록은 읽기 전용이고 보조 문서는 자기 세션의 `unknown/`에 둡니다.
 
 ## 오케스트레이션과 작업 현황판
 
-- `generate` 세션은 Planner·Publisher·Generator·Refactorer·Watcher를 하위 에이전트로 호출합니다. 하위 에이전트의 정의에는 공통 계약(미확정 결정은 부모에게 반환, Git 변경은 요청만 반환, 재조사는 변경분만)이 직접 들어가고 정책·실행기 경로는 번들 절대 경로로 바인딩됩니다.
-- 역할 본문은 `policy/common/agents/`의 단일 원본에서 3개 호스트로 렌더합니다. `generate` 세션에서 Publisher는 UI 세션의 작업 방식을, Generator와 Refactorer는 Logic 세션의 작업 방식을 적용하며, 적용할 역할 계약과 스킬 경로가 각 정의의 세션 바인딩에 들어갑니다. Figma MCP는 Claude Code의 `ui`·`generate` 세션에만 주입되고 `generate`에서는 Publisher가 사용합니다.
-- 하위 에이전트의 Git 변경은 Claude Code에서만 guard가 거부합니다. Codex와 OpenCode는 도구 실행 전 이벤트로 부모와 자식을 구분할 수 없어 프롬프트 계약으로 운영합니다.
+오케스트레이션은 `--role orchest`로 시작합니다. 아래 내용은 `orchest` 세션에만 적용됩니다. 계약 값은 `orchest` 번들에만 들어가는 `policy/common/contracts/orchestration-policy.json`에 있고, 현황판·지문·판정 명령과 `tasks/<작업 ID>/` 산출물은 다른 세션에서 guard가 거부합니다. `logic`·`ui`·`review`·`generate` 세션의 하위 에이전트 정의, MCP와 공통 runtime 계약은 바꾸지 않습니다.
+
+- `orchest` 세션은 조사·계획부터 구현·검토·완료까지 한 세션에서 파이프라인으로 진행합니다. 부모는 source를 직접 수정하지 않고 Planner → Publisher·Generator·Refactorer → Watcher 순서로 하위 에이전트를 호출합니다.
+- 하위 에이전트 정의는 `policy/common/agents/`의 역할 본문과 공통 계약(미확정 결정은 부모에게 반환, Git 변경은 요청만 반환, 재조사는 변경분만)에서 만들어 3개 호스트에 같은 내용으로 설치합니다. Publisher는 UI 세션의 작업 방식을, Generator와 Refactorer는 Logic 세션의 작업 방식을 적용하며 적용할 역할 계약과 스킬 경로가 각 정의에 들어갑니다.
+- 단계마다 문서가 있어야 다음 단계가 진행됩니다. source 수정 전 `plan.md`·`exploration.md`, Watcher 판정 기록 전 `implementation-log.md`·`review-log.md`, 병합 준비 전 `final-summary.md`입니다. 커밋은 현재 내용과 일치하는 Watcher PASS 기록(`git_operations.py verdict`)이 있어야 준비됩니다.
+- Claude Code에서는 부모와 Planner·Watcher의 source 쓰기, 하위 에이전트의 Git 변경을 guard가 거부합니다. 사용자가 `직접 수정 승인`을 입력하면 그 응답 동안만 부모가 직접 수정할 수 있습니다. Codex와 OpenCode는 도구 실행 전 이벤트로 부모와 하위를 구분할 수 없어 이 부분을 프롬프트 계약으로 운영하며, 문서 확인과 커밋 전 PASS 확인은 적용됩니다.
+- 계획의 작업 항목마다 변경 종류와 담당 하위 에이전트를 지정합니다. 화면 요구가 있으면 연결 계약을 먼저 확정하고 Publisher와 Generator가 병렬로 구현한 뒤 Generator가 최종 연결합니다.
 - 작업 현황판은 `git_operations.py board`로 조회하고 `board-set`으로 단계·범위를 기록합니다. 브랜치·워크트리 관계와 병합 순서를 함께 보여 주며 쓰기 잠금이나 소유권을 만들지 않습니다. 공용 항목을 바꾸기 전에는 `board --check <경로>`로 영향받는 작업과 다른 worktree의 참조 후보를 확인합니다.
 - 범위가 겹쳐 기다리는 작업은 선행 작업이 `커밋됨`이 되면 풀립니다. `board-wait`와 세션 시작·사용자 입력 훅이 접점 경로에서 변경된 파일을 알려 주며, 그 파일만 다시 조사해 계획을 갱신합니다.
-- 한 세션이 여러 작업을 진행하면 작업마다 `tasks/<작업 ID>/plan.md`를 현황판에 등록합니다. 그 worktree의 source 변경은 `<작업 ID> 진행`으로 승인한 작업 계획으로 판정하며 일반 `진행`은 작업 계획을 승인하지 않습니다. 새 세션은 `board`의 `resumable`에서 미완료 작업을 찾아 이어가고 승인은 작업 ID로 다시 받습니다.
-- Watcher는 검토 시작과 종료에 `git_operations.py fingerprint`를 기록해 검토 중 대상이 바뀌었는지 확인합니다.
+- 한 세션이 여러 작업을 진행하면 작업마다 `tasks/<작업 ID>/plan.md`를 현황판에 등록하고 `<작업 ID> 진행`으로 승인받습니다. 새 세션은 `board`의 `resumable`에서 미완료 작업을 찾아 이어갑니다.
+- TalkToFigma MCP는 Claude Code의 `ui`·`orchest` 세션에 주입되며 `orchest`에서는 Publisher가 사용합니다.
 
 단계, 명령 예시, 호스트별 보장 범위와 남은 작업은 [오케스트레이션과 작업 현황판](docs/orchestration-board-2026-10-09.md)에 기록합니다.
 

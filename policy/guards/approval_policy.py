@@ -326,6 +326,8 @@ def plan_fingerprint(plan: Path | None) -> tuple[str, str]:
 def board_task(root: Path) -> dict[str, Any] | None:
     """이 worktree의 source 변경을 관장하는 현황판 작업. 없으면 세션 계획을 쓴다."""
     try:
+        if not load_runtime_module("pipeline").active():
+            return None
         return load_runtime_module("work_board").task_for(root, root)
     except Exception:
         return None
@@ -356,7 +358,7 @@ TASK_CANCEL_PHRASES = frozenset({"구현 승인 취소", "구현 중단", "cance
 def task_prompt(prompt: str, root: Path) -> tuple[list[dict[str, Any]], str]:
     """`<작업 ID> [<작업 ID> ...] 진행` 형식만 작업 승인으로 읽는다."""
     try:
-        tasks = load_runtime_module("work_board").open_tasks(root)
+        tasks = load_runtime_module("work_board").open_tasks(root) if load_runtime_module("pipeline").active() else []
     except Exception:
         return [], ""
     names = sorted(((normalize_prompt(task["id"]), task) for task in tasks), key=lambda item: -len(item[0]))

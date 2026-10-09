@@ -97,17 +97,21 @@ ROLE_PROFILES: Final[dict[str, InjectRoleProfile]] = {
     "orchest": InjectRoleProfile(
         cli_name="orchest",
         canonical_name=_canonical_role("orchest"),
-        summary="요청 조사, 계획, 역할·소유권·승인과 완료 게이트를 조율한다.",
+        summary="요청 조사와 계획부터 구현·검토·완료까지 하위 에이전트 파이프라인을 조율한다. 부모는 source를 직접 수정하지 않는다.",
         role_references=(
             "orchestration.md",
+            "logic.md",
+            "ui.md",
             "pipeline-roles.md",
             "workflows.md",
         ),
+        # 하위 에이전트가 UI·Logic 세션과 같은 스킬로 작업하므로 전체 스킬을 번들에 넣는다.
         common_skill_prefixes=(
+            ".agent-policy/common/skills/",
             ".agent-policy/common/skills/policy/harness/",
             ".agent-policy/common/skills/policy/review-checklist/",
         ),
-        native_agents=("planner",),
+        native_agents=("planner", "publisher", "generator", "refactorer", "watcher"),
     ),
     "review": InjectRoleProfile(
         cli_name="review",
@@ -128,20 +132,21 @@ ROLE_PROFILES: Final[dict[str, InjectRoleProfile]] = {
         role_references=(
             "logic.md",
             "ui.md",
-            "orchestration.md",
             "pipeline-roles.md",
             "workflows.md",
         ),
         common_skill_prefixes=(".agent-policy/common/skills/",),
-        native_agents=("planner", "publisher", "generator", "refactorer", "watcher"),
+        native_agents=("publisher", "generator", "refactorer", "watcher"),
     ),
 }
 
 INJECT_ROLES: Final = tuple(ROLE_PROFILES)
 
-# 통합 구현 세션은 자식마다 기존 역할 세션의 작업 방식을 적용한다.
-# 그 밖의 세션에서는 자식도 세션 role의 방식을 따른다.
-GENERATE_CHILD_ROLES: Final = {
+# 오케스트레이션 세션은 하위 에이전트마다 기존 역할 세션의 작업 방식을 적용한다.
+ORCHESTRATION_CONTRACT_PATH: Final = RUNTIME_CONTRACT_PATH.with_name("orchestration-policy.json")
+ORCHESTRATION_CONTRACT: Final = json.loads(ORCHESTRATION_CONTRACT_PATH.read_text(encoding="utf-8"))
+PIPELINE_ROLES: Final = tuple(ORCHESTRATION_CONTRACT.get("roles", ()))
+PIPELINE_CHILD_ROLES: Final = {
     "planner": "orchest",
     "publisher": "ui",
     "generator": "logic",
@@ -153,7 +158,7 @@ GENERATE_CHILD_ROLES: Final = {
 
 def child_role(session_role: str, agent: str) -> str:
     role_profile(session_role)
-    return GENERATE_CHILD_ROLES.get(agent, session_role) if session_role == "generate" else session_role
+    return PIPELINE_CHILD_ROLES.get(agent, session_role) if session_role in PIPELINE_ROLES else session_role
 _HOSTS = RUNTIME_CONTRACT.get("hosts")
 if not isinstance(_HOSTS, dict):
     raise RuntimeError("공통 runtime 계약의 hosts가 object가 아닙니다.")

@@ -1,5 +1,34 @@
 # 오케스트레이션과 작업 현황판
 
+## 적용 범위
+
+오케스트레이션은 `--role orchest`로 시작한다. 이 문서의 계약과 훅 동작은 `orchest` 세션에만 적용하고 `logic`·`ui`·`review`·`generate` 세션은 작업 전과 같게 둔다.
+
+작업 전 커밋(`11d501b`)과 현재 버전으로 3개 호스트 × 4개 role의 번들을 만들어 비교한 결과는 다음과 같다.
+
+| 비교 대상 | 결과 |
+| --- | --- |
+| 하위 에이전트 정의 | 12개 조합 모두 동일 |
+| MCP 주입 | 12개 조합 모두 동일 |
+| 시스템 프롬프트 | "방안을 제시해 선택받은 뒤 진행" 규칙 한 줄 추가와 요청 명확성 게이트의 선택지 문장 한 줄 변경만 다르다(사용자가 모든 세션에 요청) |
+| 공통 runtime 계약(`runtime-policy.json`) | 동일 |
+| 그 밖의 정책 파일 | `task-role-routing/SKILL.md`(같은 규칙), `ui`·`generate` 번들의 `publishing` 스킬(사용자 결정으로 `ui` 프로필에 추가), `generate` 번들에 들어가는 `orchestration.md`의 내용 |
+
+guard와 보호 실행기 코드는 모든 번들이 같은 runtime을 쓰므로 함께 바뀌지만, 오케스트레이션 게이트는 번들에 `orchestration-policy.json`이 있고 세션 role이 그 계약의 role일 때만 켜진다.
+
+오케스트레이션 전용으로 둔 위치는 다음과 같다.
+
+| 내용 | 위치 |
+| --- | --- |
+| 부모의 계약 | `references/orchestration.md`, `orchest` 세션의 inject 서문 |
+| 하위 에이전트 본문과 공통 계약 | `policy/common/agents/`, `policy/common/CHILD_AGENT_CORE.template.md`. `orchest` 세션을 시작할 때만 host adapter의 이름·설명과 합쳐 설치한다 |
+| 계약 값(대상 role, 현황판 단계, 문서, 예외 문구, 실행기 명령, 작업별 산출물 폴더) | `policy/common/contracts/orchestration-policy.json`. `orchest` 번들에만 들어간다 |
+| Claude 고유 설정 | `adapters/claude/pipeline-agents.json`(도구 목록, Figma 절), `adapters/claude/mcp.defaults.json`의 role |
+| 실행기 명령 `board`·`board-set`·`board-wait`·`fingerprint`·`verdict` | 기존 보호 실행기를 재사용한다. 다른 세션에서는 guard가 거부하고 Codex 실행 규칙에도 넣지 않는다 |
+| `tasks/<작업 ID>/` 산출물 | 기존 세션 산출물 규칙과 중앙 로그 미러를 재사용한다. 다른 세션에서는 허용하지 않는다 |
+
+공통 시스템 프롬프트에는 "guard가 orchest의 source 변경을 차단한다"는 기존 문장이 그대로 있다. `orchest` 세션의 서문이 이 문장보다 파이프라인 계약이 우선한다고 밝힌다. Claude `project-ui` 스킬도 기존 문장 그대로이며 `orchest`의 Publisher 정의에 Figma 주입 사실을 적는다.
+
 ## 목적
 
 한 세션에서 부모가 하위 에이전트를 파이프라인으로 실행할 때 필요한 계약과 도구를 추가했다. 세션별 브랜치 권한이나 쓰기 잠금은 만들지 않는다.
@@ -15,9 +44,9 @@
 | 하위 에이전트 공통 계약 | 단일 원본을 렌더러가 3개 호스트의 자식 정의 18개에 삽입한다 | `policy/common/CHILD_AGENT_CORE.template.md`, `lib/agent_policy/core.py` |
 | 역할 본문 단일화 | 호스트마다 따로 적혀 있던 역할 본문을 역할별 원본 6개로 옮겼다. adapter에는 형식과 호스트 고유 기능만 남는다 | `policy/common/agents/`, `adapters/*/files/**/agent*/` |
 | 세션 바인딩 | inject 시 자식마다 적용할 역할 계약 문서와 스킬 경로를 넣는다 | `lib/agent_policy/injection.py`, `lib/agent_policy/role_profiles.py` |
-| Figma MCP | Claude의 `generate` 세션에도 주입하고 Publisher에 `mcp__TalkToFigma`와 `Skill` 도구를 준다 | `adapters/claude/mcp.defaults.json`, `adapters/claude/files/.claude/agents/publisher.md` |
+| Figma MCP | Claude의 `orchest` 세션에도 주입하고 Publisher에 `mcp__TalkToFigma`와 `Skill` 도구를 준다 | `adapters/claude/mcp.defaults.json`, `adapters/claude/files/.claude/agents/publisher.md` |
 | 자식 경로 바인딩 | 자식 정의의 정책·실행기 경로를 inject 번들 절대 경로로 바꾼다 | `lib/agent_policy/injection.py` |
-| 실행 프로필 | `generate`에 `planner`와 `orchestration.md`를 추가했다 | `lib/agent_policy/role_profiles.py` |
+| 실행 프로필 | `orchest`에 구현·검토 하위 에이전트와 전체 스킬을 추가했다 | `lib/agent_policy/role_profiles.py` |
 | 하위 에이전트 Git 거부 | 이벤트에 `agent_id`가 있으면 Git 변경 준비·실행과 현황판 갱신을 거부한다 | `policy/guards/shared_git.py` |
 | 작업 현황판 | 단계·범위·대기 기록, 관계·병합 순서 조회, 공용 항목 영향 확인 | `policy/guards/work_board.py`, `git_operations.py` |
 | 검토 지문 | HEAD와 staged·unstaged·untracked 내용의 해시 | `git_operations.py fingerprint` |
@@ -26,7 +55,7 @@
 
 ## 역할별 작업 방식
 
-오케스트레이션에서도 기존 UI·Logic 세션과 같은 방식으로 작업하게 하는 것이 목적이다. `generate` 세션에서 자식마다 적용하는 방식은 다음과 같다.
+오케스트레이션에서도 기존 UI·Logic 세션과 같은 방식으로 작업하게 하는 것이 목적이다. `orchest` 세션에서 자식마다 적용하는 방식은 다음과 같다.
 
 | 하위 에이전트 | 적용 방식 | 바인딩되는 스킬 |
 | --- | --- | --- |
@@ -35,11 +64,11 @@
 | Generator·Refactorer | `logic` | `api-authoring`, `data-dto`, `data-fetch`, `data-fetch-layer`, `type-definition`, `validation` 등 |
 | Watcher·Evaluator | `review` | `review-checklist`, `validation`, `implementation-quality` |
 
-스킬 목록은 `role_profiles.py`의 기존 역할 프로필에서 가져오므로 역할 세션과 어긋나지 않는다. `generate`가 아닌 세션에서는 자식도 세션 role의 방식을 따른다. 화면 구조·스타일 리팩터링은 Publisher가 맡는다.
+스킬 목록은 `role_profiles.py`의 기존 역할 프로필에서 가져오므로 역할 세션과 어긋나지 않는다. `logic`·`ui`·`review`·`generate` 세션은 기존 정의를 그대로 쓴다. 화면 구조·스타일 리팩터링은 Publisher가 맡는다.
 
 Figma MCP는 Claude Code에만 넣는다. Codex·OpenCode의 Publisher 정의에는 Figma 관련 내용이 없다.
 
-`publishing` 스킬은 `ui` 프로필의 스킬 목록에 빠져 있어 `ui` 세션 번들에 들어가지 않았다. 사용자 결정으로 `ui` 프로필에 추가했고, 이제 `ui` 세션과 `generate` 세션의 Publisher 바인딩에 모두 들어간다.
+`publishing` 스킬은 `ui` 프로필의 스킬 목록에 빠져 있어 `ui` 세션 번들에 들어가지 않았다. 사용자 결정으로 `ui` 프로필에 추가했고, 이제 `ui` 세션과 `orchest` 세션의 Publisher 바인딩에 모두 들어간다.
 
 ## 작업 항목 배정과 UI·Logic 병렬 구현
 
@@ -60,6 +89,45 @@ Planner는 계획의 작업 항목마다 변경 종류(생성·수정·삭제)�
 - 같은 worktree의 병렬 구간에서는 하위 에이전트가 포맷과 lint·test·build를 실행하지 않는다. 포맷이 상대가 편집 중인 파일까지 다시 쓰기 때문이며, 부모가 둘 다 끝난 뒤 실행한다.
 - 하위 에이전트는 배정 밖의 변경이 필요하면 직접 하지 않고 반환한다.
 - 이 배정과 병렬 구간의 규칙은 프롬프트 계약이다. 훅은 하위 에이전트별 변경 종류나 병렬 중의 포맷 실행을 막지 않는다.
+
+## 파이프라인 강제 (2026-10-09 실행 기록에서 확인한 결함의 수정)
+
+### 발생한 문제
+
+user-ui의 `orchest` 세션 "가상오피스-예약-실API"(assignment `bfdb584f`, 21:42 시작)에서 하위 에이전트가 한 번도 호출되지 않았다. 부모 세션이 Edit 102회, Write 26회로 22개 source 파일을 직접 구현했고 Watcher도 실행되지 않았다. `plan.md`와 `final-summary.md`는 작성됐지만 `exploration.md`, `implementation-log.md`, `review-log.md`는 없었다. 현황판은 조회만 3회였고 등록·갱신은 없었다.
+
+### 원인
+
+- 부모 프롬프트의 역할 목적이 "승인된 handoff와 branch scope에 적힌 기본 역할을 구현한다"였고, 파이프라인은 참조 문서에 "호출할 수 있다"로만 적혀 있었다.
+- `orchest` 세션은 부모도 source를 쓸 수 있었고, 하위 에이전트를 거쳤는지나 Watcher 판정을 확인하는 훅이 없었다.
+- 역할별 문서가 정책상 선택이었다.
+
+### 수정 (사용자 선택)
+
+| 선택 | 구현 |
+| --- | --- |
+| 훅으로 차단, 프롬프트 명시, 예외 허용 | `orchest` 세션에서 `agent_id`가 없는 호출(부모)과 Planner·Watcher의 source 쓰기를 거부한다. 부모 프롬프트에 "파이프라인 계약 (필수)"를 넣었다 |
+| 예외는 다음 입력 전까지 | 사용자가 `직접 수정 승인`을 입력하면 그 응답 동안만 부모가 수정할 수 있고, 다음 사용자 입력에서 닫힌다 |
+| 파이프라인을 `orchest`에서 실행 | 처음에는 `generate`에 넣었으나 사용자 결정으로 `orchest`로 옮기고 `generate`는 작업 전 상태로 되돌렸다 |
+| 커밋 전 PASS 확인 | Watcher가 `verdict --result --start`로 판정을 기록한다. 커밋 준비와 실행 직전에 PASS와 지문 일치를 확인한다 |
+| 단계마다 문서 확인 | source 수정 전 `plan.md`·`exploration.md`, 판정 기록 전 `implementation-log.md`·`review-log.md`, 병합 준비 전 `final-summary.md` |
+
+위치는 `policy/guards/pipeline.py`, `shared_git.py`, `managed_policy_guard.py`, `git_operations.py`, `lib/agent_policy/injection.py`, `policy/common/agents/`다.
+
+### 한계
+
+- 부모와 Planner·Watcher의 source 쓰기 차단, 판정 기록 주체 확인은 Claude Code에서만 동작한다. Codex·OpenCode는 하위 에이전트 호출을 구분할 수 없어 문서 확인과 커밋 전 PASS 확인만 적용된다.
+- 훅은 문서가 있고 내용이 비어 있지 않은지만 확인한다. 내용의 충실도는 Watcher와 사용자가 판단한다.
+- 지문은 worktree의 파일 내용으로 계산한다. stage한 내용과 worktree의 내용이 다른 파일을 커밋하면 검토한 내용과 커밋 내용이 달라질 수 있다.
+- 부모가 하위 에이전트를 호출하지 않으면 구현 자체가 진행되지 않을 뿐, 호출을 대신 실행해 주지는 않는다.
+
+### Watcher가 검증하는 방식
+
+1. 검토 대상 worktree에서 시작 지문을 기록한다.
+2. `plan.md`, `exploration.md`, `implementation-log.md`와 실제 diff를 대조한다. 계획의 항목이 모두 구현됐는지, 배정된 역할이 변경했는지, 범위 밖 변경이 없는지, 적용했다는 스킬의 패턴과 코드가 맞는지, 근거 없이 채운 API·필드·기본값이 없는지를 `review-checklist` 기준으로 본다.
+3. lint·test·build를 직접 실행한다. 구현 에이전트의 보고를 그대로 믿지 않으며 파일을 바꾸는 검증은 실행하지 않는다.
+4. `review-log.md`에 PASS/FAIL과 위치·근거·영향이 있는 발견 사항, 수정 요구를 쓴다.
+5. `verdict`로 판정을 기록한다. 검토 중 대상이 바뀌었으면 기록이 거부된다. FAIL이면 부모가 수정 요구를 구현 에이전트에 전달하고 다시 검토받는다. 같은 구간의 반려는 최대 3회다.
 
 ## 결정 방식
 

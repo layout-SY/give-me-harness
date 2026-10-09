@@ -17,14 +17,14 @@
 
 ## 제한
 
-- 기획 역할만 확인된 상태에서는 애플리케이션 또는 정책 구현을 수정하지 않는다.
+- 부모는 애플리케이션 source를 직접 수정하지 않는다. 구현은 배정된 하위 에이전트가 한다.
 - handoff나 기존 계획을 사용자 승인으로 추정하지 않는다.
 - 분석 권한을 파일 수정 권한으로 확대하지 않는다.
 - 특정 호스트가 항상 특정 역할을 맡는다고 가정하지 않는다.
 
 ## 한 세션 파이프라인
 
-`generate` 세션은 Planner·Publisher·Generator·Refactorer·Watcher를 하위 에이전트로 호출할 수 있다. Publisher는 UI 세션의 작업 방식을, Generator와 Refactorer는 Logic 세션의 작업 방식을 적용한다(`pipeline-roles.md`). `orchest` 세션은 Planner만 제공하며 source를 변경하지 않는다. 부모 세션은 다음 순서로 조율한다.
+`orchest` 세션은 조사와 계획부터 구현·검토·완료까지 한 세션에서 파이프라인으로 진행한다. 부모는 source를 직접 수정하지 않고 Planner·Publisher·Generator·Refactorer·Watcher를 하위 에이전트로 호출한다. 작은 수정이라도 호출을 생략하지 않는다. 이 문서의 계약은 `orchest` 세션에만 적용하며 `logic`·`ui`·`review`·`generate` 세션은 기존 방식을 그대로 쓴다. 부모 세션은 다음 순서로 조율한다.
 
 1. 사용자 요청을 받고 현황판과 실제 worktree 목록을 조회한다.
 2. 작업 범위와 사용할 스킬·도구·정책을 탐색한다. 진행 중인 작업과 범위가 겹치면 그 범위의 상세 조사를 미루고 대기 또는 분기 방안을 정리한다.
@@ -32,7 +32,7 @@
 4. 현황판에 `생성 승인 대기`로 등록하고, 계획과 생성할 Git 작업을 사용자에게 승인받는다.
 5. 승인 후 branch·worktree를 만들고 직접 부모 관계를 등록한 뒤 `작업 중`으로 기록한다.
 6. 하위 에이전트가 해당 worktree에서 구현하고 포맷·검증한다.
-7. Watcher가 검토한다(`리뷰 중`). 반려되면 `workflows.md`의 재시도 규칙으로 재작업한다.
+7. Watcher가 검토하고 판정을 기록한다(`리뷰 중`). 반려되면 `workflows.md`의 재시도 규칙으로 재작업한다.
 8. 미커밋 상태로 사용자에게 알린다(`사용자 검토 대기`).
 9. 사용자 검토 후 승인된 commit을 실행하고 `커밋됨`으로 기록한다.
 10. 직접 부모로 병합하고(`병합됨`) branch·worktree를 정리한다(`제거됨`).
@@ -44,7 +44,80 @@
 - Git 변경은 하위 에이전트의 요청을 검토해 대상·명령·영향을 사용자에게 제시하고 승인 후 보호 실행기로 실행한다.
 - 단계가 바뀔 때 현황판을 갱신한다. 하위 에이전트는 현황판을 조회만 한다.
 - 계획이 작업 항목에 지정한 하위 에이전트를 그대로 호출한다. UI·스타일은 Publisher, 로직은 Generator, 로직의 구조 정리는 Refactorer다. 배정을 바꾸려면 계획을 고쳐 다시 승인받는다.
-- 같은 worktree의 포맷·검증·Git 변경은 순차로 실행한다. 구현도 순차가 기본이며, 연결 계약이 확정되고 수정 파일이 겹치지 않는 Publisher와 Generator만 병렬로 호출한다. 병렬 구간에서는 두 에이전트에 포맷·검증을 실행하지 말라고 알리고, 둘 다 끝난 뒤 부모가 실행한 다음 최종 연결을 Generator에 맡긴다(`pipeline-roles.md`).
+- 같은 worktree의 포맷·검증·Git 변경은 순차로 실행한다. 구현도 순차가 기본이며, 연결 계약이 확정되고 수정 파일이 겹치지 않는 Publisher와 Generator만 병렬로 호출한다. 병렬 구간에서는 두 에이전트에 포맷·검증을 실행하지 말라고 알리고, 둘 다 끝난 뒤 부모가 실행한 다음 최종 연결을 Generator에 맡긴다.
+
+## 하위 에이전트 공통 계약
+
+`orchest` 세션의 하위 에이전트 정의에는 역할 본문과 공통 계약, 세션 바인딩이 직접 들어간다. 원본은 중앙의 `policy/common/agents/`와 `policy/common/CHILD_AGENT_CORE.template.md`이며 3개 host에 같은 내용이 설치된다. 공통 계약의 요지는 다음과 같다.
+
+- 미확정 결정은 근거·누락 항목·선택지·영향과 함께 부모에게 반환하고, 사용자에게 직접 묻거나 대신 결정하지 않는다.
+- 부모가 전달한 worktree 절대 경로에서만 작업하고 첫 변경 전에 실제 위치·branch·HEAD를 확인한다.
+- Git 변경과 현황판 갱신은 실행하지 않고 요청으로 반환한다.
+- 전달받은 범위 밖의 파일이나 공용 항목은 변경 전에 반환한다.
+- 선행 작업의 변경 파일 목록을 받으면 그 파일만 다시 조사한다.
+
+| 역할 | 우선 조사 | 필수 반환 |
+| --- | --- | --- |
+| Planner | 요구사항, 현재 구조, 재사용 자산, 영향받는 계약, 현황판과 worktree | 계획, 미확정 질문, 작업 분담, 검증, 승인받을 Git 작업 |
+| Publisher | `DESIGN.md`, 공용 UI, CSS·전역 스타일·토큰·테마 | UI 계약, 재사용 결과, 구현 내용, 연결 조건 |
+| Generator | 기존 API·DTO·hook·상태·유사 구현과 관련 정책 | 변경 내용, 검증, 미확정 사항, 리뷰 요청 |
+| Refactorer | 기존 동작, 호출자·의존성·공개 계약·테스트 | 보존한 동작, 구조 변경, 검증, 리뷰 요청 |
+| Watcher | 승인된 요구·계획, 관련 정책, 검토 대상 버전과 검증 근거 | 위치·근거·영향이 있는 발견 사항과 수정 요구 |
+
+### 역할별 작업 방식
+
+`orchest` 세션의 하위 에이전트는 기존 UI·Logic 세션의 작업 방식을 그대로 적용한다. 각 정의의 세션 바인딩에 적용할 역할 계약 문서와 주로 쓰는 스킬 경로가 들어간다.
+
+| 하위 에이전트 | 적용하는 역할 방식 | 예 |
+| --- | --- | --- |
+| Planner | 오케스트레이션·기획 | 현황판 조회, 범위·병합 순서 계획 |
+| Publisher | UI | `DESIGN.md`·공용 UI 조사, `ui-asset-plan.md`, 스타일·접근성 기준. 화면 구조·스타일 리팩터링 포함 |
+| Generator | Logic | `api-authoring` 패턴대로 API 연결, 공통 응답 DTO 재사용, controller 계약 |
+| Refactorer | Logic | 동작·공개 계약 보존, `refactoring` 기준 |
+| Watcher·Evaluator | 리뷰 | `review-checklist`, 검증 근거 |
+
+### 단계별 문서와 판정 기록
+
+오케스트레이션 세션은 단계마다 문서를 남기고, 다음 단계는 그 문서가 있어야 시작된다. 위치는 세션 산출물 폴더이며 현황판에 계획을 등록한 작업은 `tasks/<작업 ID>/`다.
+
+| 단계 | 작성자 | 문서 | 확인 시점 |
+| --- | --- | --- | --- |
+| 계획 | Planner | `plan.md`, `exploration.md` | source 수정 전 |
+| 구현 | Publisher·Generator·Refactorer | `implementation-log.md` | Watcher 판정 기록 전 |
+| 검토 | Watcher | `review-log.md`, `verdict` 기록 | 판정 기록 전, 커밋 준비 전 |
+| 완료 | 부모 | `final-summary.md` | 병합 준비 전 |
+
+- 내용이 없는 문서는 작성한 것으로 보지 않는다.
+- Watcher는 검토 시작 지문을 `verdict --start`에 넘긴다. 검토 중 대상이 바뀌면 기록이 거부된다.
+- 커밋 준비와 실행 직전에 PASS 기록의 지문과 현재 지문을 대조한다. 지문은 HEAD와 변경·신규 파일의 내용으로 계산하며 stage 여부와 세션 문서는 영향을 주지 않는다. 검토 뒤의 포맷·수정은 다시 검토받아야 하므로 포맷과 검증을 먼저 끝내고 Watcher를 호출한다.
+- 변경된 source가 없고 세션 문서만 커밋하는 경우에는 판정을 요구하지 않는다.
+
+### 작업 항목 배정 기준
+
+Planner는 계획의 작업 항목마다 변경 종류와 담당 하위 에이전트를 지정하고, 부모는 그 배정대로 호출한다. 생성·수정·삭제에 같은 기준을 적용한다.
+
+| 담당 | 변경 대상 |
+| --- | --- |
+| Publisher | 마크업, 컴포넌트 구조, CSS·스타일·디자인 토큰, 정적 자산, 접근성, 반응형 표현의 생성·수정·삭제와 이들의 리팩터링 |
+| Generator | API, DTO, parser, validator, hook, util, store, 상태 전이, controller의 생성·수정·삭제 |
+| Refactorer | 위 로직 영역에서 동작을 바꾸지 않는 구조 정리 |
+
+- 한 파일에 UI와 Logic 변경이 섞이면 Publisher가 UI 계약(props·callback)을 먼저 확정하고 Generator가 연결하는 순서로 나누어 순차 진행한다.
+- 하위 에이전트는 자기 배정 밖의 변경이 필요해지면 직접 하지 않고 부모에게 반환한다. 배정을 바꾸려면 계획을 고쳐 다시 승인받는다.
+- 하위 에이전트 호출을 식별하는 host에서는 부모와 Planner·Watcher의 source 쓰기를 guard가 거부한다. Publisher와 Generator·Refactorer 사이의 변경 종류 구분은 프롬프트 계약이며 훅이 막지 않는다.
+
+### UI와 Logic의 병렬 구현과 최종 연결
+
+화면 요구가 있는 작업은 연결 계약을 먼저 확정한 뒤 UI와 Logic을 병렬로 구현하고, 둘 다 끝나면 연결한다.
+
+1. **계약 확정**: Publisher가 디자인(Figma가 연결된 host에서는 Figma)과 요구에서 화면이 필요로 하는 데이터·상태·입력·동작을 UI 계약 초안으로 정리한다. Planner는 이를 실제 API·DTO 근거와 대조해 controller 공개 타입(데이터, 상태, callback)을 `plan.md`의 UI·Logic 연결 계약에 기록한다. 맞지 않거나 확인되지 않은 항목은 사용자에게 질문하고, 계약은 계획과 함께 승인받는다.
+2. **병렬 구현**: Publisher는 계약의 props·callback으로 화면을 구현하고, Generator는 API부터 UI 없는 controller까지 구현한다. 두 에이전트의 수정 파일은 겹치지 않아야 한다. 겹치면 순차로 진행하거나 작업 공간을 나눈다.
+3. **계약 변경**: 병렬 구간에서 계약과 다른 사실이 발견되면 해당 에이전트가 그 부분을 보류하고 반환한다. 부모가 사용자 결정을 받아 계약을 갱신하고 양쪽에 전달한다.
+4. **최종 연결**: 둘 다 끝나면 부모가 포맷과 검증을 실행한 뒤 Generator가 page·container에서 controller를 View에 연결한다. 연결 뒤 다시 포맷·검증하고 Watcher가 검토한다.
+
+같은 worktree의 병렬 구간에서는 하위 에이전트가 포맷과 lint·test·build를 실행하지 않는다. 포맷과 검증 전 자동 포맷이 상대가 편집 중인 파일까지 다시 쓰기 때문이다. 부모가 두 에이전트의 종료를 확인한 뒤 실행한다.
+
+`logic`·`ui`·`review`·`generate` 세션은 이 계약의 대상이 아니며 기존 정의와 방식을 그대로 쓴다. Figma MCP는 Claude Code의 `ui`·`orchest` 세션에 제공되며 `orchest` 세션에서는 Publisher가 사용한다.
 
 ## 작업 현황판
 
@@ -57,6 +130,7 @@
 | `board-set --task <ID> ...` | 단계·branch·범위·공용 항목·`plan.md` 위치·대기를 기록한다 |
 | `board-wait --task <ID>` | 선행 작업이 커밋될 때까지 기다린 뒤 변경된 파일을 출력한다 |
 | `fingerprint` | 현재 worktree의 검토 지문을 출력한다 |
+| `verdict --result PASS\|FAIL --start <지문>` | Watcher의 판정을 현재 지문과 함께 기록한다. 커밋 준비 때 확인한다 |
 
 - 단계는 `planning`(계획 중), `awaiting-creation`(생성 승인 대기), `working`(작업 중), `reviewing`(리뷰 중), `awaiting-user-review`(사용자 검토 대기), `committed`(커밋됨), `merged`(병합됨), `removed`(제거됨), `cancelled`(취소)다.
 - `working` 이후 단계는 실제 branch가 있어야 하고, `committed`는 미커밋 변경이 없을 때, `merged`는 등록된 직접 부모에 포함됐을 때, `removed`는 branch가 없을 때만 기록된다.
@@ -93,7 +167,7 @@ host가 백그라운드 명령의 종료를 세션에 알려 주면 `board-wait`
 | Codex | 제공하지 않음(부모 `session_id` 사용) | 프롬프트 계약으로만 운영 |
 | OpenCode | 확인되지 않음 | 프롬프트 계약으로만 운영 |
 
-식별이 확인되지 않은 host에 대해 하위 에이전트의 Git 변경이 차단된다고 보고하지 않는다. source 쓰기는 세션 role로 판정하므로 `generate` 세션에서는 부모도 source를 쓸 수 있다. 부모는 조율과 Git·현황판 처리를 맡고 구현은 하위 에이전트에 맡긴다.
+식별이 확인되지 않은 host에 대해 하위 에이전트의 Git 변경이나 부모의 source 쓰기가 차단된다고 보고하지 않는다. 식별하는 host에서는 `orchest` 세션의 부모와 Planner·Watcher의 source 쓰기를 guard가 거부한다. 사용자가 `직접 수정 승인`을 입력하면 그 응답 동안만 부모가 직접 수정할 수 있고 다음 사용자 입력에서 다시 막힌다. 단계별 문서와 커밋 전 Watcher PASS 확인은 모든 host에 적용된다. 다만 식별하지 못하는 host에서는 판정을 누가 기록했는지 확인하지 못한다.
 
 ## 한 세션의 여러 작업
 
