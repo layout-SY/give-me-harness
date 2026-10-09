@@ -118,6 +118,7 @@ bin/agent-policy writes --project admin-ui --assignment <assignment-id> --reconc
 ## 오케스트레이션과 작업 현황판
 
 - `generate` 세션은 Planner·Publisher·Generator·Refactorer·Watcher를 하위 에이전트로 호출합니다. 하위 에이전트의 정의에는 공통 계약(미확정 결정은 부모에게 반환, Git 변경은 요청만 반환, 재조사는 변경분만)이 직접 들어가고 정책·실행기 경로는 번들 절대 경로로 바인딩됩니다.
+- 역할 본문은 `policy/common/agents/`의 단일 원본에서 3개 호스트로 렌더합니다. `generate` 세션에서 Publisher는 UI 세션의 작업 방식을, Generator와 Refactorer는 Logic 세션의 작업 방식을 적용하며, 적용할 역할 계약과 스킬 경로가 각 정의의 세션 바인딩에 들어갑니다. Figma MCP는 Claude Code의 `ui`·`generate` 세션에만 주입되고 `generate`에서는 Publisher가 사용합니다.
 - 하위 에이전트의 Git 변경은 Claude Code에서만 guard가 거부합니다. Codex와 OpenCode는 도구 실행 전 이벤트로 부모와 자식을 구분할 수 없어 프롬프트 계약으로 운영합니다.
 - 작업 현황판은 `git_operations.py board`로 조회하고 `board-set`으로 단계·범위를 기록합니다. 브랜치·워크트리 관계와 병합 순서를 함께 보여 주며 쓰기 잠금이나 소유권을 만들지 않습니다. 공용 항목을 바꾸기 전에는 `board --check <경로>`로 영향받는 작업과 다른 worktree의 참조 후보를 확인합니다.
 - 범위가 겹쳐 기다리는 작업은 선행 작업이 `커밋됨`이 되면 풀립니다. `board-wait`와 세션 시작·사용자 입력 훅이 접점 경로에서 변경된 파일을 알려 주며, 그 파일만 다시 조사해 계획을 갱신합니다.

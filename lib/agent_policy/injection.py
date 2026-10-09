@@ -32,6 +32,7 @@ from .core import (
 from .role_profiles import (
     ARTIFACT_RESPONSIBILITIES,
     artifact_session_root,
+    child_role,
     common_skill_selected,
     role_document_paths,
     role_profile,
@@ -290,12 +291,46 @@ def _runtime_root(host: str, policy_root: Path) -> Path:
     }[host]
 
 
-def _bind_agent_paths(content: bytes, host: str, policy_root: Path) -> bytes:
-    """하위 에이전트는 부모의 inject 서문을 받지 않으므로 경로를 직접 바인딩한다."""
-    text = content.decode("utf-8")
+def _bind_agent(
+    relative: str,
+    rendered: Mapping[str, bytes],
+    host: str,
+    role: str | None,
+    policy_root: Path,
+) -> bytes:
+    """host가 읽는 자식 정의 사본에만 세션 role과 번들 경로를 바인딩한다.
+
+    하위 에이전트는 부모의 inject 서문을 받지 않는다. 번들의 정책 스냅샷은
+    렌더 결과 그대로 두어 현재 정책과의 비교가 유지되게 한다.
+    """
+    binding = _session_binding(role, Path(relative).stem, rendered) if role else ""
+    text = rendered[relative].decode("utf-8").replace("{{SESSION_BINDING}}", binding).rstrip() + "\n"
+    if relative.endswith(".toml"):
+        text = text.rstrip().removesuffix('"""').rstrip() + '"""\n'
     text = text.replace(".agent-policy/runtime/", f"{_runtime_root(host, policy_root)}/")
     text = text.replace(".agent-policy/common/", f"{policy_root}/.agent-policy/common/")
     return text.encode("utf-8")
+
+
+def _session_binding(role: str, agent: str, available: Mapping[str, bytes]) -> str:
+    """자식이 세션 role에 맞는 기존 역할 세션의 문서·스킬로 작업하게 한다."""
+    applied = child_role(role, agent)
+    profile = role_profile(applied)
+    root = ".agent-policy/common/skills"
+    documents = [path for path in role_document_paths("", applied) if path in available]
+    skills = [prefix for prefix in profile.common_skill_prefixes
+              if prefix != f"{root}/" and any(name.startswith(prefix) for name in available)]
+    lines = [
+        "## 세션 바인딩",
+        "",
+        f"- 세션 role은 `{role}`이고, 이 에이전트에는 `{applied}` 역할({profile.summary.rstrip('.')})의 작업 방식을 적용한다.",
+        "- 적용할 역할 계약 문서: " + ", ".join(f"`{path}`" for path in documents),
+        f"- 스킬 색인: `{root}/SKILL.md`. 작업 항목에 해당하는 스킬을 찾아 읽고 그 패턴대로 작업한다.",
+    ]
+    if skills:
+        lines.append("- 이 역할이 주로 쓰는 스킬: " + ", ".join(f"`{path}`" for path in skills))
+    lines.append("- 적용한 스킬과 지침, 확인한 코드 경로, 재사용 후보의 채택·확장·제외 이유를 반환에 포함한다.")
+    return "\n".join(lines)
 
 
 def _injection_preamble(
@@ -465,6 +500,7 @@ def _render_claude_files(
     rendered: Mapping[str, bytes],
     bundle_root: Path,
     mcp_config: bytes | None = None,
+    role: str | None = None,
 ) -> dict[str, bytes]:
     files: dict[str, bytes] = {}
     plugin = bundle_root / "plugin"
@@ -491,8 +527,8 @@ def _render_claude_files(
                 raise PolicyError(f"Claude inject skill 경로가 중복됩니다: {target}")
             files[target] = content
         elif relative.startswith(".claude/agents/"):
-            files["plugin/agents/" + relative.removeprefix(".claude/agents/")] = _bind_agent_paths(
-                content, "claude", bundle_root / "policy")
+            files["plugin/agents/" + relative.removeprefix(".claude/agents/")] = _bind_agent(
+                relative, rendered, "claude", role, bundle_root / "policy")
 
     for relative, content in rendered.items():
         if relative.startswith(".agent-policy/runtime/"):
@@ -512,6 +548,7 @@ def _render_claude_files(
 def _render_opencode_files(
     rendered: Mapping[str, bytes],
     bundle_root: Path,
+    role: str | None = None,
 ) -> dict[str, bytes]:
     files: dict[str, bytes] = {}
     home = bundle_root / "opencode-home"
@@ -530,8 +567,8 @@ def _render_opencode_files(
                 + relative.removeprefix(".agent-policy/common/skills/")
             ] = content
         elif relative.startswith(".opencode/agent/"):
-            files["opencode-home/agents/" + relative.removeprefix(".opencode/agent/")] = _bind_agent_paths(
-                content, "opencode", bundle_root / "policy")
+            files["opencode-home/agents/" + relative.removeprefix(".opencode/agent/")] = _bind_agent(
+                relative, rendered, "opencode", role, bundle_root / "policy")
         elif relative.startswith(".opencode/plugins/"):
             target = "opencode-home/plugins/" + relative.removeprefix(".opencode/plugins/")
             files[target] = content
@@ -567,9 +604,9 @@ def _render_bundle_files(
         bundle_root / "policy",
     )
     if host == "claude":
-        files.update(_render_claude_files(rendered, bundle_root, claude_mcp_config))
+        files.update(_render_claude_files(rendered, bundle_root, claude_mcp_config, role))
     elif host == "opencode":
-        files.update(_render_opencode_files(rendered, bundle_root))
+        files.update(_render_opencode_files(rendered, bundle_root, role))
     elif host != "codex":
         raise PolicyError(f"지원하지 않는 inject host입니다: {host}")
     return dict(sorted(files.items()))
@@ -866,6 +903,7 @@ def _prepare_codex_home(
     bundle_root: Path,
     state_root: Path,
     source_codex_home: Path,
+    role: str | None = None,
 ) -> tuple[Path, tuple[str, ...]]:
     codex_home = state_root / "codex-home"
     user_config_content = (
@@ -886,8 +924,8 @@ def _prepare_codex_home(
                 "skills/" + relative.removeprefix(".agent-policy/common/skills/")
             ] = content
         elif relative.startswith(".codex/agents/"):
-            files["agents/" + relative.removeprefix(".codex/agents/")] = _bind_agent_paths(
-                content, "codex", bundle_root / "policy")
+            files["agents/" + relative.removeprefix(".codex/agents/")] = _bind_agent(
+                relative, rendered, "codex", role, bundle_root / "policy")
     runtime = bundle_root / "policy/.agent-policy/runtime/managed_policy_guard.py"
     files["hooks.json"] = _transform_codex_hooks(
         rendered,
@@ -1077,6 +1115,7 @@ def prepare_injection(
             bundle_root,
             assignment_root,
             selected_source_home,
+            role,
         )
         environment["CODEX_HOME"] = str(codex_home)
         if shared:

@@ -29,7 +29,12 @@
 10. Generator와 Refactorer는 `references/logic.md`의 Logic 역할 계약을 적용한다.
 11. Figma MCP 정의를 공통 원본으로 두고 호스트별 형식으로 렌더한다. 현재는 Claude의 `role=ui` 세션에만 주입된다.
 
-결정이 필요한 항목은 `final-summary.md`가 아니라 사용자 답변을 받은 뒤 이 절에 기록한다.
+사용자 결정(2026-10-09):
+
+- Figma MCP는 Claude에만 넣는다. 따라서 9의 Figma 절차 공통 이동과 11은 하지 않고, Claude의 `generate` 세션 주입과 Publisher 도구만 추가한다.
+- 역할 매핑(Publisher=UI, Generator·Refactorer=Logic)은 `generate` 세션에만 적용한다. 목적은 기존 UI·Logic 세션의 작업 방식(예: API 연결 패턴 문서를 읽고 그 패턴대로 작업)이 오케스트레이션의 하위 에이전트에서도 같게 동작하는 것이다.
+- 화면 구조·스타일 리팩터링은 Publisher가 맡는다.
+- 1차 작업을 먼저 커밋하고 이어서 진행한다. 이전 Codex의 미커밋 작업은 별도 커밋으로 분리한다.
 
 ## 제외 사항
 

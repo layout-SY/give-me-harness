@@ -13,6 +13,9 @@
 | 항목 | 내용 | 위치 |
 | --- | --- | --- |
 | 하위 에이전트 공통 계약 | 단일 원본을 렌더러가 3개 호스트의 자식 정의 18개에 삽입한다 | `policy/common/CHILD_AGENT_CORE.template.md`, `lib/agent_policy/core.py` |
+| 역할 본문 단일화 | 호스트마다 따로 적혀 있던 역할 본문을 역할별 원본 6개로 옮겼다. adapter에는 형식과 호스트 고유 기능만 남는다 | `policy/common/agents/`, `adapters/*/files/**/agent*/` |
+| 세션 바인딩 | inject 시 자식마다 적용할 역할 계약 문서와 스킬 경로를 넣는다 | `lib/agent_policy/injection.py`, `lib/agent_policy/role_profiles.py` |
+| Figma MCP | Claude의 `generate` 세션에도 주입하고 Publisher에 `mcp__TalkToFigma`와 `Skill` 도구를 준다 | `adapters/claude/mcp.defaults.json`, `adapters/claude/files/.claude/agents/publisher.md` |
 | 자식 경로 바인딩 | 자식 정의의 정책·실행기 경로를 inject 번들 절대 경로로 바꾼다 | `lib/agent_policy/injection.py` |
 | 실행 프로필 | `generate`에 `planner`와 `orchestration.md`를 추가했다 | `lib/agent_policy/role_profiles.py` |
 | 하위 에이전트 Git 거부 | 이벤트에 `agent_id`가 있으면 Git 변경 준비·실행과 현황판 갱신을 거부한다 | `policy/guards/shared_git.py` |
@@ -20,6 +23,23 @@
 | 검토 지문 | HEAD와 staged·unstaged·untracked 내용의 해시 | `git_operations.py fingerprint` |
 | 대기 안내 | 세션 시작·compact·사용자 입력 훅이 대기 상태와 변경 파일을 안내한다 | `policy/guards/managed_policy_guard.py` |
 | Codex 실행 규칙 | 보호 실행기 허용 동작에 `board`, `board-set`, `board-wait`, `fingerprint`를 추가했다 | `lib/agent_policy/injection.py` |
+
+## 역할별 작업 방식
+
+오케스트레이션에서도 기존 UI·Logic 세션과 같은 방식으로 작업하게 하는 것이 목적이다. `generate` 세션에서 자식마다 적용하는 방식은 다음과 같다.
+
+| 하위 에이전트 | 적용 방식 | 바인딩되는 스킬 |
+| --- | --- | --- |
+| Planner | `orchest` | `harness`, `review-checklist` |
+| Publisher | `ui` | `publishing`, `styles`, `coding-convention`, `validation`, `i18n`, `reference/components` 등 |
+| Generator·Refactorer | `logic` | `api-authoring`, `data-dto`, `data-fetch`, `data-fetch-layer`, `type-definition`, `validation` 등 |
+| Watcher·Evaluator | `review` | `review-checklist`, `validation`, `implementation-quality` |
+
+스킬 목록은 `role_profiles.py`의 기존 역할 프로필에서 가져오므로 역할 세션과 어긋나지 않는다. `generate`가 아닌 세션에서는 자식도 세션 role의 방식을 따른다. 화면 구조·스타일 리팩터링은 Publisher가 맡는다.
+
+Figma MCP는 Claude Code에만 넣는다. Codex·OpenCode의 Publisher 정의에는 Figma 관련 내용이 없다.
+
+`publishing` 스킬은 `ui` 프로필의 스킬 목록에 빠져 있어 `ui` 세션 번들에 들어가지 않았다. 사용자 결정으로 `ui` 프로필에 추가했고, 이제 `ui` 세션과 `generate` 세션의 Publisher 바인딩에 모두 들어간다.
 
 ## 호스트별 보장 범위
 

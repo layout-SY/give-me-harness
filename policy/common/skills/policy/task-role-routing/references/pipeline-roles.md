@@ -6,7 +6,7 @@
 
 ## 하위 에이전트 공통 계약
 
-호스트 native agent 정의에는 공통 계약 본문이 직접 삽입된다. 요지는 다음과 같다.
+호스트 native agent 정의에는 역할 본문과 공통 계약이 직접 삽입된다. 두 원본은 중앙의 `policy/common/agents/`와 `policy/common/CHILD_AGENT_CORE.template.md`이며 호스트 adapter는 형식과 그 호스트에만 있는 기능만 가진다. 공통 계약의 요지는 다음과 같다.
 
 - 미확정 결정은 근거·누락 항목·선택지·영향과 함께 부모에게 반환하고, 사용자에게 직접 묻거나 대신 결정하지 않는다.
 - 부모가 전달한 worktree 절대 경로에서만 작업하고 첫 변경 전에 실제 위치·branch·HEAD를 확인한다.
@@ -21,6 +21,20 @@
 | Generator | 기존 API·DTO·hook·상태·유사 구현과 관련 정책 | 변경 내용, 검증, 미확정 사항, 리뷰 요청 |
 | Refactorer | 기존 동작, 호출자·의존성·공개 계약·테스트 | 보존한 동작, 구조 변경, 검증, 리뷰 요청 |
 | Watcher | 승인된 요구·계획, 관련 정책, 검토 대상 버전과 검증 근거 | 위치·근거·영향이 있는 발견 사항과 수정 요구 |
+
+### 통합 구현 세션의 역할별 작업 방식
+
+`generate` 세션의 하위 에이전트는 기존 역할 세션의 작업 방식을 그대로 적용한다. 각 정의의 세션 바인딩에 적용할 역할 계약 문서와 주로 쓰는 스킬 경로가 들어간다.
+
+| 하위 에이전트 | 적용하는 역할 방식 | 예 |
+| --- | --- | --- |
+| Planner | 오케스트레이션·기획 | 현황판 조회, 범위·병합 순서 계획 |
+| Publisher | UI | `DESIGN.md`·공용 UI 조사, `ui-asset-plan.md`, 스타일·접근성 기준. 화면 구조·스타일 리팩터링 포함 |
+| Generator | Logic | `api-authoring` 패턴대로 API 연결, 공통 응답 DTO 재사용, controller 계약 |
+| Refactorer | Logic | 동작·공개 계약 보존, `refactoring` 기준 |
+| Watcher·Evaluator | 리뷰 | `review-checklist`, 검증 근거 |
+
+그 밖의 role 세션에서는 하위 에이전트도 세션 role의 방식을 따른다. 예를 들어 `ui` 세션의 Generator는 UI 방식으로 작업한다. Figma MCP는 Claude Code의 `ui`·`generate` 세션에만 제공되며 `generate` 세션에서는 Publisher가 사용한다.
 
 ## Planner
 

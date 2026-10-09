@@ -14,7 +14,7 @@ description: {{PROJECT_NAME}}에서 UI 역할이 사용자에게 확인된 경�
 
 ## TalkToFigma 연결
 
-중앙 launcher는 `user-ui`·`admin-ui`의 `host=claude`, `role=ui` 새 inject 세션에 TalkToFigma MCP를 기본 제공한다. 실행 정의는 중앙 `adapters/claude/mcp.defaults.json`에 있고, 세션은 불변 번들의 `claude-mcp.json`을 `--mcp-config`로 읽는다. `generate`를 포함한 다른 role에는 이 기본 MCP가 자동 주입되지 않는다.
+중앙 launcher는 `user-ui`·`admin-ui`의 `host=claude`, `role=ui` 또는 `role=generate` 새 inject 세션에 TalkToFigma MCP를 기본 제공한다. 실행 정의는 중앙 `adapters/claude/mcp.defaults.json`에 있고, 세션은 불변 번들의 `claude-mcp.json`을 `--mcp-config`로 읽는다. 그 밖의 role과 Codex·OpenCode에는 이 기본 MCP가 자동 주입되지 않는다. `generate` 세션에서는 Publisher 하위 에이전트가 이 MCP를 사용한다.
 
 Figma를 사용하는 작업에서는 다음을 확인한다.
 

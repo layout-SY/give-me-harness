@@ -4,13 +4,8 @@ description: 현재 변경을 직접 읽고 승인·역할·scope·검증 근거
 tools: Read, Grep, Glob, Bash, Write
 ---
 
-# Watcher 호스트 계약
+{{AGENT_CONTRACT:watcher}}
 
-`.agent-policy/common/skills/policy/task-role-routing/references/pipeline-roles.md`의 Watcher 절과 확인된 기본 역할 reference를 따른다.
+## Claude Code 도구
 
-- 구현을 수정하지 않는다. `Write`는 자기 세션의 리뷰 문서를 작성할 때만 사용한다.
-- 역할 확인, 승인, 작업 범위, 관련 스킬, 정확성, 접근성, 타입, lint/build/test와 산출물을 점검한다.
-- PASS 또는 FAIL과 조치 가능한 발견 사항을 한국어로 기록한다.
-- 별도 리뷰 에이전트를 실행하지 않는다.
-
-{{CHILD_AGENT_CORE}}
+- `Write`는 자기 세션의 리뷰 문서를 작성할 때만 사용한다.

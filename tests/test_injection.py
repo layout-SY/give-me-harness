@@ -311,30 +311,32 @@ class InjectionTests(unittest.TestCase):
             for project_id in ("user-ui", "admin-ui"):
                 with self.subTest(project=project_id):
                     self.project = replace(self.project, id=project_id)
-                    launch = self.prepare("claude", role="ui")
-                    self.assertIn("--mcp-config", launch.command)
-                    index = launch.command.index("--mcp-config")
-                    mcp_path = Path(launch.command[index + 1])
-                    self.assertEqual(mcp_path, launch.bundle_root / "claude-mcp.json")
-                    servers = json.loads(mcp_path.read_bytes())["mcpServers"]
-                    self.assertEqual(set(servers), {"TalkToFigma"})
-                    server = servers["TalkToFigma"]
-                    self.assertEqual(server["type"], "stdio")
-                    self.assertTrue(Path(server["command"]).is_absolute())
-                    self.assertEqual(server["args"], ["cursor-talk-to-figma-mcp@latest"])
-                    self.assertEqual(launch.command[launch.command.index("--setting-sources") + 1], "user")
-                    self.assertNotIn("--strict-mcp-config", launch.command)
-                    manifest = json.loads((launch.bundle_root / "manifest.json").read_bytes())
-                    self.assertIn("claude-mcp.json", manifest["files"])
+                    for role in ("ui", "generate"):
+                        launch = self.prepare("claude", role=role)
+                        self.assertIn("--mcp-config", launch.command)
+                        index = launch.command.index("--mcp-config")
+                        mcp_path = Path(launch.command[index + 1])
+                        self.assertEqual(mcp_path, launch.bundle_root / "claude-mcp.json")
+                        servers = json.loads(mcp_path.read_bytes())["mcpServers"]
+                        self.assertEqual(set(servers), {"TalkToFigma"})
+                        server = servers["TalkToFigma"]
+                        self.assertEqual(server["type"], "stdio")
+                        self.assertTrue(Path(server["command"]).is_absolute())
+                        self.assertEqual(server["args"], ["cursor-talk-to-figma-mcp@latest"])
+                        self.assertEqual(launch.command[launch.command.index("--setting-sources") + 1], "user")
+                        self.assertNotIn("--strict-mcp-config", launch.command)
+                        manifest = json.loads((launch.bundle_root / "manifest.json").read_bytes())
+                        self.assertIn("claude-mcp.json", manifest["files"])
         self.assertEqual(config.read_text(), '{"mcpServers": {}, "projects": {}}\n')
         self.assertEqual(self.consumer_snapshot(), before)
 
-    def test_claude_mcp_defaults_are_scoped_to_projects_host_and_ui_role(self) -> None:
+    def test_claude_mcp_defaults_are_scoped_to_projects_host_and_ui_roles(self) -> None:
         for project_id in ("user-ui", "admin-ui"):
             self.project = replace(self.project, id=project_id)
             for host in ("codex", "claude", "opencode"):
                 for role in ("logic", "ui", "orchest", "review", "generate"):
-                    if (host, role) == ("claude", "ui"):
+                    if host == "claude" and role in {"ui", "generate"}:
+                        # generate 세션의 Publisher 하위 에이전트가 UI 세션과 같은 Figma 연결을 쓴다.
                         continue
                     with self.subTest(project=project_id, host=host, role=role):
                         launch = self.prepare(host, role=role)

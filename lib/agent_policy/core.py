@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import tomllib
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Final
 
@@ -96,17 +97,34 @@ def select_projects(selector: str) -> tuple[ProjectConfig, ...]:
     return projects
 
 
+@lru_cache(maxsize=1)
+def _agent_contracts() -> tuple[tuple[str, str], ...]:
+    common = CENTRAL_ROOT / "policy/common"
+    core = (common / "CHILD_AGENT_CORE.template.md").read_text(encoding="utf-8").strip()
+    contracts = []
+    for source in sorted((common / "agents").glob("*.md")):
+        if source.name == "README.md":
+            continue
+        text = source.read_text(encoding="utf-8").strip() + "\n\n" + core
+        if '"""' in text or "\\" in text:
+            raise PolicyError(f"하위 에이전트 계약은 TOML 여러 줄 문자열에 그대로 넣을 수 있어야 합니다: {source.name}")
+        contracts.append(("{{AGENT_CONTRACT:" + source.stem + "}}", text))
+    return tuple(contracts)
+
+
+def agent_contracts() -> dict[str, str]:
+    """역할 본문과 공통 계약의 단일 원본. 호스트 adapter는 표식만 가진다."""
+    return dict(_agent_contracts())
+
+
 def replacements(project: ProjectConfig) -> dict[str, str]:
     required_commands = ("dev", "build", "lint", "test", "preview")
     missing = [name for name in required_commands if name not in project.commands]
     if missing:
         raise PolicyError(f"{project.id} 명령이 누락되었습니다: {', '.join(missing)}")
-    child_core = (CENTRAL_ROOT / "policy/common/CHILD_AGENT_CORE.template.md").read_text(encoding="utf-8").strip()
-    if '"""' in child_core or "\\" in child_core:
-        raise PolicyError("하위 에이전트 공통 계약은 TOML 여러 줄 문자열에 그대로 넣을 수 있어야 합니다.")
     return {
         # 다른 표식보다 먼저 치환해 계약 본문 안의 표식도 함께 렌더한다.
-        "{{CHILD_AGENT_CORE}}": child_core,
+        **agent_contracts(),
         "{{PROJECT_ID}}": project.id,
         "{{PROJECT_NAME}}": project.name,
         "{{PROJECT_PATH}}": str(project.path),
@@ -356,6 +374,7 @@ def audit_project(project: ProjectConfig) -> tuple[str, ...]:
         if any(marker in text for marker in legacy_distribution_markers):
             issues.append(f"forbidden legacy distribution header: {relative}")
         unresolved = (
+            "{{AGENT_CONTRACT:",
             "{{CHILD_AGENT_CORE}}",
             "{{PROJECT_",
             "{{WORKTREE_ROOT}}",

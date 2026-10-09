@@ -24,7 +24,7 @@
 
 ## 한 세션 파이프라인
 
-`generate` 세션은 Planner·Publisher·Generator·Refactorer·Watcher를 하위 에이전트로 호출할 수 있다. `orchest` 세션은 Planner만 제공하며 source를 변경하지 않는다. 부모 세션은 다음 순서로 조율한다.
+`generate` 세션은 Planner·Publisher·Generator·Refactorer·Watcher를 하위 에이전트로 호출할 수 있다. Publisher는 UI 세션의 작업 방식을, Generator와 Refactorer는 Logic 세션의 작업 방식을 적용한다(`pipeline-roles.md`). `orchest` 세션은 Planner만 제공하며 source를 변경하지 않는다. 부모 세션은 다음 순서로 조율한다.
 
 1. 사용자 요청을 받고 현황판과 실제 worktree 목록을 조회한다.
 2. 작업 범위와 사용할 스킬·도구·정책을 탐색한다. 진행 중인 작업과 범위가 겹치면 그 범위의 상세 조사를 미루고 대기 또는 분기 방안을 정리한다.

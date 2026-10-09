@@ -44,8 +44,8 @@ class ChildContractTests(unittest.TestCase):
         lookup.start()
         self.addCleanup(lookup.stop)
 
-    def child_definitions(self, host: str) -> tuple[Path, Path, dict[str, str]]:
-        launch = prepare_injection(self.project, host, "generate", build_root=self.root / "build",
+    def child_definitions(self, host: str, role: str = "generate") -> tuple[Path, Path, dict[str, str]]:
+        launch = prepare_injection(self.project, host, role, build_root=self.root / "build",
             state_root=self.root / "state", source_codex_home=self.source_codex_home)
         directory, suffix, runtime = {
             "claude": (launch.bundle_root / "plugin/agents", ".md", launch.bundle_root / "plugin/runtime"),
@@ -54,7 +54,7 @@ class ChildContractTests(unittest.TestCase):
                       launch.bundle_root / "policy/.agent-policy/runtime"),
         }[host]
         texts = {}
-        for name in CHILDREN:
+        for name in role_profile(role).native_agents:
             raw = (directory / (name + suffix)).read_text(encoding="utf-8")
             texts[name] = tomllib.loads(raw)["developer_instructions"] if suffix == ".toml" else raw
         return launch.bundle_root / "policy", runtime, texts
@@ -85,6 +85,73 @@ class ChildContractTests(unittest.TestCase):
                     self.assertIn(f"python3 -I {runtime}/git_operations.py board", text)
                     self.assertTrue((runtime / "git_operations.py").is_file())
                     self.assertTrue((runtime / "work_board.py").is_file())
+
+    def test_role_bodies_come_from_one_source_for_every_host(self) -> None:
+        # 역할 본문은 호스트마다 따로 적지 않는다. 같은 원본이 세 호스트에 그대로 들어간다.
+        source = Path(__file__).resolve().parents[1] / "policy/common/agents"
+        definitions = {host: self.child_definitions(host)[2] for host in ("codex", "claude", "opencode")}
+        for name in CHILDREN:
+            lines = [line for line in (source / f"{name}.md").read_text(encoding="utf-8").splitlines()
+                     if line.startswith("- ") and ".agent-policy/" not in line]
+            self.assertGreaterEqual(len(lines), 3, name)
+            for host, texts in definitions.items():
+                with self.subTest(host=host, child=name):
+                    for line in lines:
+                        self.assertIn(line, texts[name])
+        adapters = Path(__file__).resolve().parents[1] / "adapters"
+        for path in adapters.glob("*/files/.*/agent*/*"):
+            with self.subTest(adapter=path.name):
+                self.assertIn("{{AGENT_CONTRACT:" + path.stem + "}}", path.read_text(encoding="utf-8"))
+
+    def test_generate_children_follow_existing_ui_and_logic_working_methods(self) -> None:
+        for host in ("codex", "claude", "opencode"):
+            policy, _, texts = self.child_definitions(host)
+            references = f"{policy}/.agent-policy/common/skills/policy/task-role-routing/references"
+            skills = f"{policy}/.agent-policy/common/skills"
+            with self.subTest(host=host):
+                self.assertIn("`ui` 역할", texts["publisher"])
+                self.assertIn(f"{references}/ui.md", texts["publisher"])
+                self.assertIn(f"{skills}/policy/styles/", texts["publisher"])
+                self.assertIn(f"{skills}/policy/publishing/", texts["publisher"])
+                self.assertIn("unknown/ui-asset-plan.md", texts["publisher"])
+                self.assertNotIn(f"{references}/logic.md", texts["publisher"])
+                for name in ("generator", "refactorer"):
+                    self.assertIn("`logic` 역할", texts[name])
+                    self.assertIn(f"{references}/logic.md", texts[name])
+                    self.assertIn(f"{skills}/recipe/api-authoring/", texts[name])
+                    self.assertIn(f"{skills}/policy/data-fetch-layer/", texts[name])
+                    self.assertNotIn(f"{references}/ui.md", texts[name])
+                self.assertIn("`review` 역할", texts["watcher"])
+                self.assertIn(f"{skills}/policy/review-checklist/", texts["watcher"])
+                self.assertIn("`orchest` 역할", texts["planner"])
+
+    def test_role_sessions_keep_their_own_working_method_for_children(self) -> None:
+        # 매핑은 통합 구현 세션에만 적용한다. UI 세션의 Generator는 UI 방식으로 작업한다.
+        policy, _, texts = self.child_definitions("claude", "ui")
+        references = f"{policy}/.agent-policy/common/skills/policy/task-role-routing/references"
+        for name in ("publisher", "generator", "refactorer"):
+            with self.subTest(child=name):
+                self.assertIn("세션 role은 `ui`이고, 이 에이전트에는 `ui` 역할", texts[name])
+                self.assertIn(f"{references}/ui.md", texts[name])
+                self.assertNotIn("logic.md", texts[name])
+        _, _, logic = self.child_definitions("codex", "logic")
+        self.assertIn("`logic` 역할", logic["generator"])
+
+    def test_figma_mcp_reaches_only_the_claude_publisher(self) -> None:
+        claude = prepare_injection(self.project, "claude", "generate", build_root=self.root / "build",
+            state_root=self.root / "state", source_codex_home=self.source_codex_home)
+        servers = json.loads((claude.bundle_root / "claude-mcp.json").read_text(encoding="utf-8"))["mcpServers"]
+        self.assertEqual(set(servers), {"TalkToFigma"})
+        publisher = (claude.bundle_root / "plugin/agents/publisher.md").read_text(encoding="utf-8")
+        self.assertIn("tools: Read, Grep, Glob, Bash, Edit, Write, Skill, mcp__TalkToFigma\n", publisher)
+        self.assertIn("TalkToFigma", publisher)
+        for name in ("generator", "refactorer", "planner", "watcher"):
+            self.assertNotIn("TalkToFigma", (claude.bundle_root / f"plugin/agents/{name}.md").read_text(encoding="utf-8"))
+        for host in ("codex", "opencode"):
+            launch = prepare_injection(self.project, host, "generate", build_root=self.root / "build",
+                state_root=self.root / "state", source_codex_home=self.source_codex_home)
+            self.assertNotIn("--mcp-config", launch.command)
+            self.assertNotIn("Figma", self.child_definitions(host)[2]["publisher"])
 
     def test_generate_session_offers_planning_and_implementation_children(self) -> None:
         profile = role_profile("generate")

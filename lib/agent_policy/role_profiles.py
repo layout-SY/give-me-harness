@@ -85,6 +85,7 @@ ROLE_PROFILES: Final[dict[str, InjectRoleProfile]] = {
             ".agent-policy/common/skills/policy/abstraction-strategy/",
             ".agent-policy/common/skills/policy/coding-convention/",
             ".agent-policy/common/skills/policy/implementation-quality/",
+            ".agent-policy/common/skills/policy/publishing/",
             ".agent-policy/common/skills/policy/refactoring/",
             ".agent-policy/common/skills/policy/styles/",
             ".agent-policy/common/skills/policy/validation/",
@@ -137,6 +138,22 @@ ROLE_PROFILES: Final[dict[str, InjectRoleProfile]] = {
 }
 
 INJECT_ROLES: Final = tuple(ROLE_PROFILES)
+
+# 통합 구현 세션은 자식마다 기존 역할 세션의 작업 방식을 적용한다.
+# 그 밖의 세션에서는 자식도 세션 role의 방식을 따른다.
+GENERATE_CHILD_ROLES: Final = {
+    "planner": "orchest",
+    "publisher": "ui",
+    "generator": "logic",
+    "refactorer": "logic",
+    "watcher": "review",
+    "evaluator": "review",
+}
+
+
+def child_role(session_role: str, agent: str) -> str:
+    role_profile(session_role)
+    return GENERATE_CHILD_ROLES.get(agent, session_role) if session_role == "generate" else session_role
 _HOSTS = RUNTIME_CONTRACT.get("hosts")
 if not isinstance(_HOSTS, dict):
     raise RuntimeError("공통 runtime 계약의 hosts가 object가 아닙니다.")

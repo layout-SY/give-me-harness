@@ -1,6 +1,6 @@
 {
   "projects": ["user-ui", "admin-ui"],
-  "roles": ["ui"],
+  "roles": ["ui", "generate"],
   "mcpServers": {
     "TalkToFigma": {
       "type": "stdio",

@@ -2,8 +2,10 @@
 
 ## 상태
 
-- 계획 범위 1~7: 구현과 검증 완료, 미커밋
-- 추가 범위 8~11(역할 본문 단일화, Publisher의 UI 계약·Figma MCP, Generator·Refactorer의 Logic 계약, Figma MCP 공용화): 사용자 결정 대기, 미착수
+- 계획 범위 1~7: 구현·검증 완료. `task/orchestration-board`의 `c520a31`에 커밋
+- 이전 Codex 세션의 미커밋 작업: 같은 브랜치의 `5a35420`으로 분리해 커밋
+- 추가 범위 8~10(역할 본문 단일화, Publisher의 UI 방식과 Claude Figma MCP, Generator·Refactorer의 Logic 방식): 구현·검증 완료
+- 추가 범위 11(Figma MCP의 3개 호스트 공용화): 사용자 결정으로 하지 않음. Claude에만 둔다
 
 ## 실제 변경
 
@@ -25,7 +27,23 @@
 | 수정 | `templates/{plan.template,review-log.template,review-log}.md` | 현황판·병합 순서 항목, 검토 지문 항목 |
 | 수정 | `tests/test_injection.py`, `README.md` | 허용 동작 목록 기대값, 오케스트레이션 절 |
 
+### 추가 범위의 변경
+
+| 구분 | 파일 | 내용 |
+| --- | --- | --- |
+| 신규 | `policy/common/agents/{planner,publisher,generator,refactorer,watcher,evaluator}.md`, `README.md` | 역할 본문 단일 원본 |
+| 수정 | 자식 정의 18개 | 본문을 `{{AGENT_CONTRACT:<역할>}}` 표식으로 대체. Claude Publisher에 `Skill`, `mcp__TalkToFigma`와 Figma 연결 절 |
+| 수정 | `lib/agent_policy/core.py` | 역할 본문과 공통 계약을 합쳐 표식에 삽입 |
+| 수정 | `lib/agent_policy/role_profiles.py` | `generate` 세션의 자식별 역할 방식 매핑, `ui` 프로필에 `publishing` 추가 |
+| 수정 | `lib/agent_policy/injection.py` | 설치 사본에 세션 바인딩(적용 역할 계약 문서와 스킬 경로) 삽입 |
+| 수정 | `adapters/claude/mcp.defaults.json`, `project-ui` 스킬 | TalkToFigma를 `generate` 세션에도 주입 |
+| 수정 | `references/{pipeline-roles,orchestration}.md`, `README.md`, `docs/` | 역할별 작업 방식 |
+
 ## 결정과 근거
+
+- `generate` 세션에서 Publisher는 UI 방식, Generator·Refactorer는 Logic 방식을 적용한다. 스킬 목록은 기존 역할 프로필에서 가져온다. 그 밖의 세션에서는 자식도 세션 role의 방식을 따른다.
+- 화면 구조·스타일 리팩터링은 Publisher가 맡는다.
+- 세션 바인딩은 호스트가 읽는 설치 사본에만 넣는다. 번들의 정책 스냅샷은 렌더 결과와 같아야 한다는 기존 불변식을 유지하기 위해서다.
 
 - 현황판은 관계 그래프와 별도 파일(`work-board/v1/board.json`)에 둔다. 그래프는 소유권 필드를 거부하고, 준비된 Git 작업이 그래프 전체를 승인 대상과 비교하기 때문이다.
 - 쓰기 잠금과 소유권은 만들지 않는다. 범위가 겹치면 알리기만 한다.
@@ -34,7 +52,9 @@
 
 ## 검증
 
-- `python3 -m unittest discover -s tests -p <모듈>`을 28개 모듈에 대해 병렬 실행: 429개 테스트, 28개 모듈 모두 종료 코드 0
+- 1차 범위: `python3 -m unittest discover -s tests -p <모듈>`을 28개 모듈에 대해 병렬 실행, 429개 테스트, 모두 종료 코드 0
+- 추가 범위 반영 후 같은 방식으로 재실행: 433개 테스트, 28개 모듈 모두 종료 코드 0
+- 추가 범위 작업 중 두 번 실패를 확인하고 고쳤다. `tests/test_injection.py`에 넣은 들여쓰기 오류로 3개 모듈이 import에 실패했고, 세션 바인딩을 정책 스냅샷에 넣어 스냅샷·렌더 일치 테스트가 실패했다.
 - `bin/agent-policy audit`: `central-contract`, `admin-ui`, `user-ui` 모두 PASS
 - 수정 전 상태: `HEAD`의 `generator` 자식 정의 3종에 "부모에게 반환" 문구 0건
 
@@ -45,7 +65,6 @@
 
 ## 미완료와 인계
 
-- 추가 범위 8~11의 세 가지 결정: Figma MCP 대상 호스트, 역할 매핑의 적용 범위(`generate`만인지), UI 리팩터링 담당
 - 2차: 한 세션의 다중 작업, Codex·OpenCode의 하위 에이전트 식별
-- 작업 전부터 미커밋이던 Codex Git 실행기 변경(`injection.py`, `test_injection.py`, `README.md`)은 그대로 두었고 같은 파일에 이번 변경이 덧붙어 있다. 커밋 단위를 나눌 때 구분이 필요하다.
+- 커밋은 `task/orchestration-board` 브랜치에 있다. `main` 병합은 하지 않았다.
 - 실행 중인 소비자 세션은 원래 번들을 쓴다. 적용하려면 handoff 후 중앙 launcher로 새 inject 세션을 시작한다.
