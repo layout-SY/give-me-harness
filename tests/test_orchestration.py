@@ -277,10 +277,18 @@ class ChildContractTests(unittest.TestCase):
                 for expected in ("## 파이프라인 계약 (필수)", "source를 직접 수정하지 않고 아래 순서대로 하위 에이전트를 호출한다",
                                  "부모는 source를 직접 수정하지 않는다", "git_operations.py verdict --result PASS|FAIL",
                                  "`직접 수정 승인`", "작은 수정이라도 하위 에이전트 호출을 생략하지 않는다",
-                                 "`plan.md`와 `exploration.md`", "`implementation-log.md`", "`review-log.md`", "`final-summary.md`"):
+                                 "`plan.md`를 작성하게 한다", "`exploration.md`를 작성한다", "`implementation-log.md`", "`review-log.md`",
+                                 "`final-summary.md`"):
+                    self.assertIn(expected, prompt)
+                # 계획 뒤에 만든 작업 worktree 안에서 근거를 읽도록 순서를 명시한다.
+                for expected in ("**Planner(1차)**", "**Planner(2차)**", "그 worktree 안에서 읽은 것만 인정된다"):
                     self.assertIn(expected, prompt)
                 _, runtime, texts = self.child_definitions(host)
-                self.assertIn("`plan.md`와 `exploration.md`를 작성한다", texts["planner"])
+                self.assertIn("**2차(상세 탐색)**는 작업 worktree가 만들어진 뒤다", texts["planner"])
+                self.assertIn("`exploration.md`를 작성한다", texts["planner"])
+                for name in CHILDREN:
+                    self.assertIn("작업 worktree로 옮긴 뒤 읽는다", texts[name])
+                    self.assertIn("`cd <worktree 절대 경로>`를 단독 명령으로 실행한다", texts[name])
                 for name in ("publisher", "generator", "refactorer"):
                     self.assertIn("`implementation-log.md`에 변경 경로", texts[name])
                 self.assertIn(f"python3 -I {runtime}/git_operations.py verdict --result PASS|FAIL --start", texts["watcher"])
@@ -534,6 +542,38 @@ class WorkBoardTests(unittest.TestCase):
         self.assertIn("취소했습니다", self.event("user-prompt", prompt="B 구현 승인 취소").stdout)
         self.assertEqual(self.edit(first).returncode, 0)
         self.assertIn("작업 B의 계획 승인", self.edit(second).stderr)
+
+    def test_evidence_must_be_read_inside_the_task_worktree_created_after_planning(self) -> None:
+        # 기본 checkout에서 계획한 뒤 새 worktree를 만들고 그곳의 구현을 Generator에 맡기자,
+        # 스킬 근거가 기본 checkout에만 쌓여 "관련 SKILL.md 확인"으로 7번 차단됐다.
+        # 1차 계획: 기본 checkout에서 가볍게 조사하고 계획을 승인받는다.
+        self.tool("post-tool", "Skill", {"skill": "policy"}, tool_response={"success": True})
+        self.tool("post-tool", "Read", {"file_path": str(self.root / "src/app.ts")}, tool_response={"success": True})
+        tree = self.branch("A1")
+        (tree / "src").mkdir(exist_ok=True)
+        (tree / "src/app.ts").write_text("export const value = 1;\n")
+        plan = self.root / ".claude/logs/sessions/current/tasks/A/plan.md"
+        plan.parent.mkdir(parents=True, exist_ok=True)
+        plan.write_text(self.PLAN.format(goal="구현"))
+        (plan.parent / "exploration.md").write_text("탐색 결과\n")
+        self.runner("board-set", "--task", "A", "--title", "A", "--stage", "working", "--branch", "A1", "--plan", str(plan))
+        self.event("user-prompt", prompt="A 진행")
+        skill = tree / ".agent-policy/common/skills/policy/SKILL.md"
+        skill.parent.mkdir(parents=True)
+        skill.write_text("정책 색인\n")
+        # 기본 checkout에서 읽은 근거는 새 worktree의 근거가 아니다. 어디서 읽어야 하는지 알려 준다.
+        denied = self.edit(tree).stderr
+        self.assertIn("관련 SKILL.md 확인", denied)
+        self.assertIn(f"`cd {tree}`", denied)
+        self.assertIn("이어 쓴 명령은 근거로 인정하지 않습니다", denied)
+        # 작업 위치를 옮기지 않고 한 줄로 이어 쓴 읽기는 인정하지 않는다.
+        self.tool("post-tool", "Bash", {"command": f"cd {tree} && cat {skill}"}, tool_response={"exit_code": 0})
+        self.assertIn("관련 SKILL.md 확인", self.edit(tree).stderr)
+        # 2차 탐색: 작업 worktree로 위치를 옮긴 뒤 스킬과 코드를 읽으면 그 worktree의 근거가 된다.
+        self.tool("post-tool", "Read", {"file_path": str(skill)}, cwd=tree, tool_response={"success": True})
+        self.assertIn("역할별 재사용 자산·인접 구현 탐색", self.edit(tree).stderr)
+        self.tool("post-tool", "Read", {"file_path": str(tree / "src/app.ts")}, cwd=tree, tool_response={"success": True})
+        self.assertEqual(self.edit(tree).returncode, 0, self.edit(tree).stderr)
 
     def test_task_plan_must_be_a_session_plan_and_have_an_approval_region(self) -> None:
         self.branch("A1")

@@ -820,7 +820,10 @@ def implementation_gate_denial(
         return None
     if branch_guard.SHARED_GIT_ACCESS:
         return (f"소스 구현 준비가 필요합니다 ({root.resolve()}): " + ", ".join(dict.fromkeys(missing))
-                + ". 승인한 계획과 성공한 스킬·탐색 근거를 확인하세요. Git 변경 승인은 별도로 처리합니다.")
+                + ". 승인한 계획과 성공한 스킬·탐색 근거를 확인하세요. Git 변경 승인은 별도로 처리합니다.\n"
+                f"스킬·탐색 근거는 이 worktree를 작업 위치로 둔 상태에서 읽어야 기록됩니다. 다른 worktree에서 읽은 근거는 인정하지 않습니다. "
+                f"`cd {root.resolve()}`를 단독 명령으로 먼저 실행한 뒤 관련 SKILL.md와 이 worktree의 대상 코드를 읽으세요. "
+                "`cd … && cat …`처럼 이어 쓴 명령은 근거로 인정하지 않습니다. branch나 HEAD가 바뀌면 다시 확인합니다.")
     return (
         "공통 구현 gate의 필수 조건이 누락되었습니다: "
         + ", ".join(dict.fromkeys(missing))

@@ -379,11 +379,12 @@ def _injection_preamble(
 
 상세 계약은 `.agent-policy/common/skills/policy/task-role-routing/references/orchestration.md`에 있다. 이 세션의 부모는 조율만 한다. source를 직접 수정하지 않고 아래 순서대로 하위 에이전트를 호출한다. 한 단계의 문서가 없으면 다음 단계가 훅에서 막힌다. 문서 위치는 세션 산출물 폴더이며, 현황판에 계획을 등록한 작업은 `tasks/<작업 ID>/`다.
 
-1. **Planner**를 호출해 `plan.md`와 `exploration.md`를 작성하게 한다. 계획에는 작업 항목별 변경 종류와 담당 하위 에이전트가 있어야 한다. 사용자 승인을 받는다.
-2. 계획의 배정대로 **Publisher**(UI·스타일), **Generator**(로직), **Refactorer**(로직의 구조 정리)를 호출한다. 각 에이전트는 `implementation-log.md`에 변경과 검증을 기록한다.
-3. 포맷과 lint·test·build를 마친 뒤 **Watcher**를 호출한다. Watcher는 `review-log.md`를 작성하고 `{runner} verdict --result PASS|FAIL --start <시작 지문>`으로 판정을 기록한다. FAIL이면 수정 요구를 해당 구현 에이전트에 전달하고 다시 검토받는다.
-4. 미커밋 상태로 사용자에게 알린다. 커밋은 현재 내용과 일치하는 Watcher PASS가 있어야 준비된다. 검토 뒤에 포맷하거나 수정하면 다시 검토받는다.
-5. 병합을 준비하기 전에 부모가 `final-summary.md`를 작성한다.
+1. **Planner(1차)**를 호출해 계획에 필요한 만큼만 조사하고 `plan.md`를 작성하게 한다. 계획에는 작업 branch·worktree와 작업 항목별 변경 종류·담당 하위 에이전트가 있어야 한다. 사용자 승인을 받고 승인된 branch·worktree를 만든다.
+2. **Planner(2차)**를 작업 worktree 절대 경로와 함께 호출한다. Planner는 `cd <worktree>`로 작업 위치를 옮긴 뒤 스킬과 대상 코드를 읽고 `exploration.md`를 작성한다. source 수정을 허용하는 근거는 그 worktree 안에서 읽은 것만 인정된다. 계획과 다른 사실이 나오면 계획을 고쳐 다시 승인받는다. 계획을 세운 worktree에서 그대로 구현하는 작업은 1차와 2차를 한 번에 할 수 있다.
+3. 계획의 배정대로 **Publisher**(UI·스타일), **Generator**(로직), **Refactorer**(로직의 구조 정리)를 호출한다. 각 에이전트는 `implementation-log.md`에 변경과 검증을 기록한다.
+4. 포맷과 lint·test·build를 마친 뒤 **Watcher**를 호출한다. Watcher는 `review-log.md`를 작성하고 `{runner} verdict --result PASS|FAIL --start <시작 지문>`으로 판정을 기록한다. FAIL이면 수정 요구를 해당 구현 에이전트에 전달하고 다시 검토받는다.
+5. 미커밋 상태로 사용자에게 알린다. 커밋은 현재 내용과 일치하는 Watcher PASS가 있어야 준비된다. 검토 뒤에 포맷하거나 수정하면 다시 검토받는다.
+6. 병합을 준비하기 전에 부모가 `final-summary.md`를 작성한다.
 
 - 호스트가 하위 에이전트 호출을 식별하면({', '.join(pipeline.get('child_identifying_hosts', ()))}) 부모와 Planner·Watcher의 source 쓰기를 guard가 거부한다. 그렇지 않은 호스트에서도 같은 계약을 지킨다.
 - 사용자가 `{pipeline.get('direct_edit_phrase', '')}`을 입력한 경우에만 그 응답 동안 부모가 source를 직접 수정할 수 있다. 다음 사용자 입력에서 다시 막힌다. 이 예외를 먼저 요청하거나 전제로 계획하지 않는다.
