@@ -245,6 +245,48 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(path.read_text(), "export const staged={value:1};\n")
         self.assertEqual(self.fixture.git("diff", "--cached"), before)
 
+    def test_conflicted_merge_defers_formatting_until_the_merge_commit(self):
+        # user-ui의 origin/dev 병합에서 충돌 파일이 index에 올라 있어 포맷이 거부됐고,
+        # 포맷 기록을 요구하는 검증·stage·commit과 Stop이 모두 막혀 사용자가 직접 실행해야 했다.
+        git = self.fixture.git
+        git("switch", "-qc", "incoming")
+        (self.root / "src/app.ts").write_text("export const value = 2;\n")
+        git("commit", "-qam", "incoming")
+        git("switch", "-q", "sy-main")
+        (self.root / "src/app.ts").write_text("export const value = 3;\n")
+        git("commit", "-qam", "ours")
+        merge = subprocess.run(["git", "merge", "incoming"], cwd=self.root, text=True, capture_output=True)
+        self.assertNotEqual(merge.returncode, 0, "충돌하는 병합이어야 합니다.")
+        resolved = "export const value={merged:1};\n"
+        path = self.write("src/app.ts", resolved)
+
+        def output(result):
+            return result.stdout + result.stderr
+
+        validation = {"tool_name": "Bash", "tool_call_id": "merge-lint", "tool_input": {"command": "npm run lint"}}
+        self.fixture.assert_allowed(self.hook("pre-tool", validation))
+        self.fixture.assert_allowed(self.hook("post-tool", {**validation, "tool_response": {"exit_code": 0}}))
+        staging = output(self.hook("pre-tool", {"tool_name": "Bash", "tool_input": {"command": "git add -- src/app.ts"}}))
+        self.assertNotIn("Prettier 적용이 확인되지 않은", staging)
+        self.assertNotIn("stage된", staging)
+        self.assertIn("보호 실행", staging)
+        stop = self.hook("format-stop", {})
+        self.fixture.assert_allowed(stop)
+        self.assertNotIn('"block"', stop.stdout)
+        explicit = self.runner()
+        self.assertNotEqual(explicit.returncode, 0)
+        self.assertIn("병합 commit 뒤", explicit.stderr)
+        self.assertEqual(path.read_text(), resolved, "병합 중에는 파일을 다시 쓰지 않습니다.")
+
+        git("add", "--", "src/app.ts")
+        git("commit", "-qm", "merge")
+        # 병합이 끝나면 미뤄 둔 포맷이 평소처럼 적용되고 다시 요구된다.
+        commit = output(self.hook("pre-tool", {"tool_name": "Bash", "tool_input": {"command": "git commit --allow-empty -m next"}}))
+        self.assertIn("Prettier 적용이 확인되지 않은", commit)
+        applied = self.runner()
+        self.assertEqual(applied.returncode, 0, applied.stderr)
+        self.assertEqual(path.read_text(), "export const value = { merged: 1 };\n")
+
     def test_another_session_write_with_same_bytes_prevents_adoption(self):
         self.write("src/shared.ts", "export const shared={value:1};\n")
         self.write("src/shared.ts", "export const shared={value:1};\n", session="other-session")

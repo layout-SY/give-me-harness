@@ -87,6 +87,8 @@
 - `bin/agent-policy audit`: `central-contract`, `admin-ui`, `user-ui` 모두 PASS
 - 수정 전 상태: `HEAD`의 `generator` 자식 정의 3종에 "부모에게 반환" 문구 0건
 
+- 충돌 병합 중 포맷 교착 수정(2026-10-12, 사용자 보고 결함): 회귀 테스트가 수정 전 보고된 오류로 실패하고 수정 후 통과함을 확인. 전체 재실행 450개 테스트, 28개 모듈 모두 종료 코드 0. 상세는 `docs/merge-format-deadlock-2026-10-12.md`
+
 ## 실행하지 않은 검증
 
 - 실제 호스트(Claude Code, Codex, OpenCode)를 띄운 종단 확인

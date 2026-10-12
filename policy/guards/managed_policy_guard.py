@@ -604,7 +604,9 @@ def main() -> None:
                     runtime_state.bind_native_session(common, host, event_session_id(event))
                     formatting.resolve_superseded_calls(root, event, host)
                     uncertain = formatting.unconfirmed_calls(root, event, host)
-                    locations = list(dict.fromkeys(item["worktree"] for item in formatting.pending_files(root, event, host)))
+                    locations = [location for location in dict.fromkeys(
+                        item["worktree"] for item in formatting.pending_files(root, event, host))
+                        if not formatting.merging(Path(location))]  # 병합 commit 뒤로 미룬다.
                 if not uncertain:
                     # Prettier는 events lock 밖에서 계산한다. apply가 전후 상태를 다시 검사한다.
                     for location in locations:

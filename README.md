@@ -106,6 +106,8 @@ bin/agent-policy writes --project admin-ui --assignment <assignment-id> --reconc
 
 공용 formatter가 활성화된 새 bundle의 Stop/idle은 정상 저장된 자기 변경을 실제 포맷합니다. Codex·Claude의 첫 Stop 실패는 원인을 알리고 같은 오류로 반복 차단하지 않습니다. OpenCode는 idle 알림으로 표시합니다. 검증·Git 실행 전 검사와 시스템 프롬프트의 완료 절차를 함께 사용하며, 강제 종료까지 포맷 성공으로 간주하지 않습니다. 코드 수정 없는 commit·merge 요청은 대상 파일·필수 문서를 생성하지 않습니다. 기존 bundle을 재개하면 원래 정책을 유지하므로 새 inject 세션에서 적용합니다.
 
+충돌 병합이 진행 중인 worktree에서는 포맷을 병합 commit 뒤로 미룹니다. 해결하는 파일이 이미 index에 있어 stage 전에 포맷할 수 없기 때문이며, 병합 중에는 검증·stage·commit이 포맷을 요구하지 않습니다. 원인과 동작은 [충돌 병합 중 포맷 교착 수정](docs/merge-format-deadlock-2026-10-12.md)에 기록합니다.
+
 ## 역할과 병렬 세션
 
 - role이 없는 직접 실행은 지원하지 않습니다. 중앙 launcher에서 선택한 role은 이미 확인된 세션 계약으로 사용합니다.

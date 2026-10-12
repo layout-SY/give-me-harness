@@ -196,7 +196,7 @@ def require_before_validation(root: Path, event: dict, host: str, command_text: 
             target = paths.git_top_level(location)
             if target and unconfirmed_calls(root, event, host, target):
                 raise RuntimeError("결과 미확인 코드 쓰기를 확인한 뒤 포맷·검증하세요.")
-            if target and pending_files(root, event, host, target):
+            if target and pending_files(root, event, host, target) and not merging(target):
                 raise FormattingRequired(target)
 
 
@@ -282,11 +282,20 @@ def unconfirmed_calls(root: Path, event: dict, host: str, worktree: Path | None 
     return list(dict.fromkeys(unresolved))
 
 
+def merging(worktree: Path) -> bool:
+    """충돌을 해결하는 파일은 수정하기 전부터 index에 있다. stage 전에 포맷하는 순서를 지킬 수 없다."""
+    return git._git(worktree, "rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0
+
+
+MERGE_DEFERRAL = "병합이 진행 중인 worktree의 포맷은 병합 commit 뒤로 미룹니다. 병합 commit 뒤에 포맷과 검증을 다시 실행하세요"
+
+
 def check(root: Path, event: dict, host: str, worktree: Path | None = None) -> str | None:
     uncertain = unconfirmed_calls(root, event, host, worktree)
     if uncertain:
         return "코드 쓰기의 결과가 미확인되어 포맷 완료로 처리할 수 없습니다:\n" + "\n".join(uncertain)
-    items = pending_files(root, event, host, worktree)
+    # 병합 중인 worktree의 파일은 대기 상태로 두고 병합 commit 뒤에 다시 요구한다.
+    items = [item for item in pending_files(root, event, host, worktree) if not merging(Path(item["worktree"]))]
     if not items:
         return None
     return ("Prettier 적용이 확인되지 않은 파일이 있습니다:\n" + "\n".join(item["path"] for item in items)
@@ -329,6 +338,8 @@ def apply(root: Path, event: dict, host: str, worktree: Path) -> dict:
             resolve_superseded_calls(root, event, host)
             if unconfirmed_calls(root, event, host, worktree):
                 raise RuntimeError("결과 미확인 코드 쓰기를 먼저 확인한 뒤 포맷하세요.")
+            if merging(worktree):
+                raise RuntimeError(f"{MERGE_DEFERRAL}: {worktree}")
             items = pending_files(root, event, host, worktree)
             if not items:
                 return {"formatted": [], "ignored": []}
@@ -420,6 +431,9 @@ def main() -> None:
         if worktree is None or not git.same_git_repository(root, worktree):
             raise RuntimeError("같은 프로젝트의 실제 worktree에서 포맷하세요.")
         state.bind_native_session(git.git_common_directory(root), args.host, args.session, read_only=True)
+        if args.action == "apply" and merging(worktree) and pending_files(root, event, args.host, worktree):
+            # 조용히 성공으로 끝내지 않는다. 포맷이 아직 남아 있음을 알린다.
+            raise RuntimeError(f"{MERGE_DEFERRAL}: {worktree}")
         message = check(root, event, args.host, worktree)
         if args.action == "check":
             if message:
