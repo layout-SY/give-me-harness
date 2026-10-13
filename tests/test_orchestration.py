@@ -285,7 +285,7 @@ class ChildContractTests(unittest.TestCase):
                     self.assertIn(expected, prompt)
                 _, runtime, texts = self.child_definitions(host)
                 self.assertIn("**2차(상세 탐색)**는 작업 worktree가 만들어진 뒤다", texts["planner"])
-                self.assertIn("`exploration.md`를 작성한다", texts["planner"])
+                self.assertIn("`exploration.md`는 탐색을 마친 뒤 한 번에 작성한다", texts["planner"])
                 for name in CHILDREN:
                     self.assertIn("작업 worktree로 옮긴 뒤 읽는다", texts[name])
                     self.assertIn("`cd <worktree 절대 경로>`를 단독 명령으로 실행한다", texts[name])
@@ -296,6 +296,29 @@ class ChildContractTests(unittest.TestCase):
                 logic = prepare_injection(self.project, host, "logic", build_root=self.root / "build",
                     state_root=self.root / "state", source_codex_home=self.source_codex_home)
                 self.assertNotIn("## 파이프라인 계약", logic.system_prompt.read_text(encoding="utf-8"))
+
+    def test_orchest_contract_keeps_child_calls_from_being_blocked_or_repeated(self) -> None:
+        # 실제 orchest 세션의 비용 분석: 근거 부족·셸 rm으로 차단된 하위 호출, 계획을 다시 풀어 쓴 지시,
+        # 큰 컨텍스트 재개, 문서를 여러 번 고쳐 쓴 Planner 2차, 전체 검증을 반복한 Watcher가 비용의 대부분이었다.
+        for host in ("codex", "claude", "opencode"):
+            with self.subTest(host=host):
+                launch = prepare_injection(self.project, host, "orchest", build_root=self.root / "build",
+                    state_root=self.root / "state", source_codex_home=self.source_codex_home)
+                prompt = launch.system_prompt.read_text(encoding="utf-8")
+                for expected in ("### 하위 에이전트 호출 비용", "부모가 그 worktree에서 근거를 먼저 기록한다",
+                                 "`git rm -- <경로>`", "절 번호로 가리킨다", "새 하위 에이전트를 호출한다",
+                                 "검증 결과와 그때의 지문을 Watcher에 전달한다", "새 하위 에이전트를 호출하지 않는다"):
+                    self.assertIn(expected, prompt)
+                policy, _, texts = self.child_definitions(host)
+                contract = (policy / ".agent-policy/common/skills/policy/task-role-routing/references/orchestration.md").read_text(encoding="utf-8")
+                self.assertIn("### 하위 에이전트 호출 비용", contract)
+                for name in CHILDREN:
+                    self.assertIn("파일 삭제는 요청으로 반환한다", texts[name])
+                    self.assertIn("문서에 적은 내용은 경로와 절로 가리키고 다시 풀어 쓰지 않는다", texts[name])
+                self.assertIn("삭제 항목은 부모의 Git 작업(`git rm`)으로 계획한다", texts["planner"])
+                self.assertIn("`exploration.md`는 탐색을 마친 뒤 한 번에 작성한다", texts["planner"])
+                self.assertIn("부모가 전달한 검증 결과의 지문이 시작 지문과 같으면", texts["watcher"])
+                self.assertIn("구현 에이전트가 보고한 결과를 그대로 믿지 않는다", texts["watcher"])
 
 
 class WorkBoardTests(unittest.TestCase):
