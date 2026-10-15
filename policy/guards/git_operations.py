@@ -143,8 +143,11 @@ def reserve_write(root: Path, event: dict, host: str, locations: list[Path]) -> 
     with state.locked(relations.directory(root) / "locks/git.lock"):
         for location in set(locations):
             identifier = relations.digest([host, event.get("session_id"), call, str(location)])
-            state.write(relations.directory(root) / "writes" / (identifier + ".json"),
-                {"host": host, "session": event.get("session_id"), "call": call, "worktree": str(location), "created_at": time.time()})
+            record = {"host": host, "session": event.get("session_id"), "call": call, "worktree": str(location), "created_at": time.time()}
+            agent = event.get("agent_id")
+            if isinstance(agent, str) and agent:
+                record["agent"] = agent  # 하위 에이전트가 끝날 때 그 기록과 대조한다.
+            state.write(relations.directory(root) / "writes" / (identifier + ".json"), record)
 
 
 def complete_write(root: Path, event: dict, host: str) -> None:

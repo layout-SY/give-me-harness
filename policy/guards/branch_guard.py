@@ -1103,6 +1103,7 @@ READ_ONLY_GIT_SUBCOMMANDS = frozenset(
     {
         "blame",
         "cat-file",
+        "check-ignore",
         "count-objects",
         "describe",
         "diff",

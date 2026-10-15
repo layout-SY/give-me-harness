@@ -264,6 +264,11 @@ class ChildContractTests(unittest.TestCase):
         for name in ("watcher", "planner"):
             text = (launch.bundle_root / f"plugin/agents/{name}.md").read_text(encoding="utf-8")
             self.assertIn("tools: Read, Grep, Glob, Bash, Write\n", text)
+        # 하위 에이전트 종료 시 쓰기 예약을 정리하는 훅이 실제 번들에 설치된다.
+        hooks = json.loads((launch.bundle_root / "plugin/hooks/hooks.json").read_text(encoding="utf-8"))["hooks"]
+        stop = [hook["command"] for entry in hooks["SubagentStop"] for hook in entry["hooks"]]
+        self.assertEqual(len(stop), 1)
+        self.assertTrue(stop[0].endswith("managed_policy_guard.py subagent-stop claude"), stop)
         # 기존 세션이 쓰는 adapter 원본의 도구 목록은 바꾸지 않는다.
         rendered = render_project(load_project("user-ui"))
         self.assertIn("tools: Read, Grep, Glob, Bash\n", rendered[".claude/agents/watcher.md"].decode())
@@ -776,6 +781,56 @@ class WorkBoardTests(unittest.TestCase):
                               "tool_input": {"file_path": str(tree / "src/app.ts"), "old_string": "1", "new_string": "2"}}),
             cwd=self.root, env=self.env, text=True, capture_output=True)
         self.assertIn("작업 A의 계획 승인", fresh.stderr)
+
+    def test_git_check_ignore_is_a_read_only_query(self) -> None:
+        # 실제 orchest 세션에서 Watcher의 `git check-ignore` 조회가 Git 변경으로 분류되어 차단됐다.
+        command = f"git -C {self.root} check-ignore -v dist node_modules/.tmp"
+        child = self.event("pre-tool", command, **self.WATCHER)
+        self.assertEqual(child.returncode, 0, child.stderr)
+        self.assertEqual(self.event("pre-tool", command).returncode, 0)
+
+    def test_reservation_of_a_call_missing_from_the_finished_child_transcript_is_released(self) -> None:
+        # 실제 orchest 세션: Watcher의 병렬 호출 하나가 PreToolUse에서 쓰기 예약만 남기고 대화 기록에도,
+        # PostToolUse에도 나타나지 않았다. 그 예약이 commit 실행을 막았다.
+        self.ready()
+        writes = lambda: {item["call"]: item for item in self.runner("writes")["writes"]}
+        self.assertEqual(self.event("pre-tool", "npx tsc -b", **self.WATCHER).returncode, 0)
+        orphan = str(self.calls)
+        self.assertEqual(self.event("pre-tool", "npm run test", **self.WATCHER).returncode, 0)
+        unfinished = str(self.calls)
+        self.assertEqual(writes()[orphan]["agent"], "agent-w")
+        transcript = self.base / "subagents/agent-agent-w.jsonl"
+        transcript.parent.mkdir()
+        transcript.write_text(json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": unfinished, "name": "Bash", "input": {"command": "npm run test"}}]}}) + "\n")
+        stop = lambda **extra: self.event("subagent-stop", hook_event_name="SubagentStop", agent_type="asan-agent-policy:watcher",
+                                          agent_transcript_path=str(transcript), **extra)
+        # 다른 하위 에이전트의 종료나 기록 경로가 없는 종료는 예약을 정리하지 않는다.
+        self.assertEqual(stop(agent_id="agent-g").returncode, 0)
+        self.assertEqual(set(writes()), {orphan, unfinished})
+        self.assertEqual(self.event("subagent-stop", hook_event_name="SubagentStop", agent_id="agent-w").returncode, 0)
+        self.assertEqual(set(writes()), {orphan, unfinished})
+        result = stop(agent_id="agent-w")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # 기록에 있으나 결과가 확인되지 않은 호출은 실제 종료를 확인해야 하므로 남긴다.
+        self.assertEqual(set(writes()), {unfinished})
+        receipts = list((self.repository / "branch-relations/v1/write-receipts").glob("*.json"))
+        self.assertEqual([json.loads(path.read_text())["outcome"] for path in receipts], ["not-recorded"])
+        # Claude 하위 에이전트의 종료 이벤트가 이 정리를 호출한다.
+        events = json.loads((Path(__file__).resolve().parents[1] / "adapters/claude/events.json").read_text())
+        self.assertEqual([hook["command"] for entry in events["SubagentStop"] for hook in entry["hooks"]], ["subagent-stop"])
+
+    def test_child_stop_does_not_release_reservations_outside_orchestration(self) -> None:
+        self.env["ASAN_AGENT_POLICY_ROLE"] = "logic"
+        self.ready()
+        self.event("pre-tool", "npx tsc -b", agent_id="agent-w", agent_type="watcher")
+        transcript = self.base / "subagents/agent-agent-w.jsonl"
+        transcript.parent.mkdir()
+        transcript.write_text("")
+        result = self.event("subagent-stop", hook_event_name="SubagentStop", agent_id="agent-w",
+                            agent_transcript_path=str(transcript))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(len(self.runner("writes")["writes"]), 1)
 
     def test_child_agent_cannot_prepare_or_run_git_changes_where_host_identifies_it(self) -> None:
         runner = f"python3 -I {self.runtime / 'git_operations.py'}"

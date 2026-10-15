@@ -450,6 +450,18 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
             _event_protocol.tool_call_id(event), {"event": "PermissionDenied", "reason": event.get("reason")})
         print("{}")
         return
+    if mode == "subagent-stop":
+        # 오케스트레이션 세션에서 끝난 하위 에이전트의 기록에 없는 호출의 쓰기 예약을 해소한다.
+        agent, transcript = event.get("agent_id"), event.get("agent_transcript_path")
+        if (host == "claude" and branch_guard.SHARED_GIT_ACCESS and load_runtime_module("pipeline").active()
+                and isinstance(agent, str) and isinstance(transcript, str) and transcript):
+            root = repository_root(event)
+            common = branch_guard.git_common_directory(root) or root.resolve()
+            session = event_session_id(event)
+            load_runtime_module("write_receipts").release_unrecorded(
+                runtime_state.repository_state(common), host, session, runtime_state.owner_id(host, session), agent, Path(transcript))
+        print("{}")
+        return
     if mode == "post-tool":
         load_runtime_module("formatting").record_after(repository_root(event), event, host)
         complete_binding(event, repository_root(event), host)

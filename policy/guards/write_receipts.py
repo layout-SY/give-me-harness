@@ -25,7 +25,8 @@ def pending_writes(repository: Path, host: str | None = None, session: str | Non
     return result
 
 
-def cancel_unexecuted(repository: Path, host: str, session: str, owner: str, call: str, evidence: dict) -> list[str]:
+def cancel_unexecuted(repository: Path, host: str, session: str, owner: str, call: str, evidence: dict,
+                      outcome: str = "not-executed", reason: str = "permission-denied-before-execution") -> list[str]:
     """호출자는 native 거절 근거를 검증하고 events.lock을 보유해야 한다."""
     if not call or host != "claude" or not session:
         raise RuntimeError("실행 전 거절된 Claude 호출 식별자가 필요합니다.")
@@ -42,13 +43,13 @@ def cancel_unexecuted(repository: Path, host: str, session: str, owner: str, cal
         # 삭제 전에 근거와 원본을 보존한다. 중단 후 같은 호출의 재처리는 멱등이다.
         receipt = directory / "write-receipts" / (state.digest(host + ":" + session + ":" + call) + ".json")
         if not receipt.exists():
-            state.write(receipt, {"outcome": "not-executed", "host": host, "session": session,
+            state.write(receipt, {"outcome": outcome, "host": host, "session": session,
                                  "owner": owner, "call": call, "writes": writes, "formatting": record,
                                  "evidence": evidence})
         if files:
             record["not_executed"] = True
             for item in files:
-                item["resolved_by"] = {"reason": "permission-denied-before-execution", "receipt": str(receipt)}
+                item["resolved_by"] = {"reason": reason, "receipt": str(receipt)}
             state.write(source, record)
             for item in files:
                 writer = repository / "formatting/v1/writers" / (state.digest(item["path"]) + ".json")
@@ -70,6 +71,35 @@ def cancel_unexecuted(repository: Path, host: str, session: str, owner: str, cal
         for item in writes:
             (directory / "writes" / (item["id"] + ".json")).unlink(missing_ok=True)
         return [item["id"] for item in writes]
+
+
+def release_unrecorded(repository: Path, host: str, session: str, owner: str, agent: str, transcript: Path) -> list[str]:
+    """끝난 하위 에이전트의 대화 기록에 없는 호출의 예약만 해소한다. 호출자는 events.lock을 보유해야 한다.
+
+    병렬 호출이 취소되면 PreToolUse만 실행되고 대화 기록과 PostToolUse가 남지 않는다. 하위 에이전트가
+    끝났으므로 그 호출은 더 실행되지 않는다. 기록에 있으나 결과가 확인되지 않은 호출은 남긴다.
+    """
+    if host != "claude" or not session or not agent or transcript.name != f"agent-{agent}.jsonl" or not transcript.is_file():
+        return []
+    if transcript.stat().st_size > 32 * 1024 * 1024:
+        return []
+    recorded = set()
+    with transcript.open() as stream:
+        for line in stream:
+            try:
+                content = json.loads(line).get("message", {}).get("content")
+            except (json.JSONDecodeError, AttributeError):
+                continue
+            for block in content if isinstance(content, list) else ():
+                if isinstance(block, dict):
+                    recorded.update(value for value in (block.get("id"), block.get("tool_use_id")) if isinstance(value, str))
+    released = []
+    for item in pending_writes(repository, host, session):
+        if item.get("agent") == agent and item.get("call") and item["call"] not in recorded:
+            released += cancel_unexecuted(repository, host, session, owner, item["call"],
+                {"event": "SubagentStop", "agent": agent, "transcript": str(transcript), "recorded_calls": len(recorded)},
+                outcome="not-recorded", reason="call-missing-from-finished-agent-transcript")
+    return released
 
 
 def denied_transcript_calls(path: Path, session: str) -> dict[str, dict]:

@@ -555,6 +555,7 @@ def _replace_guard_commands(value: object, runtime: Path, host: str) -> object:
         "pre-tool",
         "post-tool",
         "write-denied",
+        "subagent-stop",
         "format-stop",
         "documentation-stop",
     ):
