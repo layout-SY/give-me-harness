@@ -373,6 +373,7 @@ def _injection_preamble(
     formatter_command = shlex.join(["python3", "-I", str(formatter_root / "formatting.py"), "apply"])
     runner = shlex.join(["python3", "-I", str(formatter_root / "git_operations.py")])
     pipeline = ORCHESTRATION_CONTRACT.get("pipeline") or {}
+    token = ORCHESTRATION_CONTRACT.get("token_analysis") or {}
     pipeline_contract = "" if role not in PIPELINE_ROLES else f"""## 파이프라인 계약 (필수)
 
 아래 공통 정책 1절의 "guard가 orchest의 source 변경을 차단한다"는 설명 대신 이 절이 우선한다. 이 세션에서는 부모의 source 쓰기를 막고 구현 하위 에이전트의 쓰기를 허용한다.
@@ -402,6 +403,11 @@ def _injection_preamble(
 - 부모가 lint·test·build를 실행했으면 실행한 명령, 검증 결과와 그때의 지문을 Watcher에 전달한다.
 - host가 사용 한도 임박을 알렸거나 직전 하위 에이전트가 한도로 중단됐으면 새 하위 에이전트를 호출하지 않는다. 현재 단계를 현황판과 문서에 남기고 사용자에게 알린다.
 - 하위 에이전트의 보고에서 결과·변경 경로·검증·질문·Git 요청만 남기고, 큰 명령 출력은 파일로 남겨 필요한 부분만 읽는다.
+
+### 토큰 사용량 분석
+
+- 사용자가 `{token.get('phrase', '')}`을 입력한 세션에서는 작업을 병합한 뒤 branch·worktree를 정리하기 전에 `.agent-policy/common/skills/{token.get('skill', '')}`에 따라 세션 산출물 폴더의 `{token.get('report', '')}`를 작성한다. 요청은 `{token.get('cancel_phrase', '')}`으로 거둘 때까지 유지된다.
+- 요청이 있으면 `review`를 `--cleanup` 없이 준비해 병합만 완료하고, 보고서를 쓴 뒤 `{runner} cleanup --source <branch> --target <직접 부모>`로 정리한다. guard가 정리를 함께 하는 완료와 보고서 없는 정리를 막는다.
 
 ### 현황판과 하위 에이전트 호출
 

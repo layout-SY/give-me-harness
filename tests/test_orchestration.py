@@ -258,6 +258,25 @@ class ChildContractTests(unittest.TestCase):
         for name in ("CLAUDE.md", "AGENTS.md"):
             self.assertIn(rule, (central / name).read_text(encoding="utf-8"), name)
 
+    def test_token_usage_skill_is_bundled_only_for_orchestration(self) -> None:
+        skill = ".agent-policy/common/skills/policy/token-usage"
+        for host in ("codex", "claude", "opencode"):
+            with self.subTest(host=host):
+                policy, _, _ = self.child_definitions(host)
+                for name in ("SKILL.md", "references/report.md", "scripts/token_usage.py"):
+                    self.assertTrue((policy / skill / name).is_file(), name)
+                launch = prepare_injection(self.project, host, "orchest", build_root=self.root / "build",
+                    state_root=self.root / "state", source_codex_home=self.source_codex_home)
+                prompt = launch.system_prompt.read_text(encoding="utf-8")
+                for expected in ("### 토큰 사용량 분석", "`토큰 분석`", "policy/token-usage/SKILL.md",
+                                 "`unknown/token-usage-report.md`", "`review`를 `--cleanup` 없이"):
+                    self.assertIn(expected, prompt)
+                for role in ("logic", "ui"):
+                    other = prepare_injection(self.project, host, role, build_root=self.root / "build",
+                        state_root=self.root / "state", source_codex_home=self.source_codex_home)
+                    self.assertFalse((other.bundle_root / "policy" / skill).exists(), role)
+                    self.assertNotIn("토큰 분석", other.system_prompt.read_text(encoding="utf-8"))
+
     def test_claude_pipeline_planner_and_watcher_can_write_their_documents(self) -> None:
         launch = prepare_injection(self.project, "claude", "orchest", build_root=self.root / "build",
             state_root=self.root / "state", source_codex_home=self.source_codex_home)
@@ -831,6 +850,51 @@ class WorkBoardTests(unittest.TestCase):
                             agent_transcript_path=str(transcript))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(len(self.runner("writes")["writes"]), 1)
+
+    def token_review(self, identifier: str, cleanup: bool) -> None:
+        reviews = self.repository / "branch-relations/v1/reviews"
+        reviews.mkdir(parents=True, exist_ok=True)
+        (reviews / f"{identifier}.json").write_text(json.dumps({"id": identifier, "source": "A1", "target": "sy-main",
+                                                                "cleanup": cleanup}))
+
+    def test_token_analysis_request_puts_the_report_between_merge_and_cleanup(self) -> None:
+        runner = f"python3 -I {self.runtime / 'git_operations.py'}"
+        directory = self.session_documents("plan.md", "final-summary.md")
+        cleanup = lambda: self.event("pre-tool", f"{runner} cleanup --source A1 --target sy-main").stderr
+        merged_with_cleanup, merge_only = "c" * 32, "d" * 32
+        self.token_review(merged_with_cleanup, True)
+        self.token_review(merge_only, False)
+        complete = lambda review: self.event("pre-tool", f"{runner} complete --review {review} --report-json '{{}}'").stderr
+        # 요청이 없으면 기존 흐름(병합과 정리를 한 번에)을 그대로 쓴다.
+        self.assertNotIn("토큰 분석", complete(merged_with_cleanup) + cleanup())
+        notice = self.event("user-prompt", prompt="토큰 분석").stdout
+        self.assertIn("토큰 분석을 요청했습니다", notice)
+        self.assertIn("policy/token-usage/SKILL.md", notice)
+        # 병합과 정리를 함께 하는 완료는 막고, 병합만 하는 완료는 보고서 없이 진행한다.
+        self.assertIn("병합과 branch·worktree 정리를 나누어 실행합니다", complete(merged_with_cleanup))
+        self.assertNotIn("토큰 분석", complete(merge_only))
+        # 요청은 다른 사용자 입력이 와도 유지된다.
+        self.event("user-prompt", prompt="병합 진행")
+        self.assertIn("정리 전에 보고서가 필요합니다", cleanup())
+        report = directory / "unknown/token-usage-report.md"
+        report.parent.mkdir(parents=True)
+        report.write_text("# 토큰 사용량 보고\n")
+        merged_at = int(self.git("log", "-1", "--format=%ct", "sy-main"))
+        os.utime(report, (merged_at - 60, merged_at - 60))
+        self.assertIn("마지막 commit보다 먼저 작성됐습니다", cleanup())
+        os.utime(report, (merged_at + 60, merged_at + 60))
+        self.assertNotIn("토큰 분석", cleanup())
+        report.unlink()
+        self.assertIn("토큰 분석 요청을 취소했습니다", self.event("user-prompt", prompt="토큰 분석 취소").stdout)
+        self.assertNotIn("토큰 분석", complete(merged_with_cleanup) + cleanup())
+
+    def test_token_analysis_request_is_ignored_outside_orchestration(self) -> None:
+        self.env["ASAN_AGENT_POLICY_ROLE"] = "logic"
+        runner = f"python3 -I {self.runtime / 'git_operations.py'}"
+        self.token_review("e" * 32, True)
+        self.assertNotIn("토큰 분석", self.event("user-prompt", prompt="토큰 분석").stdout)
+        self.assertNotIn("토큰 분석", self.event("pre-tool", f"{runner} complete --review {'e' * 32} --report-json '{{}}'").stderr)
+        self.assertNotIn("토큰 분석", self.event("pre-tool", f"{runner} cleanup --source A1 --target sy-main").stderr)
 
     def test_child_agent_cannot_prepare_or_run_git_changes_where_host_identifies_it(self) -> None:
         runner = f"python3 -I {self.runtime / 'git_operations.py'}"

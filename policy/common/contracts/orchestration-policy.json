@@ -73,5 +73,11 @@
         "final-summary.md"
       ]
     }
+  },
+  "token_analysis": {
+    "phrase": "토큰 분석",
+    "cancel_phrase": "토큰 분석 취소",
+    "report": "unknown/token-usage-report.md",
+    "skill": "policy/token-usage/SKILL.md"
   }
 }

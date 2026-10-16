@@ -274,6 +274,28 @@ CHILD_GIT_DENIAL = ("하위 에이전트는 Git 변경과 현황판 갱신을 �
                     "부모에게 반환하세요. 부모가 사용자 승인 후 실행합니다. Git 조회는 가능합니다.")
 
 
+def token_analysis_denial(event: dict, root: Path, host: str, invocation: list, operations) -> str | None:
+    """토큰 분석 요청이 있으면 병합 뒤, branch·worktree 정리 전에 보고서를 쓰게 한다."""
+    pipeline = _loader.load("pipeline")
+    option = lambda name: invocation[invocation.index(name) + 1] if name in invocation[:-1] else ""
+    if invocation[0] == "complete" and option("--review"):
+        relations = _loader.load("branch_relations")
+        evidence = state.read(relations.directory(root) / "reviews" / (option("--review") + ".json"))
+        return pipeline.token_report_denial(event, root, host, bool(evidence.get("cleanup")))
+    if invocation[0] == "cleanup":
+        return pipeline.token_report_denial(event, root, host, False, option("--target"))
+    if invocation[0] == "execute" and len(invocation) == 2:
+        try:
+            operation = operations.load(root, invocation[1])
+        except (RuntimeError, OSError, ValueError):
+            return None
+        if operation.get("kind") == "completion":
+            return pipeline.token_report_denial(event, root, host, bool((operation.get("evidence") or {}).get("cleanup")))
+        if operation.get("kind") == "cleanup":
+            return pipeline.token_report_denial(event, root, host, False, str((operation.get("cleanup") or {}).get("target") or ""))
+    return None
+
+
 def child_agent(event: dict) -> str:
     """host가 하위 에이전트 호출에만 넣는 식별자. 파이프라인 세션에서만 판정에 쓴다."""
     value = event.get("agent_id")
@@ -316,6 +338,10 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
             denial = (pipeline.verdict_denial(event, root, host, cwd) if invocation[0] == "verdict" else
                       pipeline.merge_denial(event, root, host, invocation[invocation.index("--review") + 1])
                       if invocation[0] == "complete" and "--review" in invocation[:-1] else None)
+            if denial:
+                protocol.emit_denial(host, denial)
+                return
+            denial = token_analysis_denial(event, root, host, invocation, operations)
             if denial:
                 protocol.emit_denial(host, denial)
                 return

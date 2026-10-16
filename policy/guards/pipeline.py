@@ -33,6 +33,7 @@ REVIEWER = CONTRACT.get("reviewer") or ""
 IDENTIFYING_HOSTS = frozenset(CONTRACT.get("child_identifying_hosts") or ())
 DIRECT_EDIT_PHRASE = CONTRACT.get("direct_edit_phrase") or ""
 DOCUMENTS: dict[str, list[str]] = CONTRACT.get("documents") or {}
+TOKEN_ANALYSIS = ORCHESTRATION.get("token_analysis") or {}
 PARENT_DENIAL = ("오케스트레이션 세션의 부모는 source를 직접 수정하지 않습니다. 계획의 배정대로 Publisher·Generator·Refactorer를 "
                  f"호출하세요. 사용자가 `{DIRECT_EDIT_PHRASE}`을 입력하면 다음 사용자 입력 전까지만 직접 수정할 수 있습니다.")
 
@@ -53,15 +54,30 @@ def state_path(event: dict, root: Path, host: str) -> Path | None:
 
 
 def record_prompt(event: dict, root: Path, host: str) -> None:
-    """The direct-edit exception lasts for one response: any next user input ends it."""
+    """The direct-edit exception lasts for one response: any next user input ends it.
+
+    A token analysis request lasts for the session until it is cancelled.
+    """
     prompt = event.get("prompt")
     if not active() or not isinstance(prompt, str):
         return
     normalize = _loader.load("approval_policy").normalize_prompt
     allowed = normalize(prompt) == normalize(DIRECT_EDIT_PHRASE)
     path = state_path(event, root, host)
-    if allowed or state.read(path).get("direct_edit"):
-        state.write(path, {"direct_edit": allowed, "at": time.time()})
+    record = state.read(path)
+    changed = allowed or bool(record.get("direct_edit"))
+    record.update(direct_edit=allowed, at=time.time())
+    if TOKEN_ANALYSIS and normalize(prompt) == normalize(TOKEN_ANALYSIS["phrase"]):
+        record["token_analysis"] = {"requested_at": time.time()}
+        changed = True
+        print(f"토큰 분석을 요청했습니다. 작업의 병합을 마친 뒤 branch·worktree를 정리하기 전에 `{TOKEN_ANALYSIS['skill']}`에 따라 "
+              f"세션 산출물 폴더의 `{TOKEN_ANALYSIS['report']}`를 작성합니다. 병합과 정리는 나누어 실행합니다. "
+              f"취소하려면 `{TOKEN_ANALYSIS['cancel_phrase']}`을 입력하세요.")
+    elif TOKEN_ANALYSIS and normalize(prompt) == normalize(TOKEN_ANALYSIS["cancel_phrase"]) and record.pop("token_analysis", None):
+        changed = True
+        print("토큰 분석 요청을 취소했습니다. 정리 전 보고서 확인을 하지 않습니다.")
+    if changed:
+        state.write(path, record)
     if allowed:
         print("이번 응답 동안 부모 세션의 source 직접 수정을 허용합니다. 다음 사용자 입력에서 다시 막힙니다. "
               "계획 승인, 단계별 문서와 커밋 전 Watcher 검토는 그대로 적용합니다.")
@@ -150,6 +166,33 @@ def commit_denial(root: Path, invocations) -> str | None:
                                            if record.get("result") == "FAIL" else ""))
         if record.get("fingerprint") != board.fingerprint(root, tree)["fingerprint"]:
             return (f"Watcher가 검토한 뒤 내용이 바뀌었습니다 ({tree}). 포맷이나 수정을 한 뒤에는 다시 검토받아야 커밋할 수 있습니다.")
+    return None
+
+
+def token_report_path(event: dict, root: Path, host: str) -> Path | None:
+    directory = _loader.load("artifact_policy").bound_session_directory(event, root, host)
+    return directory / TOKEN_ANALYSIS["report"] if directory is not None else None
+
+
+def token_report_denial(event: dict, root: Path, host: str, merges_with_cleanup: bool, cleanup_target: str = "") -> str | None:
+    """With a token analysis request, merge first, write the report, then clean up."""
+    if not active() or not TOKEN_ANALYSIS or not state.read(state_path(event, root, host)).get("token_analysis"):
+        return None
+    if merges_with_cleanup:
+        return ("토큰 분석 요청이 있어 병합과 branch·worktree 정리를 나누어 실행합니다. `review`를 `--cleanup` 없이 다시 준비해 "
+                "병합만 완료하세요. 병합 뒤에 보고서를 작성하고 `cleanup --source <branch> --target <직접 부모>`로 정리합니다.")
+    if not cleanup_target:
+        return None
+    report = token_report_path(event, root, host)
+    guide = f"`{TOKEN_ANALYSIS['skill']}`에 따라 작성하세요."
+    if report is None or not report.is_file() or report.is_symlink() or not report.read_text(encoding="utf-8", errors="ignore").strip():
+        return (f"토큰 분석 요청이 있어 정리 전에 보고서가 필요합니다: {report or TOKEN_ANALYSIS['report']}. " + guide
+                + f" 요청을 거두려면 사용자가 `{TOKEN_ANALYSIS['cancel_phrase']}`을 입력합니다.")
+    merged = git._git(root, "log", "-1", "--format=%ct", cleanup_target)
+    merged_at = int(merged.stdout.strip() or 0) if merged.returncode == 0 else 0
+    if report.stat().st_mtime <= merged_at:
+        return (f"토큰 분석 보고서가 `{cleanup_target}`의 마지막 commit보다 먼저 작성됐습니다({report}). "
+                "병합까지 포함하도록 다시 분석해 갱신하세요. " + guide)
     return None
 
 
