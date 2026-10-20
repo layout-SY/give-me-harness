@@ -395,6 +395,9 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
 
     if mode == "session-start":
         root = repository_root(event)
+        notice = runtime_state.resume_notice(host, event_session_id(event))
+        if notice:
+            print(notice)
         check_session(event, host)
         return
     if mode == "branch-context":

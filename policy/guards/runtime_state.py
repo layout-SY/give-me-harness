@@ -28,8 +28,81 @@ def repository_state(common: Path) -> Path:
     return state_root() / "repositories" / digest(str(common.resolve()))
 
 
+# 같은 hook 프로세스 안에서 대화별 재개 판단을 한 번만 한다.
+_RESUMES: dict[tuple[str, str], tuple[str, str, str]] = {}
+RESUME_KEYS = ("host", "repository", "project", "role", "responsibility")
+
+
+def _assignment_record(launch: str) -> tuple[Path | None, dict]:
+    for path in (state_root() / "repositories").glob(f"*/assignments/{launch}/assignment.json"):
+        return path.parents[2], read(path)
+    return None, {}
+
+
+def native_index(repository: Path, host: str, session: str) -> Path:
+    return repository / "native-sessions" / (digest(host + "\0" + session) + ".json")
+
+
+def _conversation_owner(repository: Path, host: str, session: str) -> str:
+    """이 대화를 처음 연결한 assignment. 색인이 없던 이전 기록은 assignment 기록을 훑어 찾는다."""
+    indexed = read(native_index(repository, host, session)).get("assignment", "")
+    if indexed and read(repository / "assignments" / indexed / "assignment.json").get("native_session") == session:
+        return indexed
+    owners = []
+    for path in (repository / "assignments").glob("*/assignment.json"):
+        record = read(path)
+        if record.get("host") == host and record.get("native_session") == session and not record.get("resumed_from_launch"):
+            owners.append((str(record.get("created_at", "")), path.parent.name))
+    return min(owners)[1] if owners else ""
+
+
+def claude_resume(launch: str, session: str) -> tuple[str, str, str]:
+    """(사용할 assignment, 사유, 원래 assignment). 사유: ''(launch 그대로) | reconnected | policy-changed.
+
+    Claude의 세션 안 /resume은 launcher가 만든 assignment를 그대로 둔 채 다른 대화의 ID로 이벤트를 보낸다.
+    그 대화를 소유한 assignment가 같은 계약·같은 정책 번들이면 그 assignment에 다시 연결해 승인과 근거를 잇는다.
+    정책 번들이 다르면 이전 정책의 승인을 쓰지 않도록 launch에서 파생한 새 assignment로 시작한다.
+    """
+    key = (launch, session)
+    if key in _RESUMES:
+        return _RESUMES[key]
+    result = (launch, "", "")
+    repository, record = _assignment_record(launch)
+    if repository is not None and record.get("native_session") not in (None, "", session):
+        derived = digest(f"{launch}\0{session}")[:32]
+        owner = _conversation_owner(repository, "claude", session)
+        original = read(repository / "assignments" / owner / "assignment.json") if owner else {}
+        if (repository / "assignments" / derived / "assignment.json").is_file():
+            result = (derived, "policy-changed", read(repository / "assignments" / derived / "assignment.json")
+                      .get("resumed_owner", owner))
+        elif (owner and owner != launch and not original.get("handed_off_to")
+              and all(original.get(name) == record.get(name) for name in RESUME_KEYS)):
+            same_policy = original.get("bundle_digest") == record.get("bundle_digest")
+            result = (owner, "reconnected", owner) if same_policy else (derived, "policy-changed", owner)
+    _RESUMES[key] = result
+    return result
+
+
+def resume_notice(host: str, session: str) -> str:
+    launch = os.environ.get(ASSIGNMENT_ENV, "")
+    if host != "claude" or not re.fullmatch(r"[a-f0-9]{32}", launch):
+        return ""
+    assignment, reason, original = claude_resume(launch, session)
+    if reason == "reconnected":
+        return (f"[SESSION_RESUME] 이 대화를 원래 assignment {assignment[:8]}…에 다시 연결했습니다. "
+                "그 assignment의 승인·준비 근거와 세션 산출물 폴더를 이어 씁니다.")
+    if reason == "policy-changed":
+        project = os.environ.get("ASAN_AGENT_POLICY_PROJECT", "<프로젝트>")
+        return (f"[SESSION_RESUME] 이 대화를 시작할 때와 정책 번들이 달라 새 assignment {assignment[:8]}…로 시작합니다. "
+                "대화는 이어지지만 승인·준비 근거는 현재 정책으로 다시 받습니다. 이전 정책 그대로 이어 쓰려면 이 세션을 닫고 "
+                f"`bin/agent-policy resume --project {project} --host claude --assignment {original}`로 재개하세요.")
+    return ""
+
+
 def effective_assignment(host: str, session: str) -> str:
     assignment = os.environ.get(ASSIGNMENT_ENV, "")
+    if host == "claude" and re.fullmatch(r"[a-f0-9]{32}", assignment) and session and session != "missing-session-id":
+        return claude_resume(assignment, session)[0]
     if (host != "codex" or os.environ.get("ASAN_CODEX_PROJECT_HISTORY") != "1"
             or not re.fullmatch(r"[a-f0-9]{32}", assignment)
             or not re.fullmatch(r"[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}", session)):
@@ -121,6 +194,8 @@ def bind_native_session(common: Path, host: str, session: str, *, read_only: boo
             "native_session", "native_link_source", "handed_off_to"}}
         record.update({"id": path.parent.name, "native_session": session,
                        "created_at": time.time(), "resumed_from_launch": launch_assignment})
+        if host == "claude":
+            record["resumed_owner"] = claude_resume(launch_assignment, session)[2]
         environment = dict(record["environment"])
         environment[ASSIGNMENT_ENV] = path.parent.name
         if environment.get("ASAN_SESSION_DIR_MODE") == "suggested":
@@ -140,13 +215,19 @@ def bind_native_session(common: Path, host: str, session: str, *, read_only: boo
             raise RuntimeError("중단된 assignment handoff가 있습니다. 승인한 동일 계약으로 인계를 재실행하세요.")
     previous = record.get("native_session")
     if previous and previous != session:
-        raise RuntimeError("다른 native session이 소유한 assignment입니다. 새 세션 또는 명시적 handoff를 사용하세요.")
+        guidance = (" 이전 대화를 이어 쓰려면 이 세션을 닫고 `bin/agent-policy resume --project "
+                    f"{os.environ.get('ASAN_AGENT_POLICY_PROJECT', '<프로젝트>')} --host claude`로 재개하세요."
+                    if host == "claude" else "")
+        raise RuntimeError("다른 native session이 소유한 assignment입니다. 새 세션 또는 명시적 handoff를 사용하세요." + guidance)
     if read_only:
         if previous != session:
             raise RuntimeError("native session의 훅이 먼저 assignment를 확인해야 합니다.")
         return
     record["native_session"] = session
     write(path, record)
+    index = native_index(repository_state(common), host, session)
+    if read(index).get("assignment") != path.parent.name and not record.get("resumed_from_launch"):
+        write(index, {"assignment": path.parent.name, "host": host})
     # Hook processes are short-lived; never alter another conversation's environment/state.
     for variable in ("ASAN_SESSION_DIR", "ASAN_SESSION_DIR_MODE"):
         if variable in record.get("environment", {}):

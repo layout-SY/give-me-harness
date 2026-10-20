@@ -10,6 +10,22 @@ Codex picker의 기본 cwd 필터는 유지한다. 다른 worktree에서 시작�
 
 내부 `/resume`은 **현재 launcher의 정책·role로 대화를 이어가는 기능**이다. 대화를 처음 선택하면 현재 실행의 별도 상태로 연결하므로 이전 실행이나 다른 대화의 승인·산출물 binding을 복제하지 않는다. 같은 실행 안에서 대화를 전환했다 돌아오면 그 대화의 상태를 유지한다. 아래 중앙 `resume`은 **원래 assignment·정책으로 재개**하는 기존 기능이다. 이전 불변 bundle의 동작은 바뀌지 않는다.
 
+### Claude Code의 내부 `/resume` (2026-10-20)
+
+Claude Code는 launcher가 만든 assignment를 그대로 둔 채, 고른 대화의 ID로 다음 이벤트를 보낸다. 이전에는 그 assignment가 이미 새 대화에 연결돼 있어 SessionStart와 모든 입력이 "다른 native session이 소유한 assignment"로 막혔다. 사용자 결정에 따라 모든 role의 Claude 세션에 다음을 적용한다.
+
+| 고른 대화 | 동작 |
+| --- | --- |
+| 같은 host·저장소·프로젝트·role·책임이고 같은 정책 번들인 assignment가 소유 | 그 원래 assignment에 다시 연결한다. 승인·준비 근거·세션 산출물 폴더를 이어 쓴다 |
+| 소유 assignment는 맞지만 정책 번들이 다름 | launch에서 파생한 새 assignment로 시작한다. 승인·준비 근거는 현재 정책으로 다시 받는다. 원래 정책으로 이어 쓰려면 중앙 `resume`을 안내한다 |
+| 소유 assignment가 없거나 계약이 다름 | 지금처럼 막고 중앙 `resume`을 안내한다 |
+
+- 대화와 처음 연결한 assignment는 `state/repositories/<repository-id>/native-sessions/`에 색인한다. 색인 이전의 기록은 assignment 기록을 훑어 찾는다.
+- SessionStart에 `[SESSION_RESUME]`으로 어느 assignment에 연결했는지 알린다.
+- 승인 티켓처럼 launch 환경 변수로 묶는 기록은 hook과 보호 실행기가 같은 값을 쓰므로 그대로 둔다.
+- 원래 실행이 아직 같은 대화를 열고 있으면 두 프로세스가 같은 assignment 상태를 쓴다. 이 경우는 막지 않으므로, 원래 세션을 닫은 뒤 재개한다.
+- Codex는 기존 방식(대화별 파생 assignment)을 유지한다. OpenCode는 대상이 아니다.
+
 중앙 저장소에서 실행한다. 목록 조회와 재개 미리보기는 assignment나 대화 파일을 생성하지 않는다.
 
 ```sh

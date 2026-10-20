@@ -127,6 +127,68 @@ class SessionReadinessTests(WorkflowFixture):
         self.assertIn("skill_confirmed: false", started.stdout)
         self.assertIsNot(self.state("codex").get("implementation_approved"), True)
 
+    def test_claude_in_session_resume_reconnects_to_the_assignment_that_owns_the_conversation(self) -> None:
+        # 실제 orchest 세션: 새로 띄운 세션에서 /resume으로 이전 대화를 고르자 SessionStart와 모든 입력이
+        # "다른 native session이 소유한 assignment"로 막혔다.
+        first = self.start()
+        original = self.event["session_id"]
+        self.hook("session-start")
+        self.hook("user-prompt", prompt="Proceed")
+        self.read_prerequisites()
+        second = self.start()
+        self.assertNotEqual(second.environment["ASAN_AGENT_POLICY_ASSIGNMENT"], first.environment["ASAN_AGENT_POLICY_ASSIGNMENT"])
+        self.assertEqual(self.hook("session-start").returncode, 0)
+        self.event["session_id"] = original
+        resumed = self.hook("session-start", source="resume")
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertIn("원래 assignment", resumed.stdout)
+        self.assertIn(first.environment["ASAN_AGENT_POLICY_ASSIGNMENT"][:8], resumed.stdout)
+        self.assertIn("implementation_approved: true", resumed.stdout)
+        self.assertIn("skill_confirmed: true", resumed.stdout)
+        prompt = self.hook("user-prompt", prompt="전수조사 이어서 진행")
+        self.assertEqual(prompt.returncode, 0, prompt.stderr)
+        self.assertTrue(self.state().get("implementation_approved"))
+        # 새로 띄운 세션이 처음 연결한 대화는 그대로 그 세션의 assignment가 소유한다.
+        self.event["session_id"] = second.environment["ASAN_AGENT_POLICY_ASSIGNMENT"]
+        self.assertEqual(self.hook("user-prompt", prompt="새 대화").returncode, 0)
+        self.assertIsNot(self.state().get("implementation_approved"), True)
+
+    def test_claude_resume_of_a_conversation_without_an_owning_assignment_is_rejected_with_guidance(self) -> None:
+        self.start()
+        self.hook("session-start")
+        self.event["session_id"] = "conversation-from-elsewhere"
+        denied = self.hook("session-start", source="resume")
+        self.assertNotEqual(denied.returncode, 0)
+        self.assertIn("다른 native session이 소유한 assignment", denied.stderr)
+        self.assertIn("bin/agent-policy resume", denied.stderr)
+
+    def test_claude_resume_into_a_conversation_from_an_older_policy_starts_a_new_assignment(self) -> None:
+        first = self.start()
+        original = self.event["session_id"]
+        self.hook("session-start")
+        self.hook("user-prompt", prompt="Proceed")
+        self.read_prerequisites()
+        from agent_policy import injection
+        rendered = injection.render_project(self.project)
+        runtime_path = ".agent-policy/runtime/approval_policy.py"
+        updated = {**rendered, runtime_path: rendered[runtime_path] + b"\n# updated central policy\n"}
+        with patch.object(injection, "render_project", return_value=updated):
+            second = self.start()
+        self.assertNotEqual(first.bundle_root, second.bundle_root)
+        self.hook("session-start")
+        self.event["session_id"] = original
+        resumed = self.hook("session-start", source="resume")
+        self.assertEqual(resumed.returncode, 0, resumed.stderr)
+        self.assertIn("정책 번들이 달라", resumed.stdout)
+        self.assertIn("implementation_approved: false", resumed.stdout)
+        self.assertEqual(self.hook("user-prompt", prompt="이어서 진행").returncode, 0)
+        self.assertIsNot(self.state().get("implementation_approved"), True)
+        # 이전 정책으로 받은 승인은 원래 assignment에 그대로 남는다.
+        self.env.update(first.environment)
+        self.runtime = first.bundle_root / "policy/.agent-policy/runtime"
+        self.guard = self.module(self.runtime / "managed_policy_guard.py")
+        self.assertTrue(self.state().get("implementation_approved"))
+
     def test_sha_approval_is_reported_separately_from_missing_implementation_approval(self) -> None:
         self.start()
         self.hook("user-prompt", prompt="승인 " + "a" * 64)
