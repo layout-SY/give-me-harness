@@ -296,6 +296,27 @@ def token_analysis_denial(event: dict, root: Path, host: str, invocation: list, 
     return None
 
 
+XXD_VALUE_OPTIONS = frozenset({"-c", "-cols", "-g", "-groupsize", "-l", "-len", "-n", "-name", "-o", "-s", "-seek"})
+
+
+def _xxd_reads(words: tuple[str, ...]) -> bool:
+    """xxd는 두 번째 파일 인자에 결과를 쓰고 -r은 바이너리를 만든다. 둘 다 없을 때만 조회로 본다."""
+    if not words or Path(words[0]).name != "xxd":
+        return False
+    operands, index = [], 1
+    while index < len(words):
+        word = words[index]
+        if word.startswith("-r"):
+            return False
+        if word in XXD_VALUE_OPTIONS:
+            index += 2
+            continue
+        if word == "-" or not word.startswith("-"):
+            operands.append(word)
+        index += 1
+    return len(operands) <= 1
+
+
 def child_agent(event: dict) -> str:
     """host가 하위 에이전트 호출에만 넣는 식별자. 파이프라인 세션에서만 판정에 쓴다."""
     value = event.get("agent_id")
@@ -514,9 +535,10 @@ def pre_tool(event: dict, root: Path, host: str) -> None:
     if contexts:
         operations.reserve_write(root, event, host, [target for target, _ in contexts])
     elif shell and not branch._git_commands(command):
-        reads = {"cat", "head", "tail", "sed", "rg", "grep", "ls", "pwd", "find", "wc", "which", "type", "ps", "file"}
+        reads = {"cat", "head", "tail", "sed", "rg", "grep", "ls", "pwd", "find", "wc", "which", "type", "ps", "file",
+                 "shasum", "sha1sum", "sha256sum", "sha512sum", "md5", "md5sum", "od", "cmp", "stat"}
         commands = branch.shell_command_contexts(command, cwd) or ()
-        if any(Path(words[0]).name not in reads for _, words in commands):
+        if any(Path(words[0]).name not in reads and not _xxd_reads(words) for _, words in commands):
             operations.reserve_write(root, event, host, [location for location, _ in commands])
     formatting.record_before(root, event, host, contexts)
     common = branch.git_common_directory(root)

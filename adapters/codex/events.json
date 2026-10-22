@@ -43,7 +43,7 @@
         {
           "type": "command",
           "command": "post-tool",
-          "timeout": 10,
+          "timeout": 30,
           "statusMessage": "Recording common harness evidence"
         }
       ]

@@ -73,17 +73,13 @@ def cancel_unexecuted(repository: Path, host: str, session: str, owner: str, cal
         return [item["id"] for item in writes]
 
 
-def release_unrecorded(repository: Path, host: str, session: str, owner: str, agent: str, transcript: Path) -> list[str]:
-    """끝난 하위 에이전트의 대화 기록에 없는 호출의 예약만 해소한다. 호출자는 events.lock을 보유해야 한다.
-
-    병렬 호출이 취소되면 PreToolUse만 실행되고 대화 기록과 PostToolUse가 남지 않는다. 하위 에이전트가
-    끝났으므로 그 호출은 더 실행되지 않는다. 기록에 있으나 결과가 확인되지 않은 호출은 남긴다.
-    """
-    if host != "claude" or not session or not agent or transcript.name != f"agent-{agent}.jsonl" or not transcript.is_file():
-        return []
+def agent_transcript_calls(agent: str, transcript: Path) -> tuple[set[str], set[str]] | None:
+    """끝난 하위 에이전트 대화 기록의 (호출 ID, 결과가 기록된 호출 ID). 확인할 수 없으면 None."""
+    if not agent or transcript.name != f"agent-{agent}.jsonl" or not transcript.is_file():
+        return None
     if transcript.stat().st_size > 32 * 1024 * 1024:
-        return []
-    recorded = set()
+        return None
+    recorded, results = set(), set()
     with transcript.open() as stream:
         for line in stream:
             try:
@@ -93,6 +89,21 @@ def release_unrecorded(repository: Path, host: str, session: str, owner: str, ag
             for block in content if isinstance(content, list) else ():
                 if isinstance(block, dict):
                     recorded.update(value for value in (block.get("id"), block.get("tool_use_id")) if isinstance(value, str))
+                    if block.get("type") == "tool_result" and isinstance(block.get("tool_use_id"), str):
+                        results.add(block["tool_use_id"])
+    return recorded, results
+
+
+def release_unrecorded(repository: Path, host: str, session: str, owner: str, agent: str, transcript: Path) -> list[str]:
+    """끝난 하위 에이전트의 대화 기록에 없는 호출의 예약만 해소한다. 호출자는 events.lock을 보유해야 한다.
+
+    병렬 호출이 취소되면 PreToolUse만 실행되고 대화 기록과 PostToolUse가 남지 않는다. 하위 에이전트가
+    끝났으므로 그 호출은 더 실행되지 않는다. 기록에 있으나 결과가 확인되지 않은 호출은 남긴다.
+    """
+    calls = agent_transcript_calls(agent, transcript) if host == "claude" and session else None
+    if calls is None:
+        return []
+    recorded = calls[0]
     released = []
     for item in pending_writes(repository, host, session):
         if item.get("agent") == agent and item.get("call") and item["call"] not in recorded:
@@ -100,6 +111,32 @@ def release_unrecorded(repository: Path, host: str, session: str, owner: str, ag
                 {"event": "SubagentStop", "agent": agent, "transcript": str(transcript), "recorded_calls": len(recorded)},
                 outcome="not-recorded", reason="call-missing-from-finished-agent-transcript")
     return released
+
+
+def finished_calls(repository: Path, host: str, session: str, agent: str, transcript: Path) -> list[str]:
+    """끝난 하위 에이전트의 호출 중 결과는 기록됐지만 PostToolUse가 예약을 끝내지 못한 호출."""
+    calls = agent_transcript_calls(agent, transcript) if host == "claude" and session else None
+    if calls is None:
+        return []
+    return list(dict.fromkeys(item["call"] for item in pending_writes(repository, host, session)
+                              if item.get("agent") == agent and item.get("call") in calls[1]))
+
+
+def release_finished(repository: Path, host: str, session: str, owner: str, call: str, evidence: dict) -> list[str]:
+    """결과가 기록된 호출의 예약을 수령증과 함께 해소한다. 호출자는 events.lock을 보유하고 포맷 기록을
+    결과 미확인으로 먼저 정리해야 한다."""
+    directory = repository / "branch-relations/v1"
+    with state.locked(directory / "locks/git.lock"):
+        writes = [item for item in pending_writes(repository, host, session) if item.get("call") == call]
+        if not writes:
+            return []
+        receipt = directory / "write-receipts" / (state.digest(host + ":" + session + ":" + call) + ".json")
+        if not receipt.exists():
+            state.write(receipt, {"outcome": "post-tool-missing", "host": host, "session": session,
+                                 "owner": owner, "call": call, "writes": writes, "evidence": evidence})
+        for item in writes:
+            (directory / "writes" / (item["id"] + ".json")).unlink(missing_ok=True)
+        return [item["id"] for item in writes]
 
 
 def denied_transcript_calls(path: Path, session: str) -> dict[str, dict]:

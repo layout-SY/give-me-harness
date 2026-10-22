@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import tomllib
 import unittest
 from dataclasses import replace
@@ -838,6 +839,86 @@ class WorkBoardTests(unittest.TestCase):
         # Claude 하위 에이전트의 종료 이벤트가 이 정리를 호출한다.
         events = json.loads((Path(__file__).resolve().parents[1] / "adapters/claude/events.json").read_text())
         self.assertEqual([hook["command"] for entry in events["SubagentStop"] for hook in entry["hooks"]], ["subagent-stop"])
+
+    def test_hash_and_byte_queries_do_not_reserve_a_write(self) -> None:
+        # 실제 orchest 세션: Publisher의 `shasum …; tail -c 1 … | xxd` 조회가 쓰기로 예약됐고, 그 PostToolUse가
+        # 제한 시간을 넘겨 예약이 남았다. 남은 예약이 Stop 자동 포맷과 검증 명령을 막았다.
+        self.ready()
+        target = self.root / "src/app.ts"
+        for command in (f"shasum {target}; tail -c 1 {target} | xxd", f"sha256sum {target}", f"md5 {target}",
+                        f"xxd -g 1 {target}", f"od -c {target}", f"cmp {target} {target}", f"stat {target}"):
+            with self.subTest(command=command):
+                self.assertEqual(self.event("pre-tool", command, **self.WATCHER).returncode, 0)
+        self.assertEqual(self.runner("writes")["writes"], [])
+        # 출력 파일을 받는 xxd와 조회가 아닌 명령은 그대로 예약한다.
+        for command in (f"xxd {target} {self.base / 'dump.txt'}", f"xxd -r {target}", "npx tsc -b"):
+            self.assertEqual(self.event("pre-tool", command, **self.WATCHER).returncode, 0)
+        self.assertEqual(len(self.runner("writes")["writes"]), 3)
+
+    def test_write_completion_waits_for_the_events_lock_beyond_the_old_limit(self) -> None:
+        # 실제 orchest 세션: 부모의 Stop 자동 포맷이 events.lock을 오래 쥐는 동안 하위 에이전트의 PostToolUse가
+        # 8초 제한에 걸려 쓰기 완료를 기록하지 못했다.
+        import fcntl
+        self.ready()
+        self.assertEqual(self.event("pre-tool", "npx tsc -b", **self.WATCHER).returncode, 0)
+        self.assertEqual(len(self.runner("writes")["writes"]), 1)
+        event = {"cwd": str(self.root), "session_id": "claude-test", "tool_use_id": str(self.calls), "tool_name": "Bash",
+                 "tool_input": {"command": "npx tsc -b"}, "hook_event_name": "PostToolUse",
+                 "tool_response": {"success": True}, **self.WATCHER}
+        with open(self.repository / "events.lock", "a+") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            process = subprocess.Popen([sys.executable, "-I", str(self.runtime / "managed_policy_guard.py"), "post-tool", "claude"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=self.root, env=self.env, text=True)
+            process.stdin.write(json.dumps(event))
+            process.stdin.close()
+            time.sleep(9)
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        stderr = process.stderr.read()
+        self.assertEqual(process.wait(timeout=30), 0, stderr)
+        self.assertEqual(self.runner("writes")["writes"], [])
+        # host가 내부 제한보다 먼저 hook을 끝내지 않는다.
+        adapters = Path(__file__).resolve().parents[1] / "adapters"
+        claude = json.loads((adapters / "claude/events.json").read_text())
+        codex = json.loads((adapters / "codex/events.json").read_text())
+        for events, names in ((claude, ("PostToolUse", "PostToolUseFailure")), (codex, ("PostToolUse",))):
+            for name in names:
+                self.assertEqual([hook["timeout"] for entry in events[name] for hook in entry["hooks"]], [30])
+        self.assertIn('mode === "post-tool" ? 30000', (adapters / "opencode/files/.opencode/plugins/agent-policy.js").read_text())
+
+    def test_reservation_of_a_finished_child_call_with_a_result_is_released_as_unconfirmed(self) -> None:
+        # 실제 orchest 세션: 하위 에이전트의 호출은 결과까지 기록됐지만 PostToolUse가 제한 시간을 넘겨
+        # 쓰기 예약이 남았다. 하위 에이전트가 끝난 뒤에도 그 예약이 부모의 포맷·검증을 막았다.
+        self.env["ASAN_FORMATTER"] = "prettier-v1"
+        tree, _ = self.task("A")
+        self.event("user-prompt", prompt="A 진행")
+        self.assertEqual(self.edit(tree).returncode, 0)
+        edited = str(self.calls)
+        (tree / "src/app.ts").write_text("export const value = 2;\n")
+        self.assertEqual(self.event("pre-tool", "npx tsc -b", **self.GENERATOR).returncode, 0)
+        built = str(self.calls)
+        self.assertEqual(self.event("pre-tool", "npm run test", **self.GENERATOR).returncode, 0)
+        unfinished = str(self.calls)
+        # Edit은 작업 worktree, 명령은 저장소 worktree의 예약이다.
+        writes = lambda: {json.loads(path.read_text())["call"] for path in (self.repository / "branch-relations/v1/writes").glob("*.json")}
+        self.assertEqual(writes(), {edited, built, unfinished})
+        transcript = self.base / "subagents/agent-agent-g.jsonl"
+        transcript.parent.mkdir()
+        rows = [{"type": "assistant", "message": {"content": [{"type": "tool_use", "id": call, "name": "Bash", "input": {}}]}}
+                for call in (edited, built, unfinished)]
+        rows += [{"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": call, "content": "ok"}]}}
+                 for call in (edited, built)]
+        transcript.write_text("".join(json.dumps(row) + "\n" for row in rows))
+        result = self.event("subagent-stop", hook_event_name="SubagentStop", agent_transcript_path=str(transcript), **self.GENERATOR)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        # 결과가 없는 호출은 실제 종료를 확인해야 하므로 남긴다.
+        self.assertEqual(writes(), {unfinished})
+        receipts = [json.loads(path.read_text()) for path in (self.repository / "branch-relations/v1/write-receipts").glob("*.json")]
+        self.assertEqual({(item["call"], item["outcome"]) for item in receipts},
+                         {(built, "post-tool-missing"), (edited, "post-tool-missing")})
+        # 실행 결과를 확인하지 못했으므로 바뀐 파일은 성공한 쓰기가 아니라 결과 미확인으로 남긴다.
+        records = [json.loads(path.read_text()) for path in self.repository.rglob("formatting.json")]
+        statuses = {name: item["status"] for record in records for name, item in record.get("files", {}).items()}
+        self.assertEqual(statuses, {str(tree / "src/app.ts"): "unconfirmed"})
 
     def test_child_stop_does_not_release_reservations_outside_orchestration(self) -> None:
         self.env["ASAN_AGENT_POLICY_ROLE"] = "logic"

@@ -38,7 +38,7 @@
         {
           "type": "command",
           "command": "post-tool",
-          "timeout": 10
+          "timeout": 30
         }
       ]
     }
@@ -80,7 +80,7 @@
         {
           "type": "command",
           "command": "post-tool",
-          "timeout": 10
+          "timeout": 30
         }
       ]
     }

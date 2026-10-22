@@ -454,15 +454,23 @@ def dispatch(mode: str, host: str, event: dict[str, Any]) -> None:
         print("{}")
         return
     if mode == "subagent-stop":
-        # 오케스트레이션 세션에서 끝난 하위 에이전트의 기록에 없는 호출의 쓰기 예약을 해소한다.
+        # 오케스트레이션 세션에서 끝난 하위 에이전트가 남긴 쓰기 예약을 해소한다.
         agent, transcript = event.get("agent_id"), event.get("agent_transcript_path")
         if (host == "claude" and branch_guard.SHARED_GIT_ACCESS and load_runtime_module("pipeline").active()
                 and isinstance(agent, str) and isinstance(transcript, str) and transcript):
             root = repository_root(event)
             common = branch_guard.git_common_directory(root) or root.resolve()
             session = event_session_id(event)
-            load_runtime_module("write_receipts").release_unrecorded(
-                runtime_state.repository_state(common), host, session, runtime_state.owner_id(host, session), agent, Path(transcript))
+            repository, owner = runtime_state.repository_state(common), runtime_state.owner_id(host, session)
+            receipts, formatting = load_runtime_module("write_receipts"), load_runtime_module("formatting")
+            # 기록에 없는 호출: 취소되어 실행되지 않았다.
+            receipts.release_unrecorded(repository, host, session, owner, agent, Path(transcript))
+            # 결과가 기록된 호출: PostToolUse가 제한 시간 등으로 끝나지 않았다. 실행 결과를 확인할 수 없으므로
+            # 실패한 호출처럼 바뀐 파일을 결과 미확인으로 남긴 뒤 예약을 해소한다.
+            for call in receipts.finished_calls(repository, host, session, agent, Path(transcript)):
+                formatting.record_after(root, {**event, "tool_use_id": call, "tool_response": {"success": False}}, host)
+                receipts.release_finished(repository, host, session, owner, call,
+                    {"event": "SubagentStop", "agent": agent, "transcript": str(transcript)})
         print("{}")
         return
     if mode == "post-tool":
@@ -592,12 +600,14 @@ def git_ownership(event: dict[str, Any], root: Path, host: str, *, reserve: bool
 def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     host = sys.argv[2] if len(sys.argv) > 2 else ""
-    time_limit = 8
+    # 쓰기 완료 기록은 다른 hook의 events lock을 기다려도 버리지 않는다. host hook 제한(30초)보다 짧다.
+    base_limit = 25 if mode == "post-tool" else 8
+    time_limit = base_limit
     def timeout(_signum, _frame):
         raise RuntimeError(f"정책 검사가 제한 시간 {time_limit}초를 초과했습니다.")
 
     signal.signal(signal.SIGALRM, timeout)
-    signal.alarm(8)
+    signal.alarm(time_limit)
     try:
         event = read_event()
         event["policy_host"] = host
@@ -615,7 +625,7 @@ def main() -> None:
             time_limit = 50
             signal.alarm(time_limit)
             try:
-                with runtime_state.locked(runtime_state.repository_state(common) / "events.lock"):
+                with runtime_state.locked(runtime_state.repository_state(common) / "events.lock"), branch_guard.git_snapshot():
                     runtime_state.bind_native_session(common, host, event_session_id(event))
                     formatting.resolve_superseded_calls(root, event, host)
                     uncertain = formatting.unconfirmed_calls(root, event, host)
@@ -628,7 +638,7 @@ def main() -> None:
                         formatting.apply(root, event, host, Path(location))
             except Exception as error:
                 event["_format_stop_error"] = f"Stop 자동 포맷 미완료: {error}"
-            time_limit = 8
+            time_limit = base_limit
             signal.alarm(time_limit)
         for attempt in range(3):
             try:
@@ -643,7 +653,7 @@ def main() -> None:
                 time_limit = 50
                 signal.alarm(time_limit)
                 formatting.apply(root, event, host, request.worktree)
-                time_limit = 8
+                time_limit = base_limit
                 signal.alarm(time_limit)
     except Exception as error:
         if mode == "pre-tool":

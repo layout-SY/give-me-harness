@@ -333,7 +333,8 @@ def apply(root: Path, event: dict, host: str, worktree: Path) -> dict:
                 raise RuntimeError("같은 worktree에 실행 결과가 확인되지 않은 쓰기가 있습니다. 완료 후 포맷을 다시 실행하세요.")
 
     try:
-        with state.locked(events_lock), state.locked(relations.directory(root) / "locks/git.lock"):
+        # 잠금 구간마다 Git 조회를 한 번만 한다. 파일마다 다시 조회하면 다른 hook이 제한 시간을 넘긴다.
+        with state.locked(events_lock), state.locked(relations.directory(root) / "locks/git.lock"), git.git_snapshot():
             state.bind_native_session(common, host, paths.event_session_id(event))
             resolve_superseded_calls(root, event, host)
             if unconfirmed_calls(root, event, host, worktree):
@@ -365,7 +366,7 @@ def apply(root: Path, event: dict, host: str, worktree: Path) -> dict:
         if [item["path"] for item in output] != [item["path"] for item in snapshot]:
             raise RuntimeError("Prettier 결과의 파일 목록이 요청과 다릅니다.")
         report = {"formatted": [], "ignored": []}
-        with state.locked(events_lock), state.locked(relations.directory(root) / "locks/git.lock"):
+        with state.locked(events_lock), state.locked(relations.directory(root) / "locks/git.lock"), git.git_snapshot():
             ensure_idle()
             if git.head(worktree) != revision:
                 raise RuntimeError("포맷 중 Git HEAD가 변경되었습니다. 현재 작업을 확인한 뒤 다시 실행하세요.")
@@ -431,10 +432,11 @@ def main() -> None:
         if worktree is None or not git.same_git_repository(root, worktree):
             raise RuntimeError("같은 프로젝트의 실제 worktree에서 포맷하세요.")
         state.bind_native_session(git.git_common_directory(root), args.host, args.session, read_only=True)
-        if args.action == "apply" and merging(worktree) and pending_files(root, event, args.host, worktree):
-            # 조용히 성공으로 끝내지 않는다. 포맷이 아직 남아 있음을 알린다.
-            raise RuntimeError(f"{MERGE_DEFERRAL}: {worktree}")
-        message = check(root, event, args.host, worktree)
+        with git.git_snapshot():  # 조회만 한다. apply는 잠금 구간마다 다시 조회한다.
+            if args.action == "apply" and merging(worktree) and pending_files(root, event, args.host, worktree):
+                # 조용히 성공으로 끝내지 않는다. 포맷이 아직 남아 있음을 알린다.
+                raise RuntimeError(f"{MERGE_DEFERRAL}: {worktree}")
+            message = check(root, event, args.host, worktree)
         if args.action == "check":
             if message:
                 raise RuntimeError(message)

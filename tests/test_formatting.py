@@ -135,12 +135,38 @@ class FormattingTests(unittest.TestCase):
         self.assertIn("변경", result.stdout + result.stderr)
         self.assertEqual(path.read_text(), "export const anotherSession={value:9};\n")
 
-    def runner(self, host="claude", root=None):
+    def runner(self, host="claude", root=None, path=None):
         args = [sys.executable, "-I", str(self.fixture.guard.with_name("formatting.py")), "apply",
                 "--host", host, "--session", f"{host}-session"]
         env = {key: value for key, value in os.environ.items() if not key.startswith("ASAN_")}
         env.update(self.env, ASAN_AGENT_POLICY_STATE_ROOT=str(self.fixture.state))
+        if path:
+            env["PATH"] = path
         return subprocess.run(args, cwd=root or self.root, env=env, text=True, capture_output=True)
+
+    def test_formatter_git_queries_do_not_grow_with_the_file_count(self):
+        # 실제 orchest 세션: Stop 자동 포맷이 파일마다 Git을 여러 번 조회하며 events.lock을 쥐어
+        # (36개 파일, 최대 17초) 하위 에이전트의 hook이 제한 시간을 넘겼다.
+        shim = self.fixture.base / "git-shim"
+        shim.mkdir()
+        log = shim / "calls.log"
+        (shim / "git").write_text(f"#!/bin/sh\nprintf '%s\\n' \"$*\" >> {shlex.quote(str(log))}\n"
+                                  f"exec {shlex.quote(shutil.which('git'))} \"$@\"\n")
+        (shim / "git").chmod(0o755)
+        path = f"{shim}{os.pathsep}{os.environ['PATH']}"
+        counts = []
+        # 이전 포맷 완료 기록이 있으면 HEAD를 한 번 더 조회한다. 두 측정 모두 같은 조건에서 시작한다.
+        self.write("src/count-warm.ts", "export const warm={value:0};\n")
+        self.assertEqual(self.runner().returncode, 0)
+        for files in (1, 4):
+            for index in range(files):
+                self.write(f"src/count-{files}-{index}.ts", f"export const n={{value:{index}}};\n")
+            log.write_text("")
+            result = self.runner(path=path)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(len(json.loads(result.stdout)["formatted"]), files, result.stdout)
+            counts.append(len(log.read_text().splitlines()))
+        self.assertEqual(counts[0], counts[1], counts)
 
     def test_explicit_trigger_uses_current_worktree_and_preserves_mode_and_index(self):
         first = self.write("src/first.ts", "export const first={value:1};\n")
