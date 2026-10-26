@@ -5,8 +5,8 @@ description: UI에 사용하는 외부 라이브러리의 프로젝트별 버전
 
 # 외부 UI 라이브러리 참고 자료
 
-- [lucide-react](lucide-react/SKILL.md): admin-ui의 라인 아이콘 어댑터.
-- [HeroUI](heroui/SKILL.md): admin-ui의 v3 공용 UI 어댑터.
+- [lucide-react](lucide-react/SKILL.md): admin-ui의 라인 아이콘 어댑터와 user-ui의 직접 import 현황.
+- [HeroUI](heroui/SKILL.md): admin-ui·user-ui의 v3 공용 UI 어댑터.
 
 현재 작업에서 사용할 라이브러리의 하위 `<library>/SKILL.md` 또는 기존 관련 스킬을 찾고, 문서의 적용 프로젝트·패키지 버전·어댑터 경로를 실제 코드와 대조한다. 공통 카탈로그에 있다는 사실만으로 모든 소비자 프로젝트에 해당 자산이 존재한다고 가정하지 않는다.
 
