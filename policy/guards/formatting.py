@@ -15,6 +15,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import uuid
 from pathlib import Path
 from types import ModuleType
@@ -287,6 +288,25 @@ def merging(worktree: Path) -> bool:
     return git._git(worktree, "rev-parse", "-q", "--verify", "MERGE_HEAD").returncode == 0
 
 
+def idle_error(blocking: list[tuple[str, dict]]) -> str:
+    """기록이 없는 호출의 예약은 자동으로 풀리지 않는다. 막은 예약과 정리 명령을 함께 보여 준다."""
+    lines = ["같은 worktree에 실행 결과가 확인되지 않은 쓰기가 있습니다. 완료 후 포맷을 다시 실행하세요."]
+    recoveries = []
+    for identifier, value in blocking:
+        created = value.get("created_at")
+        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(created)) if isinstance(created, (int, float)) else "시각 미상"
+        details = [f"{key} {value[key]}" for key in ("host", "session", "agent", "call") if value.get(key)]
+        if value.get("formatter"):
+            details.append("포맷 실행 중")
+        else:
+            recoveries.append(identifier)
+        lines.append(f"- {identifier} ({', '.join(details + ['생성 ' + when])})")
+    for identifier in recoveries:
+        lines.append("호출이 끝났는지 확인한 뒤 정리하세요: " + shlex.join([sys.executable, "-I",
+            str(Path(__file__).with_name("git_operations.py")), "write-recovery", "--id", identifier, "--reason", "<종료를 확인한 근거>"]))
+    return "\n".join(lines)
+
+
 MERGE_DEFERRAL = "병합이 진행 중인 worktree의 포맷은 병합 commit 뒤로 미룹니다. 병합 commit 뒤에 포맷과 검증을 다시 실행하세요"
 
 
@@ -325,12 +345,15 @@ def apply(root: Path, event: dict, host: str, worktree: Path) -> dict:
         return path
 
     def ensure_idle() -> None:
-        for path in (relations.directory(root) / "writes").glob("*.json"):
+        blocking = []
+        for path in sorted((relations.directory(root) / "writes").glob("*.json")):
             if path == reservation:
                 continue
             value = state.read(path)
             if value.get("worktree") == str(worktree.resolve()):
-                raise RuntimeError("같은 worktree에 실행 결과가 확인되지 않은 쓰기가 있습니다. 완료 후 포맷을 다시 실행하세요.")
+                blocking.append((path.stem, value))
+        if blocking:
+            raise RuntimeError(idle_error(blocking))
 
     try:
         # 잠금 구간마다 Git 조회를 한 번만 한다. 파일마다 다시 조회하면 다른 hook이 제한 시간을 넘긴다.

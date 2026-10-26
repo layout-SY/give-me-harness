@@ -597,6 +597,10 @@ def git_ownership(event: dict[str, Any], root: Path, host: str, *, reserve: bool
     return None
 
 
+class PolicyTimeout(RuntimeError):
+    """제한 시간 초과는 worktree별 포맷 실패로 삼키지 않고 hook 전체를 끝낸다."""
+
+
 def main() -> None:
     mode = sys.argv[1] if len(sys.argv) > 1 else ""
     host = sys.argv[2] if len(sys.argv) > 2 else ""
@@ -604,7 +608,7 @@ def main() -> None:
     base_limit = 25 if mode == "post-tool" else 8
     time_limit = base_limit
     def timeout(_signum, _frame):
-        raise RuntimeError(f"정책 검사가 제한 시간 {time_limit}초를 초과했습니다.")
+        raise PolicyTimeout(f"정책 검사가 제한 시간 {time_limit}초를 초과했습니다.")
 
     signal.signal(signal.SIGALRM, timeout)
     signal.alarm(time_limit)
@@ -632,10 +636,19 @@ def main() -> None:
                     locations = [location for location in dict.fromkeys(
                         item["worktree"] for item in formatting.pending_files(root, event, host))
                         if not formatting.merging(Path(location))]  # 병합 commit 뒤로 미룬다.
+                failures = []
                 if not uncertain:
                     # Prettier는 events lock 밖에서 계산한다. apply가 전후 상태를 다시 검사한다.
+                    # 한 worktree의 실패가 다른 worktree의 포맷을 막지 않게 실패만 모아 보고한다.
                     for location in locations:
-                        formatting.apply(root, event, host, Path(location))
+                        try:
+                            formatting.apply(root, event, host, Path(location))
+                        except PolicyTimeout:
+                            raise
+                        except Exception as error:
+                            failures.append(f"{location}: {error}")
+                if failures:
+                    event["_format_stop_error"] = "Stop 자동 포맷 미완료:\n" + "\n".join(failures)
             except Exception as error:
                 event["_format_stop_error"] = f"Stop 자동 포맷 미완료: {error}"
             time_limit = base_limit

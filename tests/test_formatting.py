@@ -481,6 +481,23 @@ class FormattingTests(unittest.TestCase):
                 self.assertEqual(path.read_text(), "export const value = { n: 1 };\n")
                 self.assertEqual(linked.read_text(), "export const linked = { n: 2 };\n")
 
+    def test_stop_names_the_blocking_reservation_and_still_formats_other_worktrees(self):
+        # 실제 user-ui orchest 세션: 기록이 없는 에이전트의 Bash 예약이 한 worktree에 남아 Stop 자동 포맷이
+        # 매 턴 같은 오류로 멈췄다. 오류에 예약이 없어 원인을 찾기 어려웠고, 다른 worktree의 포맷도 함께 멈췄다.
+        blocked = self.write("src/blocked.ts", "export const blocked={value:1};\n")
+        linked = self.write("src/linked.ts", "export const linked={value:2};\n", root=self.worktree)
+        ghost = {"tool_name": "Bash", "tool_call_id": "ghost-call", "agent_id": "ghost-agent",
+                 "tool_input": {"command": "node --version"}}
+        self.fixture.assert_allowed(self.hook("pre-tool", ghost))
+        [reservation] = list(self.fixture.state.glob("repositories/*/branch-relations/v1/writes/*.json"))
+        self.assertEqual(json.loads(reservation.read_text())["worktree"], str(self.root.resolve()))
+        stopped = self.hook("format-stop", {})
+        reason = json.loads(stopped.stdout)["reason"]
+        for expected in (reservation.stem, "ghost-agent", "ghost-call", "write-recovery"):
+            self.assertIn(expected, reason)
+        self.assertEqual(blocked.read_text(), "export const blocked={value:1};\n")
+        self.assertEqual(linked.read_text(), "export const linked = { value: 2 };\n")
+
     def test_duplicate_patch_targets_have_one_unknown_diagnostic_and_known_failure_releases_them(self):
         path = self.write("src/duplicate.ts", "export const value={n:1};\n", host="codex")
         event = {"tool_name": "apply_patch", "tool_call_id": "duplicate-patch", "tool_input": {"command":
