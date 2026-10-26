@@ -21,6 +21,7 @@ exec(compile(_path.read_bytes(), str(_path), "exec"), _loader.__dict__)
 relations = _loader.load("branch_relations")
 git, state = relations.git, relations.state
 REPORT_FIELDS = ("comparisons", "text_conflicts", "contract_risks", "validation", "unknowns", "recommendation")
+JSON_TYPES = {str: "string", list: "list", dict: "object", type(None): "없음", bool: "boolean", int: "number", float: "number"}
 
 
 def current_participants(graph: dict, source: str, target: str) -> list[dict]:
@@ -167,8 +168,14 @@ def require_report(evidence: dict, report: dict) -> None:
         raise RuntimeError("검토 보고는 JSON 객체여야 합니다.")
     if report.get("evidence_digest") != evidence["evidence_digest"]:
         raise RuntimeError("에이전트 검토가 현재 비교 자료와 일치하지 않습니다.")
-    if any(not isinstance(report.get(key), str) or not report[key].strip() for key in REPORT_FIELDS):
-        raise RuntimeError("검토 보고에 비교 대상·텍스트 충돌·계약 위험·검증·미확인 사항·권장 순서를 모두 작성하세요.")
+    invalid = [key for key in REPORT_FIELDS if not isinstance(report.get(key), str) or not report[key].strip()]
+    if invalid:
+        # 항목과 받은 형식을 알려 준다. 목록·객체를 보낸 세션이 형식을 찾지 못해 진행을 멈췄다.
+        received = ", ".join(f"{key}: {JSON_TYPES.get(type(report.get(key)), type(report.get(key)).__name__)}"
+                             for key in invalid)
+        raise RuntimeError("검토 보고에 비교 대상·텍스트 충돌·계약 위험·검증·미확인 사항·권장 순서를 모두 작성하세요. "
+                           f"{', '.join(REPORT_FIELDS)}는 각각 비어 있지 않은 문자열이어야 합니다. 목록은 문장으로 이어 쓰세요. "
+                           f"확인할 항목: {received}")
     # Acknowledged risks are reported for the user's decision, never an automatic
     # denial. The runner verifies real unmerged Git entries after execution.
 

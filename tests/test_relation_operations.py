@@ -369,6 +369,21 @@ class RelationOperationTests(unittest.TestCase):
                 self.assertNotIn("Traceback", result.stderr)
         self.assertEqual(self.git("status", "--porcelain"), "")
 
+    def test_merge_report_error_names_fields_that_are_not_text(self):
+        # 실제 admin-ui orchest 세션: 항목을 목록·객체로 보내 두 번 거부됐다. 오류가 항목과 형식을
+        # 알려 주지 않아 세션이 형식을 찾지 못하고 사용자에게 확인을 요청했다.
+        self.seed_tree()
+        operations = self.module("git_operations")
+        with patch.dict(os.environ, self.env, clear=True):
+            evidence = operations.review.collect(self.root, "K", "A", "ff-only", ["git diff --check"], False)
+            operations.state.write(operations.relations.directory(self.root) / "reviews" / (evidence["id"] + ".json"), evidence)
+        report = {key: "검토 근거" for key in operations.review.REPORT_FIELDS}
+        report.update(evidence_digest=evidence["evidence_digest"], unknowns=["병합 결과 테스트"], validation={"lint": "통과"})
+        result = self.operation_cli("complete", "--review", evidence["id"], "--report-json", json.dumps(report))
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("문자열", result.stderr)
+        self.assertEqual(result.stderr.rsplit("확인할 항목: ", 1)[1].strip(), "validation: object, unknowns: list")
+
     def test_file_merge_report_keeps_project_boundary_and_excludes_inline_input(self):
         self.seed_tree()
         outside = self.base / "report.json"
