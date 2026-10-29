@@ -346,11 +346,17 @@ def apply(root: Path, event: dict, host: str, worktree: Path) -> dict:
 
     def ensure_idle() -> None:
         blocking = []
+        receipts = _loader.load("write_receipts")
         for path in sorted((relations.directory(root) / "writes").glob("*.json")):
             if path == reservation:
                 continue
             value = state.read(path)
             if value.get("worktree") == str(worktree.resolve()):
+                # 대화 기록이 생기지 않은 에이전트는 SubagentStop이 오지 않아 예약이 영구히 남는다.
+                expected = receipts.missing_agent_transcript(value, event.get("transcript_path"), time.time())
+                if expected is not None and not value.get("formatter"):
+                    receipts.release_missing_transcript(state.repository_state(common), {**value, "id": path.stem}, expected)
+                    continue
                 blocking.append((path.stem, value))
         if blocking:
             raise RuntimeError(idle_error(blocking))

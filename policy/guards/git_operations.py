@@ -147,6 +147,12 @@ def reserve_write(root: Path, event: dict, host: str, locations: list[Path]) -> 
             agent = event.get("agent_id")
             if isinstance(agent, str) and agent:
                 record["agent"] = agent  # 하위 에이전트가 끝날 때 그 기록과 대조한다.
+            # 정체를 확인할 수 없는 에이전트의 예약이 두 번 남았다. 다음 조사에 쓸 근거를 함께 남긴다.
+            command = (event.get("tool_input") or {}).get("command")
+            record.update({key: value for key, value in (
+                ("tool", event.get("tool_name")), ("command", command[:200] if isinstance(command, str) else None),
+                ("agent_type", event.get("agent_type")), ("transcript", event.get("transcript_path")))
+                if isinstance(value, str) and value})
             state.write(relations.directory(root) / "writes" / (identifier + ".json"), record)
 
 

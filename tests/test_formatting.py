@@ -498,6 +498,38 @@ class FormattingTests(unittest.TestCase):
         self.assertEqual(blocked.read_text(), "export const blocked={value:1};\n")
         self.assertEqual(linked.read_text(), "export const linked = { value: 2 };\n")
 
+    def test_reservation_of_an_agent_without_a_transcript_is_released_after_a_minute(self):
+        # 10-23 user-ui, 10-27 admin-ui: 부모 Stop 2초 뒤 대화 기록이 없는 에이전트의 호출이 예약을 남겼다.
+        # SubagentStop이 오지 않아 해소되지 않았고 Stop 자동 포맷이 매 턴 막혔다.
+        transcript = self.fixture.base / "claude-projects" / "parent-session.jsonl"
+        (transcript.with_suffix("") / "subagents").mkdir(parents=True)
+        transcript.write_text("{}\n")
+        (transcript.with_suffix("") / "subagents/agent-live-agent.jsonl").write_text("{}\n")
+        pending = self.write("src/pending.ts", "export const pending={value:1};\n")
+        writes = self.fixture.state.glob("repositories/*/branch-relations/v1/writes/*.json")
+        for agent in ("ghost-agent", "live-agent"):
+            self.fixture.assert_allowed(self.hook("pre-tool", {"tool_name": "Bash", "tool_call_id": agent + "-call",
+                "agent_id": agent, "agent_type": "general-purpose", "transcript_path": str(transcript),
+                "tool_input": {"command": "node --version"}}))
+        records = {json.loads(path.read_text())["agent"]: path for path in writes}
+        ghost = json.loads(records["ghost-agent"].read_text())
+        self.assertEqual((ghost["tool"], ghost["command"], ghost["agent_type"], ghost["transcript"]),
+                         ("Bash", "node --version", "general-purpose", str(transcript)))
+        # 1분이 지나지 않은 예약과 대화 기록이 있는 에이전트의 예약은 그대로 막는다.
+        self.assertIn("ghost-agent", json.loads(self.hook("format-stop", {"transcript_path": str(transcript)}).stdout)["reason"])
+        for path in records.values():
+            path.write_text(json.dumps({**json.loads(path.read_text()), "created_at": time.time() - 120}))
+        reason = json.loads(self.hook("format-stop", {"transcript_path": str(transcript)}).stdout)["reason"]
+        self.assertIn("live-agent", reason)
+        self.assertNotIn("ghost-agent", reason)
+        self.assertFalse(records["ghost-agent"].exists())
+        [receipt] = [json.loads(path.read_text()) for path in
+                     self.fixture.state.glob("repositories/*/branch-relations/v1/write-receipts/*.json")]
+        self.assertEqual((receipt["outcome"], receipt["call"]), ("agent-transcript-missing", "ghost-agent-call"))
+        records["live-agent"].unlink()
+        self.hook("format-stop", {"transcript_path": str(transcript)})
+        self.assertEqual(pending.read_text(), "export const pending = { value: 1 };\n")
+
     def test_duplicate_patch_targets_have_one_unknown_diagnostic_and_known_failure_releases_them(self):
         path = self.write("src/duplicate.ts", "export const value={n:1};\n", host="codex")
         event = {"tool_name": "apply_patch", "tool_call_id": "duplicate-patch", "tool_input": {"command":

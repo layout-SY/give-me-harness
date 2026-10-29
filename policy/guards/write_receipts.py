@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import time
 from pathlib import Path
 from types import ModuleType
 
@@ -137,6 +138,38 @@ def release_finished(repository: Path, host: str, session: str, owner: str, call
         for item in writes:
             (directory / "writes" / (item["id"] + ".json")).unlink(missing_ok=True)
         return [item["id"] for item in writes]
+
+
+MISSING_TRANSCRIPT_AGE = 60.0
+
+
+def missing_agent_transcript(item: dict, transcript: str | None, now: float) -> Path | None:
+    """대화 기록이 생기지 않은 Claude 에이전트의 예약이면 그 기록이 있어야 할 경로를 돌려준다.
+
+    실제 하위 에이전트는 시작할 때 `<부모 기록>/subagents/agent-<id>.jsonl`이 생긴다. 1분이 지나도 없고
+    부모 기록은 있으면 SubagentStop이 오지 않는 에이전트로 본다.
+    """
+    agent, source = item.get("agent"), item.get("transcript") or transcript
+    created = item.get("created_at")
+    if (item.get("host") != "claude" or not isinstance(agent, str) or not agent or not isinstance(source, str)
+            or not isinstance(created, (int, float)) or now - created < MISSING_TRANSCRIPT_AGE):
+        return None
+    parent = Path(source)
+    if parent.suffix != ".jsonl" or not parent.is_file():
+        return None
+    expected = parent.with_suffix("") / "subagents" / f"agent-{agent}.jsonl"
+    return None if expected.exists() else expected
+
+
+def release_missing_transcript(repository: Path, item: dict, expected: Path) -> None:
+    """호출자는 events.lock과 git.lock을 보유해야 한다. 근거를 먼저 남기고 예약을 지운다."""
+    directory = repository / "branch-relations/v1"
+    receipt = directory / "write-receipts" / (state.digest(item["host"] + ":" + str(item.get("session")) + ":" + str(item.get("call"))) + ".json")
+    if not receipt.exists():
+        state.write(receipt, {"outcome": "agent-transcript-missing", "host": item["host"], "session": item.get("session"),
+                             "call": item.get("call"), "writes": [item],
+                             "evidence": {"expected_transcript": str(expected), "age_seconds": round(time.time() - item["created_at"])}})
+    (directory / "writes" / (item["id"] + ".json")).unlink(missing_ok=True)
 
 
 def denied_transcript_calls(path: Path, session: str) -> dict[str, dict]:
