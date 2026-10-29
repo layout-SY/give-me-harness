@@ -39,7 +39,7 @@ description: orchest 세션에서 사용자가 `토큰 분석`을 요청했을 �
 2. 자기 세션의 native session ID를 찾는다.
    - `python3 -I <스크립트> <host> sessions --project <기본 checkout 경로>`가 이 프로젝트의 최근 세션을 시작·끝 시각, 첫 요청, 마지막 요청과 함께 보여 준다.
    - 첫 요청과 마지막 요청(분석 요청 직전의 입력)이 이 세션과 맞는 것을 고른다. 둘 이상이 맞으면 사용자에게 확인한다.
-3. 스크립트는 정책 스냅샷의 `.agent-policy/common/skills/policy/token-usage/scripts/token_usage.py`다. 셸에서는 **절대 경로**로 실행한다. 상대 경로나 `cd … &&`를 붙인 형태는 guard가 다른 저장소 대상으로 보고 막을 수 있다.
+3. 스크립트는 정책 스냅샷의 `.agent-policy/common/skills/policy/token-usage/scripts/token_usage.py`다. 셸에서는 `python3 -I <절대 경로>`로 실행한다. guard는 현재 세션 번들의 이 스크립트만 이 형태로 허용한다. 상대 경로, `-I` 생략, `cd … &&`를 붙인 형태와 다른 번들의 사본은 다른 저장소 대상으로 막는다.
 
 ### 2. 작업 구간 파일
 

@@ -355,14 +355,11 @@ def task_approved(state: dict[str, Any]) -> bool | None:
 TASK_CANCEL_PHRASES = frozenset({"구현 승인 취소", "구현 중단", "cancel implementation"})
 
 
-def task_prompt(prompt: str, root: Path) -> tuple[list[dict[str, Any]], str]:
-    """`<작업 ID> [<작업 ID> ...] 진행` 형식만 작업 승인으로 읽는다."""
-    try:
-        tasks = load_runtime_module("work_board").open_tasks(root) if load_runtime_module("pipeline").active() else []
-    except Exception:
-        return [], ""
-    names = sorted(((normalize_prompt(task["id"]), task) for task in tasks), key=lambda item: -len(item[0]))
-    rest, found = normalize_prompt(prompt).removeprefix("작업 "), []
+TASK_LIST_MARKER = re.compile(r"^\s*[-*•]\s*")
+
+
+def task_line(line: str, names: list[tuple[str, dict[str, Any]]]) -> tuple[list[dict[str, Any]], str]:
+    rest, found = normalize_prompt(TASK_LIST_MARKER.sub("", line)).removeprefix("작업 "), []
     while True:
         match = next(((name, task) for name, task in names
                       if name and task not in found and (rest == name or rest.startswith(name + " "))), None)
@@ -377,6 +374,42 @@ def task_prompt(prompt: str, root: Path) -> tuple[list[dict[str, Any]], str]:
     if rest in IMPLEMENTATION_APPROVAL_PHRASES:
         return found, "approve"
     return [], ""
+
+
+def task_prompt(prompt: str, root: Path) -> tuple[list[dict[str, Any]], str]:
+    """`<작업 ID> [<작업 ID> ...] 진행` 형식만 작업 승인으로 읽는다. 여러 줄이면 줄마다 이 형식이어야 한다."""
+    try:
+        tasks = load_runtime_module("work_board").open_tasks(root) if load_runtime_module("pipeline").active() else []
+    except Exception:
+        return [], ""
+    names = sorted(((normalize_prompt(task["id"]), task) for task in tasks), key=lambda item: -len(item[0]))
+    found, actions = [], set()
+    # 한 줄이라도 형식이 아니거나 승인·취소가 섞이면 어떤 작업도 바꾸지 않는다.
+    for line in [line for line in prompt.splitlines() if line.strip()] or [prompt]:
+        selected, action = task_line(line, names)
+        if not selected:
+            return [], ""
+        found.extend(task for task in selected if task not in found)
+        actions.add(action)
+    return (found, actions.pop()) if len(actions) == 1 else ([], "")
+
+
+def unrecorded_task_notice(prompt: str, root: Path) -> str:
+    """작업 ID와 승인 단어가 있는데 승인으로 읽지 못한 입력을 알린다. 알리지 않으면 부모가 승인된 줄 알고 호출한다."""
+    if not APPROVAL_WORD_PATTERN.search(prompt):
+        return ""
+    try:
+        tasks = load_runtime_module("work_board").open_tasks(root) if load_runtime_module("pipeline").active() else []
+    except Exception:
+        return ""
+    text = normalize_prompt(prompt)
+    mentioned = [task["id"] for task in tasks
+                 if re.search(r"(?<![\w-])" + re.escape(normalize_prompt(task["id"])) + r"(?![\w-])", text)]
+    if not mentioned:
+        return ""
+    return (f"작업 승인으로 기록하지 않았습니다: {', '.join(mentioned)}. 작업 계획 승인은 `<작업 ID> 진행` 형식만 받습니다. "
+            "여러 작업은 `<ID> <ID> 진행`으로 쓰거나 한 줄에 하나씩(앞의 `- ` 허용) 씁니다. "
+            "기록된 승인은 보호 실행기 `board`의 작업별 `approval`로 확인합니다.")
 
 
 def record_task_prompt(event: dict[str, Any], root: Path, host: str, tasks: list[dict[str, Any]], action: str) -> None:
@@ -395,6 +428,42 @@ def record_task_prompt(event: dict[str, Any], root: Path, host: str, tasks: list
             messages.append(f"작업 {task['id']}: {error.replace('현재 세션의 ', '작업의 ')} 후 현황판에 --plan으로 등록하고 다시 승인받으세요.")
     write_json_state(harness_state_path(event, root, host), harness)
     print("\n".join(messages))
+
+
+TASK_APPROVAL_LABELS = {"approved": "승인됨", "unapproved": "승인 기록 없음", "plan-changed": "승인 후 계획이 바뀌어 재승인 필요",
+                        "no-plan": "계획 미등록 또는 승인 영역 오류", "unknown": "실행 중인 세션을 확인할 수 없음"}
+
+
+def runner_session(host: str) -> str:
+    """보호 실행기는 hook 이벤트가 없다. 호스트가 셸에 넘기는 현재 대화 ID를 쓴다."""
+    name = {"claude": "CLAUDE_CODE_SESSION_ID", "codex": "CODEX_THREAD_ID"}.get(host, "")
+    return os.environ.get(name, "").strip() if name else ""
+
+
+def task_approval_status(root: Path, host: str, tasks: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    """조회만 한다. 판정은 구현 gate의 task_approved와 같은 기준이다."""
+    session = runner_session(host)
+    common = branch_guard.git_common_directory(root) or root.resolve()
+    path = load_runtime_module("runtime_state").session_path(common, host, session, "harness-state-v3", create=False) if session else None
+    harness = load_json_state(path) if path else {}
+    approvals = harness.get("task_approvals", {})
+    session_plan = (harness.get("implementation_scope") or {}).get("plan") if harness.get("implementation_approved") is True else None
+    result = {}
+    for task in tasks:
+        digest, error = plan_fingerprint(Path(task["plan"]) if task.get("plan") else None)
+        if not session:
+            status = "unknown"
+        elif not digest:
+            status = "no-plan"
+        elif approvals.get(task["id"]) == digest or session_plan == digest:
+            status = "approved"
+        else:
+            status = "plan-changed" if task["id"] in approvals else "unapproved"
+        result[task["id"]] = {"status": status, "label": TASK_APPROVAL_LABELS[status],
+                              **({"input": f"{task['id']} 진행"} if status in {"unapproved", "plan-changed"} else {}),
+                              **({"plan_error": error.replace("현재 세션의 ", "작업의 ") if task.get("plan")
+                                  else f"board-set --task {task['id']} --plan <plan.md 경로>로 계획 등록"} if status == "no-plan" else {})}
+    return result
 
 
 def approval_scope(event: dict[str, Any], root: Path, host: str) -> dict[str, Any]:
@@ -683,6 +752,9 @@ def record_user_prompt(event: dict[str, Any], root: Path, host: str) -> None:
             # 작업 ID를 지정한 승인은 그 작업의 계획만 승인한다. 세션 계획이나 다른 작업으로 번지지 않는다.
             record_task_prompt(event, root, host, tasks, action)
             return
+        notice = unrecorded_task_notice(prompt, root)
+        if notice:
+            print(notice)
         harness_path = harness_state_path(event, root, host)
         harness = load_harness_state(event, root, host)
         if explicit and prompt.strip() != COMMAND_APPROVAL_PHRASE:

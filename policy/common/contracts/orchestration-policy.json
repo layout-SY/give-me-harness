@@ -78,6 +78,7 @@
     "phrase": "토큰 분석",
     "cancel_phrase": "토큰 분석 취소",
     "report": "unknown/token-usage-report.md",
-    "skill": "policy/token-usage/SKILL.md"
+    "skill": "policy/token-usage/SKILL.md",
+    "script": "policy/token-usage/scripts/token_usage.py"
   }
 }

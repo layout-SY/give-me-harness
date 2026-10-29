@@ -384,6 +384,30 @@ class RelationOperationTests(unittest.TestCase):
         self.assertIn("문자열", result.stderr)
         self.assertEqual(result.stderr.rsplit("확인할 항목: ", 1)[1].strip(), "validation: object, unknowns: list")
 
+    def test_review_output_starts_with_a_report_template_for_complete(self):
+        # 10-23 admin-ui orchest 세션: 보고 형식을 찾으려고 Explore 에이전트를 따로 호출했다.
+        self.seed_tree()
+        reviewed = self.operation_cli("review", "--source", "K", "--target", "A",
+            "--strategy", "ff-only", "--verify-command", "git diff --check")
+        self.assertEqual(reviewed.returncode, 0, reviewed.stderr)
+        output = json.loads(reviewed.stdout)
+        self.assertEqual(next(iter(output)), "report_template")
+        template = output["report_template"]
+        operations = self.module("git_operations")
+        self.assertEqual(set(template["report"]), {"evidence_digest", *operations.review.REPORT_FIELDS})
+        self.assertEqual(template["report"]["evidence_digest"], output["evidence_digest"])
+        self.assertIn(output["id"], template["command"])
+        # 저장한 검토 근거와 digest는 틀을 포함하지 않는다.
+        stored = operations.state.read(operations.relations.directory(self.root) / "reviews" / (output["id"] + ".json"))
+        self.assertNotIn("report_template", stored)
+        # 설명을 바꾸지 않은 항목은 작성하지 않은 것으로 거부한다.
+        unchanged = self.operation_cli("complete", "--review", output["id"], "--report-json", json.dumps(template["report"]))
+        self.assertEqual(unchanged.returncode, 2, unchanged.stderr)
+        self.assertIn("틀의 설명", unchanged.stderr)
+        report = {**template["report"], **{key: "fixture 비교 결과" for key in operations.review.REPORT_FIELDS}}
+        result = self.operation_cli("complete", "--review", output["id"], "--report-json", json.dumps(report))
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_file_merge_report_keeps_project_boundary_and_excludes_inline_input(self):
         self.seed_tree()
         outside = self.base / "report.json"

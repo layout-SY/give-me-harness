@@ -744,6 +744,8 @@ def main() -> None:
     elif args.action == "review":
         result = review.collect(root, args.source, args.target, args.strategy, args.verify_command, args.cleanup)
         state.write(relations.directory(root) / "reviews" / (result["id"] + ".json"), result)
+        # 출력이 길어 형식을 찾느라 문서를 다시 읽었다. 보고 틀을 맨 앞에 둔다.
+        result = {"report_template": review.report_template(result), **result}
     elif args.action == "complete":
         if not re.fullmatch(r"[a-f0-9]{32}", args.review) or (
                 args.report is not None and not git.same_git_repository(root, args.report.resolve().parent)):
@@ -760,6 +762,12 @@ def main() -> None:
     elif args.action == "board":
         board_module = _loader.load("work_board")
         result = board_module.check(root, cwd, args.check) if args.check else board_module.view(root)
+        if not args.check:
+            # 구현 에이전트를 부르기 전에 작업별 승인 기록을 확인한다. 이 조회는 승인을 만들지 않는다.
+            opened = [task for task in result["tasks"] if not task.get("closed")]
+            statuses = _loader.load("approval_policy").task_approval_status(root, os.environ.get("ASAN_AGENT_POLICY_HOST", ""), opened)
+            for task in result["tasks"]:
+                task["approval"] = statuses.get(task["id"])
     elif args.action == "board-set":
         plan = str((cwd / args.plan).resolve()) if args.plan else args.plan
         result = _loader.load("work_board").update(root, args.task, stage=args.stage, title=args.title,

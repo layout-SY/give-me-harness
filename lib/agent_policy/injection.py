@@ -413,7 +413,7 @@ def _injection_preamble(
 
 - 작업 현황판(브랜치·워크트리 관계, 병합 순서, 작업 단계) 조회: `{runner} board`. 공용 항목의 영향 범위 확인: `{runner} board --check <경로>`. 단계·범위 갱신: `{runner} board-set --task <작업 ID> --stage <단계>`. 선행 작업 대기: `{runner} board-wait --task <작업 ID>`. 검토 지문: `{runner} fingerprint`. 현황판은 쓰기 권한이나 소유권을 만들지 않는다.
 - 선행 작업이 커밋되어 대기가 풀리면 안내된 변경 파일만 다시 조사해 계획을 갱신한다. 이미 조사한 내용은 다시 조사하지 않으며 구현은 갱신한 계획의 승인 후 진행한다.
-- 여러 작업을 함께 진행하면 작업마다 `{artifact_root}/<세션>/tasks/<작업 ID>/plan.md`를 작성해 `{runner} board-set --task <작업 ID> --plan <경로>`로 등록한다. 등록된 worktree의 source 변경은 사용자의 `<작업 ID> 진행` 승인이 있어야 하며, 일반 `진행`은 작업 계획을 승인하지 않는다. 승인을 요청할 때 작업 ID와 계획을 구분해 제시한다.
+- 여러 작업을 함께 진행하면 작업마다 `{artifact_root}/<세션>/tasks/<작업 ID>/plan.md`를 작성해 `{runner} board-set --task <작업 ID> --plan <경로>`로 등록한다. 등록된 worktree의 source 변경은 사용자의 `<작업 ID> 진행` 승인이 있어야 하며(여러 작업은 `<ID> <ID> 진행` 또는 한 줄에 하나씩), 일반 `진행`은 작업 계획을 승인하지 않는다. 승인을 요청할 때 작업 ID와 계획을 구분해 제시한다. 계획을 고친 뒤나 구현 에이전트를 호출하기 전에 `{runner} board`의 작업별 `approval.status`가 `approved`인지 확인한다.
 - 하위 에이전트를 호출할 때 작업 ID, 작업 worktree 절대 경로, 작업 범위, 확정된 결정과 산출물 위치를 지시에 포함한다. 하위 에이전트가 반환한 미확정 질문은 사용자에게 묻고 답변을 해당 작업자에게 전달한다. Git 변경은 하위 에이전트가 요청만 반환하고 부모가 사용자 승인 후 실행한다.
 
 """

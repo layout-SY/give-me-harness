@@ -150,7 +150,7 @@ Planner는 계획의 작업 항목마다 변경 종류와 담당 하위 에이�
 
 | 명령 | 용도 |
 | --- | --- |
-| `board` | 브랜치·워크트리 관계, 병합 순서, 작업 단계와 실제 Git 상태를 조회한다 |
+| `board` | 브랜치·워크트리 관계, 병합 순서, 작업 단계와 실제 Git 상태, 현재 세션의 작업별 계획 승인(`approval`)을 조회한다 |
 | `board --check <경로>` | 공용 항목을 바꿀 때 범위가 겹치는 작업과 다른 worktree의 참조 후보를 확인한다 |
 | `board-set --task <ID> ...` | 단계·branch·범위·공용 항목·`plan.md` 위치·대기를 기록한다 |
 | `board-wait --task <ID>` | 선행 작업이 커밋될 때까지 기다린 뒤 변경된 파일을 출력한다 |
@@ -158,6 +158,7 @@ Planner는 계획의 작업 항목마다 변경 종류와 담당 하위 에이�
 | `verdict --result PASS\|FAIL --start <지문>` | Watcher의 판정을 현재 지문과 함께 기록한다. 커밋 준비 때 확인한다 |
 
 - 단계는 `planning`(계획 중), `awaiting-creation`(생성 승인 대기), `working`(작업 중), `reviewing`(리뷰 중), `awaiting-user-review`(사용자 검토 대기), `committed`(커밋됨), `merged`(병합됨), `removed`(제거됨), `cancelled`(취소)다.
+- 새 작업은 `--title`과 `--stage`를 함께 지정한다. 예: `board-set --task roulette-coupon --title "룰렛 쿠폰" --stage planning --scope src/features/roulette`. 이후 갱신은 바꿀 항목만 준다. 예: `board-set --task roulette-coupon --stage working --branch roulette-coupon --plan <tasks/roulette-coupon/plan.md의 경로>`.
 - `working` 이후 단계는 실제 branch가 있어야 하고, `committed`는 미커밋 변경이 없을 때, `merged`는 등록된 직접 부모에 포함됐을 때, `removed`는 branch가 없을 때만 기록된다.
 - 기록은 소유권·허용 파일 목록·쓰기 잠금을 만들지 않는다. 범위가 겹쳐도 등록을 막지 않고 겹치는 작업을 알려 준다. 겹치면 선행 작업을 기다리거나 분기해 접점 밖을 먼저 작업하는 안을 계획에 넣고 사용자 승인을 받는다.
 - 병합 순서는 브랜치 관계가 강제한다. 분기한 작업은 자식에서 직접 부모로 먼저 병합한다.
@@ -212,7 +213,8 @@ API 명세처럼 하나의 요청에서 여러 작업이 나오면 부모 세션
 - 구조는 평면이다. 하위 에이전트는 다른 하위 에이전트를 호출하지 않는다. 부모가 작업마다 Planner·Publisher·Generator·Refactorer·Watcher를 직접 호출하고 Generator ↔ Watcher의 왕복도 부모가 중계한다.
 - 작업마다 산출물 폴더 `tasks/<작업 ID>/`를 세션 산출물 아래에 두고 `plan.md`, `implementation-log.md`, `review-log.md` 등을 작성한다. 세션 최상위의 `plan.md`와 `final-summary.md`는 전체 작업 목록·의존 관계·병합 순서와 결과를 요약한다.
 - 작업의 계획은 `board-set --task <ID> --plan <tasks/<ID>/plan.md의 경로>`로 등록한다. 등록된 worktree의 source 변경은 그 작업 계획의 승인으로 판정한다.
-- 사용자는 `<작업 ID> 진행`으로 작업별 계획을 승인한다. 여러 작업을 한 번에 승인하려면 `<ID> <ID> 진행`처럼 ID를 나열한다. 작업 ID가 없는 `진행`은 작업 계획을 승인하지 않는다. 취소는 `<작업 ID> 구현 승인 취소`다. 부모는 승인을 요청할 때 작업 ID와 각 계획을 구분해 제시한다.
+- 사용자는 `<작업 ID> 진행`으로 작업별 계획을 승인한다. 여러 작업을 한 번에 승인하려면 `<ID> <ID> 진행`처럼 ID를 나열하거나 한 줄에 하나씩(앞의 `- ` 허용) 쓴다. 여러 줄이면 모든 줄이 이 형식이어야 하며, 한 줄이라도 다르면 어떤 작업도 승인하지 않고 기록하지 않았다고 안내한다. 작업 ID가 없는 `진행`은 작업 계획을 승인하지 않는다. 취소는 `<작업 ID> 구현 승인 취소`다. 부모는 승인을 요청할 때 작업 ID와 각 계획을 구분해 제시한다.
+- 승인은 계획 승인 영역의 해시에 묶인다. 계획을 고친 뒤나 구현 에이전트를 호출하기 전에 `board`의 작업별 `approval.status`가 `approved`인지 확인한다. `unapproved`·`plan-changed`이면 `approval.input`의 입력으로 다시 승인받는다. 병렬 호출 전에 확인하면 승인 미기록으로 여러 에이전트가 함께 막히지 않는다.
 - 하위 에이전트를 호출할 때 작업 ID, worktree 절대 경로, 작업 범위, 확정된 결정과 `tasks/<작업 ID>/` 산출물 위치를 전달한다. 한 하위 에이전트에 여러 작업의 worktree를 맡기지 않는다.
 - Git 변경, 현황판 갱신, 사용자 질문·승인은 부모가 작업 ID를 붙여 처리한다. 같은 worktree의 포맷·검증·Git 변경은 순차로 실행하고, 서로 다른 worktree의 작업은 병렬로 진행할 수 있다.
 - 작업 사이에 범위가 겹치면 대기와 재계획 절차를 그대로 적용한다.

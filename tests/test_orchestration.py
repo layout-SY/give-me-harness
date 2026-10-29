@@ -591,6 +591,63 @@ class WorkBoardTests(unittest.TestCase):
         self.assertEqual(self.edit(first).returncode, 0)
         self.assertIn("작업 B의 계획 승인", self.edit(second).stderr)
 
+    def test_task_approval_accepts_one_task_per_line_and_reports_unrecorded_input(self) -> None:
+        # 10-23 admin-ui: 목록형 승인이 기록되지 않았고 안내도 없어 구현 에이전트 6개가 막혔다.
+        first, _ = self.task("A")
+        second, _ = self.task("B")
+        unrecorded = self.event("user-prompt", prompt="- A 진행 - B 진행").stdout
+        self.assertIn("작업 승인으로 기록하지 않았습니다: A, B", unrecorded)
+        self.assertIn("작업 A의 계획 승인", self.edit(first).stderr)
+        recorded = self.event("user-prompt", prompt="- A 진행\n   - B 진행").stdout
+        for name in ("A", "B"):
+            self.assertIn(f"작업 {name}의 계획을 승인했습니다", recorded)
+        self.assertEqual(self.edit(first).returncode, 0)
+        self.assertEqual(self.edit(second).returncode, 0)
+        self.event("user-prompt", prompt="A B 구현 승인 취소")
+        self.assertIn("작업 A의 계획을 승인했습니다", self.event("user-prompt", prompt="A 진행\nB 진행").stdout)
+        self.event("user-prompt", prompt="A B 구현 승인 취소")
+        # 한 줄이라도 승인 형식이 아니면 어떤 작업도 승인하지 않는다.
+        self.assertIn("기록하지 않았습니다", self.event("user-prompt", prompt="A 진행\nB 확인 후 진행").stdout)
+        self.assertIn("작업 A의 계획 승인", self.edit(first).stderr)
+        self.assertNotIn("기록하지 않았습니다", self.event("user-prompt", prompt="계획을 진행해도 될까").stdout)
+
+    def test_board_shows_each_task_approval_for_the_running_session(self) -> None:
+        # 부모가 구현 에이전트를 부르기 전에 작업별 승인 기록을 확인할 수단이 없었다.
+        _, plan = self.task("A")
+        self.task("B")
+        self.runner("board-set", "--task", "C", "--title", "C", "--stage", "planning")
+        self.env.update(ASAN_AGENT_POLICY_HOST="claude", CLAUDE_CODE_SESSION_ID="claude-test")
+
+        def approvals() -> dict:
+            return {task["id"]: task["approval"]["status"] for task in self.runner("board")["tasks"]}
+
+        self.assertEqual(approvals(), {"A": "unapproved", "B": "unapproved", "C": "no-plan"})
+        self.event("user-prompt", prompt="A 진행")
+        self.assertEqual(approvals(), {"A": "approved", "B": "unapproved", "C": "no-plan"})
+        plan.write_text(self.PLAN.format(goal="범위 확대"))
+        self.assertEqual(approvals()["A"], "plan-changed")
+        self.env.pop("CLAUDE_CODE_SESSION_ID")
+        self.assertEqual(set(approvals().values()), {"unknown"})
+
+    def test_token_usage_script_of_the_running_bundle_runs_by_absolute_path(self) -> None:
+        # 10-20·10-27 admin-ui: 번들이 중앙 저장소 안에 있어 집계 스크립트가 다른 저장소 대상으로 막혔다.
+        def scripts(bundle: Path) -> Path:
+            subprocess.run(["git", "init", "-q", str(bundle)], check=True)
+            directory = bundle / ".agent-policy/common/skills/policy/token-usage/scripts"
+            directory.mkdir(parents=True, exist_ok=True)
+            for name in ("token_usage.py", "other.py"):
+                (directory / name).write_text("print('ok')\n")
+            return directory
+
+        current, other = scripts(self.base / "bundle"), scripts(self.base / "other-bundle")
+        allowed = self.event("pre-tool", f"python3 -I {current / 'token_usage.py'} claude sessions --project {self.root}")
+        self.assertEqual(allowed.returncode, 0, allowed.stderr)
+        self.assertNotIn("deny", allowed.stdout)
+        for command in (f"python3 -I {current / 'other.py'}", f"python3 {current / 'token_usage.py'} claude sessions",
+                        f"python3 -I {other / 'token_usage.py'} claude sessions"):
+            denied = self.event("pre-tool", command)
+            self.assertIn("다른 Git 저장소의 명령 대상", denied.stdout + denied.stderr, command)
+
     def test_evidence_must_be_read_inside_the_task_worktree_created_after_planning(self) -> None:
         # 기본 checkout에서 계획한 뒤 새 worktree를 만들고 그곳의 구현을 Generator에 맡기자,
         # 스킬 근거가 기본 checkout에만 쌓여 "관련 SKILL.md 확인"으로 7번 차단됐다.

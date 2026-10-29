@@ -1,6 +1,7 @@
 """세션 프로젝트에 고정된 명령 경계. 연결 worktree는 동일 Git 저장소다."""
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from types import ModuleType
 from urllib.parse import unquote, urlparse
@@ -42,6 +43,26 @@ def foreign_repository(root: Path, target: Path) -> bool:
     return common is not None and common != branch.git_common_directory(root)
 
 
+def bundle_scripts() -> frozenset[Path]:
+    """현재 번들에서 `python3 -I <절대 경로>`로 실행할 수 있는 스킬 스크립트.
+
+    번들은 중앙 저장소 안에 있어 다른 Git 저장소로 판정된다. 오케스트레이션 계약에 둔 스크립트만 예외로 둔다.
+    """
+    contract = branch._runtime_contract_path().with_name("orchestration-policy.json")
+    try:
+        value = json.loads(contract.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return frozenset()
+    script = (value.get("token_analysis") or {}).get("script") if isinstance(value, dict) else None
+    path = contract.parents[1] / "skills" / script if isinstance(script, str) and script else None
+    return frozenset({path.resolve()}) if path and path.is_file() and not path.is_symlink() else frozenset()
+
+
+def bundle_script(words: tuple[str, ...], index: int, target: Path) -> bool:
+    return (index == 2 and Path(words[0]).name.startswith("python") and words[1] == "-I"
+            and target in bundle_scripts())
+
+
 def command_denial(root: Path, command: str, cwd: Path, depth: int = 0) -> str | None:
     problem = directory_denial(root, cwd)
     if problem:
@@ -78,7 +99,7 @@ def command_denial(root: Path, command: str, cwd: Path, depth: int = 0) -> str |
                     return problem
         # 절대·상대 경로 및 file://로 다른 저장소를 명시하는 경우도 검사한다.
         # 실행 파일·중앙 스킬 문서 같은 공용 자산의 위치를 worktree로 오인하지 않는다.
-        for word in words:
+        for index, word in enumerate(words):
             raw = word.split("=", 1)[1] if "=" in word else word
             if not raw.startswith(("/", "./", "../", "~/", "file://")) and (
                     ":" in raw or ("/" not in raw and not (location / raw).exists())):
@@ -89,6 +110,8 @@ def command_denial(root: Path, command: str, cwd: Path, depth: int = 0) -> str |
             if foreign_repository(root, target):
                 if (executable in {"cat", "head", "tail", "sed", "rg", "ls"}
                         and config.CENTRAL_ROOT.is_absolute() and target.is_relative_to(config.CENTRAL_ROOT.resolve())):
+                    continue
+                if bundle_script(words, index, target):
                     continue
                 return f"현재 프로젝트와 다른 Git 저장소의 명령 대상입니다: {target}. 해당 프로젝트의 별도 세션을 사용하세요."
     return None

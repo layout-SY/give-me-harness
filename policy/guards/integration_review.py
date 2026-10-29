@@ -22,6 +22,22 @@ relations = _loader.load("branch_relations")
 git, state = relations.git, relations.state
 REPORT_FIELDS = ("comparisons", "text_conflicts", "contract_risks", "validation", "unknowns", "recommendation")
 JSON_TYPES = {str: "string", list: "list", dict: "object", type(None): "없음", bool: "boolean", int: "number", float: "number"}
+REPORT_GUIDE = {
+    "comparisons": "비교한 source·target·형제의 commit과 dirty 상태",
+    "text_conflicts": "text_preview 결과와 충돌 파일, 없으면 확인 방법과 함께 없음",
+    "contract_risks": "함수·타입·props·상태·API 계약 영향과 근거",
+    "validation": "실행한 검증 명령과 결과, 실행하지 않은 검증은 미실행",
+    "unknowns": "확인하지 못한 범위, 없으면 없음과 그 이유",
+    "recommendation": "권장 병합 순서와 다음 조치",
+}
+
+
+def report_template(evidence: dict) -> dict:
+    """review 출력에만 붙인다. 저장한 근거와 digest에는 넣지 않는다."""
+    return {"report": {"evidence_digest": evidence["evidence_digest"],
+                       **{key: f"<{REPORT_GUIDE[key]}>" for key in REPORT_FIELDS}},
+            "command": f"complete --review {evidence['id']} --report-json '<report를 채운 JSON 객체>'",
+            "rule": "각 값을 비어 있지 않은 문자열로 바꿔 씁니다. 목록·객체는 받지 않으므로 여러 항목은 문장으로 이어 씁니다."}
 
 
 def current_participants(graph: dict, source: str, target: str) -> list[dict]:
@@ -176,6 +192,10 @@ def require_report(evidence: dict, report: dict) -> None:
         raise RuntimeError("검토 보고에 비교 대상·텍스트 충돌·계약 위험·검증·미확인 사항·권장 순서를 모두 작성하세요. "
                            f"{', '.join(REPORT_FIELDS)}는 각각 비어 있지 않은 문자열이어야 합니다. 목록은 문장으로 이어 쓰세요. "
                            f"확인할 항목: {received}")
+    unchanged = [key for key in REPORT_FIELDS if report[key].strip() == f"<{REPORT_GUIDE[key]}>"]
+    if unchanged:
+        raise RuntimeError("review 출력의 보고 틀의 설명을 그대로 보냈습니다. 실제 검토 내용으로 바꿔 쓰세요. "
+                           f"확인할 항목: {', '.join(unchanged)}")
     # Acknowledged risks are reported for the user's decision, never an automatic
     # denial. The runner verifies real unmerged Git entries after execution.
 
